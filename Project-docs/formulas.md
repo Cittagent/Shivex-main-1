@@ -265,7 +265,7 @@ Example
 State	    P_baseline	Duration	Energy
 RUNNING	    25 kW	    6 hrs	    150 kWh
 IDLE	    5 kW	    2 hrs	    10 kWh
-Total		            8.5 hrs	    160 kWh
+Total		            8 hrs	    160 kWh
 E_baseline = 160 kWh
  
 Overconsumption
@@ -273,6 +273,14 @@ E_over = E_actual − E_baseline
 If your CT sensors recorded 195 kWh actual:
 E_over = 195 − 160 = 35 kWh wasted
 
+How P_baseline is Established
+    - Statistical Baseline (from historical sensor data)
+    - P_baseline(state) = Percentile(P_measured, 50th or 75th)
+    - Computed per machine, per state (RUNNING, IDLE) over a rolling 30-day window.
+    - Which percentile to use?
+        Percentile	    Use When	                        Effect
+        50th (Median)	Anomaly detection, alerts	        Flags more deviations
+        75th	        Conservative baseline, ROI claims	Fewer false positives
 ```
 
 
