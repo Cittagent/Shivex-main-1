@@ -247,6 +247,34 @@ Calculation Method B (power derived):
 
 overconsumption_kwh = Σ(over_kwh for all samples where condition is TRUE)
 ```
+```
+Overconsumption - overconsumption is the excess energy a machine consumes beyond its expected (baseline) consumption for a given operating state.
+Formula
+E_over = E_actual − E_baseline
+Symbol	Meaning
+E_actual	Real energy consumed (from CT sensor readings)
+E_baseline	Expected energy for that state & duration
+E_baseline = P_baseline × T_operating state
+
+Symbol	Meaning
+P_baseline(state)	Percentile power for each state
+T(state)	        Time spent in that state
+T_total	            Total operating time
+ 
+Example
+State	    P_baseline	Duration	Energy
+RUNNING	    25 kW	    6 hrs	    150 kWh
+IDLE	    5 kW	    2 hrs	    10 kWh
+Total		            8.5 hrs	    160 kWh
+E_baseline = 160 kWh
+ 
+Overconsumption
+E_over = E_actual − E_baseline
+If your CT sensors recorded 195 kWh actual:
+E_over = 195 − 160 = 35 kWh wasted
+
+```
+
 
 ### Total Loss Formula
 ```
