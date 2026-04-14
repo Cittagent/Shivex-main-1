@@ -13,10 +13,10 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260403_0001_dashboard_snapshots_tenant_scope"
-down_revision: Union[str, tuple[str, str], None] = "20260401_0001"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "20260403_0001_dashboard_snapshots_tenant_scope"
+down_revision = "20260401_0001"
+branch_labels = None
+depends_on = None
 
 OLD_TABLE = "dashboard_snapshots"
 NEW_TABLE = "dashboard_snapshots_v2"

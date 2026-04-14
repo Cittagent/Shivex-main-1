@@ -1,14 +1,16 @@
+const DEFAULT_IDLE_THRESHOLD_PCT = 0.25;
+
 export const OVERCONSUMPTION_THRESHOLD_HELP =
-  "Overconsumption is applied only after off-hours and idle-running checks. Inside an active shift, only non-idle load above this threshold is counted as overconsumption.";
+  "Overconsumption is derived from full load current (FLA). Inside an active shift, only measured energy above the FLA band is booked to Overconsumption after Off-hours takes precedence.";
 
 export const EXCLUSIVE_LOSS_BUCKET_HELP =
-  "Loss buckets are exclusive: outside-shift energy is booked to Off-hours, inside-shift idle energy is booked to Idle, and only non-idle load above threshold inside an active shift is booked to Overconsumption.";
+  "Loss buckets are exclusive and still use measured telemetry energy: outside-shift energy is booked to Off-hours, inside-shift low-current energy is booked to Idle, and only energy above FLA inside an active shift is booked to Overconsumption.";
 
 export const IDLE_WIDGET_SCOPE_HELP =
-  "Idle Running Waste shows idle loss during active shifts only. Monthly idle cost continues to use historical idle aggregation.";
+  "Idle Running Waste shows measured idle loss during active shifts only. Idle detection uses the device FLA with a default idle band at 25% of FLA unless you override the idle percentage.";
 
 export const WASTE_ANALYSIS_POLICY_HELP =
-  "Waste Analysis uses the same exclusive policy as device and dashboard loss views. Outside-shift energy is counted as Off-Hours even if the machine was operationally idle during that interval.";
+  "Waste Analysis uses the same measured-energy accounting policy as device and dashboard loss views. FLA drives classification bands, while energy booking still comes from telemetry intervals.";
 
 export function getOutsideShiftFinancialBucketMessage(loadStateLabel?: string | null): string {
   const normalizedLabel = (loadStateLabel || "").trim().toLowerCase();
@@ -19,20 +21,7 @@ export function getOutsideShiftFinancialBucketMessage(loadStateLabel?: string | 
   return `${operationalStateText}, but outside-shift energy is financially booked to Off-hours Loss. Idle and Overconsumption accrue only during active shifts.`;
 }
 
-export function validateThresholdGap(
-  idleThreshold: number | null | undefined,
-  overThreshold: number | null | undefined,
-): string | null {
-  if (idleThreshold == null || overThreshold == null) {
-    return null;
-  }
-  if (overThreshold <= idleThreshold) {
-    return "Overconsumption threshold must be greater than idle threshold so waste categories remain exclusive.";
-  }
-  return null;
-}
-
-export function parseThresholdDraft(input: string): number | null {
+export function parseEngineeringNumberDraft(input: string): number | null {
   const trimmed = input.trim();
   if (!trimmed) {
     return null;
@@ -41,68 +30,68 @@ export function parseThresholdDraft(input: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function hasUnsavedThresholdDraft(
+export function hasUnsavedEngineeringDraft(
   draft: string,
   persisted: number | null | undefined,
 ): boolean {
-  const parsedDraft = parseThresholdDraft(draft);
-  return parsedDraft !== (persisted ?? null);
+  return parseEngineeringNumberDraft(draft) !== (persisted ?? null);
 }
 
-export function validateIdleThresholdSave(
-  nextIdleThreshold: number,
-  persistedOverThreshold: number | null | undefined,
+export function validateFlaAndIdlePct(
+  fullLoadCurrent: number | null,
+  idleThresholdPct: number | null,
 ): string | null {
-  return validateThresholdGap(nextIdleThreshold, persistedOverThreshold);
-}
-
-export function validateOverconsumptionThresholdSave(
-  persistedIdleThreshold: number | null | undefined,
-  nextOverThreshold: number | null,
-): string | null {
-  return validateThresholdGap(persistedIdleThreshold, nextOverThreshold);
-}
-
-export function getThresholdDriftWarning(params: {
-  saveTarget: "idle" | "overconsumption";
-  idleDraft: string;
-  persistedIdleThreshold: number | null | undefined;
-  overDraft: string;
-  persistedOverThreshold: number | null | undefined;
-}): string | null {
-  const idleDirty = hasUnsavedThresholdDraft(params.idleDraft, params.persistedIdleThreshold);
-  const overDirty = hasUnsavedThresholdDraft(params.overDraft, params.persistedOverThreshold);
-  if (params.saveTarget === "idle" && overDirty) {
-    return "Overconsumption threshold has unsaved changes. Idle validation still uses the last saved overconsumption threshold until Waste Config is saved.";
+  if (fullLoadCurrent == null || !Number.isFinite(fullLoadCurrent) || fullLoadCurrent <= 0) {
+    return "Full load current must be a positive number.";
   }
-  if (params.saveTarget === "overconsumption" && idleDirty) {
-    return "Idle threshold has unsaved changes. Waste validation still uses the last saved idle threshold until Idle Threshold is saved.";
+  if (idleThresholdPct == null) {
+    return null;
+  }
+  if (!Number.isFinite(idleThresholdPct) || idleThresholdPct <= 0) {
+    return "Idle threshold percent must be greater than 0.";
+  }
+  if (idleThresholdPct >= 1) {
+    return "Idle threshold percent must stay below 1.0 so the idle band remains below FLA.";
   }
   return null;
 }
 
-export function getIdleSaveBlockReason(
-  nextIdleThreshold: number | null,
-  persistedOverThreshold: number | null | undefined,
+export function getEngineeringSaveBlockReason(
+  fullLoadCurrent: number | null,
+  idleThresholdPct: number | null,
 ): string | null {
-  if (nextIdleThreshold == null || !Number.isFinite(nextIdleThreshold) || nextIdleThreshold <= 0) {
-    return "Idle threshold must be a positive number.";
-  }
-  if (persistedOverThreshold != null && nextIdleThreshold >= persistedOverThreshold) {
-    return `Idle ${nextIdleThreshold.toFixed(2)}A cannot be saved because saved overconsumption threshold is ${persistedOverThreshold.toFixed(2)}A. Save Waste Configuration first or lower idle threshold.`;
-  }
-  return null;
+  return validateFlaAndIdlePct(fullLoadCurrent, idleThresholdPct);
 }
 
-export function getOverconsumptionSaveBlockReason(
-  persistedIdleThreshold: number | null | undefined,
-  nextOverThreshold: number | null,
-): string | null {
-  if (nextOverThreshold != null && (!Number.isFinite(nextOverThreshold) || nextOverThreshold <= 0)) {
-    return "Overconsumption threshold must be a positive number.";
+export function deriveThresholdsFromFla(
+  fullLoadCurrent: number | null | undefined,
+  idleThresholdPct: number | null | undefined,
+): {
+  fullLoadCurrent: number | null;
+  idleThresholdPct: number | null;
+  derivedIdleThreshold: number | null;
+  derivedOverconsumptionThreshold: number | null;
+} {
+  const fla = fullLoadCurrent ?? null;
+  const pct = idleThresholdPct ?? DEFAULT_IDLE_THRESHOLD_PCT;
+  if (fla == null || !Number.isFinite(fla) || fla <= 0) {
+    return {
+      fullLoadCurrent: null,
+      idleThresholdPct: idleThresholdPct ?? DEFAULT_IDLE_THRESHOLD_PCT,
+      derivedIdleThreshold: null,
+      derivedOverconsumptionThreshold: null,
+    };
   }
-  if (persistedIdleThreshold != null && nextOverThreshold != null && nextOverThreshold <= persistedIdleThreshold) {
-    return `Overconsumption ${nextOverThreshold.toFixed(2)}A cannot be saved because saved idle threshold is ${persistedIdleThreshold.toFixed(2)}A. Save Idle Threshold first or raise overconsumption threshold.`;
-  }
-  return null;
+  const resolvedPct = pct != null && Number.isFinite(pct) ? pct : DEFAULT_IDLE_THRESHOLD_PCT;
+  return {
+    fullLoadCurrent: fla,
+    idleThresholdPct: resolvedPct,
+    derivedIdleThreshold: fla * resolvedPct,
+    derivedOverconsumptionThreshold: fla,
+  };
+}
+
+export function formatIdleThresholdPctLabel(value: number | null | undefined): string {
+  const pct = value ?? DEFAULT_IDLE_THRESHOLD_PCT;
+  return `${(pct * 100).toFixed(0)}% of FLA`;
 }

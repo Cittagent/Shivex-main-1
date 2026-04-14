@@ -16,7 +16,7 @@ Modes:
 - `current-live`: validates the current running stack with the provided live credentials and seeded validation roles.
 - `quick-gate`: runs the same high-risk live checks without implying release GO status.
 - `full-validation`: runs the broader regression suites after the live checks.
-- `full-reset`: runs `docker compose down -v --remove-orphans` and `docker compose up -d --build` before full validation.
+- `full-reset`: runs `./scripts/simulatorctl.sh purge`, `docker compose down -v --remove-orphans`, and `docker compose up -d --build` before full validation.
 
 Optional flags:
 

@@ -11,10 +11,10 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260331_0001_add_tenant_id_to_scoped_tables"
-down_revision: Union[str, tuple[str, str], None] = "20260329_0001"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "20260331_0001_add_tenant_id_to_scoped_tables"
+down_revision = "20260329_0001"
+branch_labels = None
+depends_on = None
 
 
 def _column_exists(table_name: str, column_name: str) -> bool:

@@ -30,7 +30,7 @@ from app.api.v1 import devices as devices_api
 from app.api.v1.router import api_router
 from app.database import Base, get_db
 from app.models.device import Device, DeviceIdSequence
-from app.services.device_errors import DeviceAlreadyExistsError
+from app.services.device_errors import DeviceAlreadyExistsError, DevicePlantRequiredError
 from app.services.device_identity import format_device_id
 from services.shared.tenant_context import TenantContext
 
@@ -330,6 +330,42 @@ async def test_allocator_retries_without_collision_under_concurrent_create(tmp_p
     created_ids = await asyncio.gather(*[_create(index) for index in range(1, 9)])
 
     assert sorted(created_ids) == [format_device_id("AD", index) for index in range(1, 9)]
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_service_create_device_rejects_missing_plant_for_internal_call(tmp_path):
+    database_path = tmp_path / "device_missing_plant.sqlite"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}", future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await _seed_sequences(session_factory)
+
+    async with session_factory() as session:
+        service = devices_api.DeviceService(
+            session,
+            TenantContext(
+                tenant_id="ORG-1",
+                user_id="svc:test",
+                role="org_admin",
+                plant_ids=[],
+                is_super_admin=False,
+            ),
+        )
+        with pytest.raises(DevicePlantRequiredError):
+            await service.create_device(
+                devices_api.DeviceCreate.model_construct(
+                    tenant_id="ORG-1",
+                    plant_id=None,
+                    device_name="Internal Missing Plant",
+                    device_type="compressor",
+                    device_id_class="active",
+                    data_source_type="metered",
+                )
+            )
+
     await engine.dispose()
 
 

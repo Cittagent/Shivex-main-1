@@ -15,6 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.device import Device, DeviceLiveState, IdleRunningLog, WasteSiteConfig, TELEMETRY_TIMEOUT_SECONDS
+from app.services.load_thresholds import (
+    DEFAULT_IDLE_THRESHOLD_PCT_OF_FLA,
+    ThresholdResolution,
+    classify_current_band,
+    classify_load_state,
+    resolve_device_thresholds,
+)
 from services.shared.energy_accounting import aggregate_window
 from services.shared.telemetry_normalization import normalize_telemetry_sample
 from services.shared.tariff_client import fetch_tenant_tariff
@@ -112,17 +119,35 @@ class IdleRunningService:
 
     @staticmethod
     def detect_device_state(current: Optional[float], voltage: Optional[float], threshold: Optional[float]) -> str:
-        if current is None or voltage is None:
-            return "unknown"
-        if current <= 0 and voltage > 0:
-            return "unloaded"
-        if threshold is not None and current > 0 and current < threshold and voltage > 0:
-            return "idle"
-        if threshold is not None and current >= threshold and voltage > 0:
-            return "running"
-        if threshold is None and current > 0 and voltage > 0:
-            return "unknown"
-        return "unknown"
+        thresholds = ThresholdResolution(
+            full_load_current_a=threshold,
+            idle_threshold_pct_of_fla=1.0,
+            derived_idle_threshold_a=threshold,
+            derived_overconsumption_threshold_a=threshold,
+            configured=threshold is not None and threshold > 0,
+            source="legacy",
+        )
+        return classify_load_state(current, voltage, thresholds)
+
+    @staticmethod
+    def detect_device_state_with_thresholds(
+        current: Optional[float],
+        voltage: Optional[float],
+        thresholds: ThresholdResolution,
+    ) -> str:
+        return classify_load_state(current, voltage, thresholds)
+
+    @staticmethod
+    def detect_current_band(
+        current: Optional[float],
+        voltage: Optional[float],
+        thresholds: ThresholdResolution,
+    ) -> str:
+        return classify_current_band(current, voltage, thresholds)
+
+    @staticmethod
+    def resolve_thresholds(device: Device) -> ThresholdResolution:
+        return resolve_device_thresholds(device)
 
     @staticmethod
     def _normalized_numeric_fields(row: dict[str, Any]) -> dict[str, float]:
@@ -293,51 +318,85 @@ class IdleRunningService:
         device = await self._get_device(device_id, tenant_id)
         if not device:
             raise ValueError("Device not found")
-        threshold = float(device.idle_current_threshold) if device.idle_current_threshold is not None else None
+        thresholds = self.resolve_thresholds(device)
         return {
             "device_id": device_id,
-            "idle_current_threshold": threshold,
-            "configured": threshold is not None,
+            "full_load_current_a": thresholds.full_load_current_a,
+            "idle_threshold_pct_of_fla": thresholds.idle_threshold_pct_of_fla,
+            "derived_idle_threshold_a": thresholds.derived_idle_threshold_a,
+            "derived_overconsumption_threshold_a": thresholds.derived_overconsumption_threshold_a,
+            # Deprecated read-only compatibility field.
+            "idle_current_threshold": thresholds.derived_idle_threshold_a,
+            "configured": thresholds.configured,
+            "source": thresholds.source,
         }
 
-    async def set_idle_config(self, device_id: str, tenant_id: str, threshold: float) -> dict[str, Any]:
+    async def set_idle_config(
+        self,
+        device_id: str,
+        tenant_id: str,
+        *,
+        full_load_current_a: Optional[float],
+        idle_threshold_pct_of_fla: Optional[float] = None,
+        idle_current_threshold: Optional[float] = None,
+    ) -> dict[str, Any]:
         device = await self._get_device(device_id, tenant_id)
         if not device:
             raise ValueError("Device not found")
-        self._validate_threshold_gap(
-            idle_threshold=threshold,
-            over_threshold=float(device.overconsumption_current_threshold_a)
-            if device.overconsumption_current_threshold_a is not None
-            else None,
+        next_fla = float(full_load_current_a) if full_load_current_a is not None else (
+            float(device.full_load_current_a) if device.full_load_current_a is not None else None
         )
-        device.idle_current_threshold = Decimal(str(round(float(threshold), 4)))
+        if next_fla is None and idle_current_threshold is not None:
+            raise ThresholdConfigurationError(
+                "Full load current must be configured before a deprecated idle threshold can be mapped to the FLA percentage model."
+            )
+
+        next_pct = idle_threshold_pct_of_fla
+        if next_pct is None and idle_current_threshold is not None and next_fla is not None:
+            next_pct = float(idle_current_threshold) / float(next_fla)
+        if next_pct is None:
+            next_pct = (
+                float(device.idle_threshold_pct_of_fla)
+                if device.idle_threshold_pct_of_fla is not None
+                else DEFAULT_IDLE_THRESHOLD_PCT_OF_FLA
+            )
+        if next_pct <= 0 or next_pct >= 1:
+            raise ThresholdConfigurationError(
+                "Idle threshold percentage of FLA must be greater than 0 and less than 1."
+            )
+
+        if full_load_current_a is not None:
+            device.full_load_current_a = Decimal(str(round(float(full_load_current_a), 4)))
+        elif next_fla is not None and device.full_load_current_a is None:
+            device.full_load_current_a = Decimal(str(round(float(next_fla), 4)))
+        device.idle_threshold_pct_of_fla = Decimal(str(round(float(next_pct), 4)))
         await self._session.flush()
         await self._session.commit()
         await self._session.refresh(device)
-        return {
-            "device_id": device_id,
-            "idle_current_threshold": float(device.idle_current_threshold),
-            "configured": True,
-        }
+        return await self.get_idle_config(device_id, tenant_id)
 
     async def get_waste_config(self, device_id: str, tenant_id: str) -> dict[str, Any]:
         device = await self._get_device(device_id, tenant_id)
         if not device:
             raise ValueError("Device not found")
+        thresholds = self.resolve_thresholds(device)
 
         return {
             "device_id": device_id,
-            "overconsumption_current_threshold_a": (
-                float(device.overconsumption_current_threshold_a)
-                if device.overconsumption_current_threshold_a is not None
-                else None
-            ),
+            "full_load_current_a": thresholds.full_load_current_a,
+            "idle_threshold_pct_of_fla": thresholds.idle_threshold_pct_of_fla,
+            "derived_idle_threshold_a": thresholds.derived_idle_threshold_a,
+            "derived_overconsumption_threshold_a": thresholds.derived_overconsumption_threshold_a,
+            # Deprecated read-only compatibility field.
+            "overconsumption_current_threshold_a": thresholds.derived_overconsumption_threshold_a,
             # Deprecated; kept for backward compatibility.
             "unoccupied_weekday_start_time": None,
             "unoccupied_weekday_end_time": None,
             "unoccupied_weekend_start_time": None,
             "unoccupied_weekend_end_time": None,
             "has_device_override": False,
+            "configured": thresholds.configured,
+            "source": thresholds.source,
         }
 
     async def set_waste_config(
@@ -349,20 +408,18 @@ class IdleRunningService:
         unoccupied_weekday_end_time: Optional[str],
         unoccupied_weekend_start_time: Optional[str],
         unoccupied_weekend_end_time: Optional[str],
+        full_load_current_a: Optional[float] = None,
     ) -> dict[str, Any]:
         device = await self._get_device(device_id, tenant_id)
         if not device:
             raise ValueError("Device not found")
-        self._validate_threshold_gap(
-            idle_threshold=float(device.idle_current_threshold) if device.idle_current_threshold is not None else None,
-            over_threshold=overconsumption_current_threshold_a,
+        resolved_full_load_current_a = (
+            full_load_current_a
+            if full_load_current_a is not None
+            else overconsumption_current_threshold_a
         )
-
-        device.overconsumption_current_threshold_a = (
-            Decimal(str(round(float(overconsumption_current_threshold_a), 4)))
-            if overconsumption_current_threshold_a is not None
-            else None
-        )
+        if resolved_full_load_current_a is not None:
+            device.full_load_current_a = Decimal(str(round(float(resolved_full_load_current_a), 4)))
         # Deprecated fields are accepted but ignored in runtime logic.
         device.unoccupied_weekday_start_time = None
         device.unoccupied_weekday_end_time = None
@@ -417,7 +474,7 @@ class IdleRunningService:
             raise ValueError("Device not found")
 
         live_state = await self._get_live_state(device_id, tenant_id)
-        threshold = float(device.idle_current_threshold) if device.idle_current_threshold is not None else None
+        thresholds = self.resolve_thresholds(device)
 
         rows = await self._fetch_telemetry(device_id, limit=1)
         latest = rows[-1] if rows else {}
@@ -454,13 +511,24 @@ class IdleRunningService:
             else (normalized.voltage_v if normalized is not None else mapped.voltage)
         )
         timestamp = authoritative_ts.isoformat() if authoritative_ts is not None else (latest.get("timestamp") if latest else None)
+        current_band = (
+            self.detect_current_band(current_value, voltage_value, thresholds)
+            if runtime_status == "running" and not stale
+            else "unknown"
+        )
 
         return {
             "device_id": device_id,
             "state": state,
+            "current_band": current_band,
             "current": current_value,
             "voltage": voltage_value,
-            "threshold": threshold,
+            "threshold": thresholds.derived_idle_threshold_a,
+            "full_load_current_a": thresholds.full_load_current_a,
+            "idle_threshold_pct_of_fla": thresholds.idle_threshold_pct_of_fla,
+            "derived_idle_threshold_a": thresholds.derived_idle_threshold_a,
+            "derived_overconsumption_threshold_a": thresholds.derived_overconsumption_threshold_a,
+            "configured": thresholds.configured,
             "timestamp": timestamp,
             "idle_streak_started_at": (
                 self._normalize_utc(live_state.idle_streak_started_at).isoformat()
@@ -527,7 +595,8 @@ class IdleRunningService:
         tenant_id: Optional[str] = None,
         now_utc: Optional[datetime] = None,
     ) -> None:
-        if device.idle_current_threshold is None:
+        thresholds = self.resolve_thresholds(device)
+        if not thresholds.configured or thresholds.derived_idle_threshold_a is None:
             return
 
         now_utc = now_utc or datetime.now(timezone.utc)
@@ -561,10 +630,8 @@ class IdleRunningService:
             points,
             platform_tz=platform_tz,
             shifts=[shift for shift in (device.shifts or []) if shift.is_active],
-            idle_threshold=float(device.idle_current_threshold),
-            over_threshold=float(device.overconsumption_current_threshold_a)
-            if device.overconsumption_current_threshold_a is not None
-            else None,
+            idle_threshold=thresholds.derived_idle_threshold_a,
+            over_threshold=thresholds.derived_overconsumption_threshold_a,
             config_source=device,
         )
 
@@ -589,7 +656,7 @@ class IdleRunningService:
         result = await self._session.execute(
             select(Device).where(
                 Device.deleted_at.is_(None),
-                Device.idle_current_threshold.is_not(None),
+                Device.full_load_current_a.is_not(None),
                 Device.tenant_id == tenant_scope,
             )
         )
@@ -622,9 +689,8 @@ class IdleRunningService:
         if not device:
             raise ValueError("Device not found")
         data_source_type = device.data_source_type
-
-        threshold = float(device.idle_current_threshold) if device.idle_current_threshold is not None else None
-        if threshold is None:
+        thresholds = self.resolve_thresholds(device)
+        if not thresholds.configured or thresholds.derived_idle_threshold_a is None:
             return {
                 "device_id": device_id,
                 "today": None,
@@ -633,6 +699,10 @@ class IdleRunningService:
                 "pf_estimated": False,
                 "threshold_configured": False,
                 "idle_current_threshold": None,
+                "full_load_current_a": None,
+                "idle_threshold_pct_of_fla": thresholds.idle_threshold_pct_of_fla,
+                "derived_idle_threshold_a": None,
+                "derived_overconsumption_threshold_a": None,
                 "data_source_type": data_source_type,
             }
 
@@ -712,7 +782,11 @@ class IdleRunningService:
             "tariff_configured": tariff_rate is not None,
             "pf_estimated": pf_estimated,
             "threshold_configured": True,
-            "idle_current_threshold": threshold,
+            "idle_current_threshold": thresholds.derived_idle_threshold_a,
+            "full_load_current_a": thresholds.full_load_current_a,
+            "idle_threshold_pct_of_fla": thresholds.idle_threshold_pct_of_fla,
+            "derived_idle_threshold_a": thresholds.derived_idle_threshold_a,
+            "derived_overconsumption_threshold_a": thresholds.derived_overconsumption_threshold_a,
             "data_source_type": data_source_type,
             "tariff_cache": tariff.get("cache"),
             "tariff_stale": tariff.get("stale", False),

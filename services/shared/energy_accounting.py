@@ -177,13 +177,8 @@ def split_loss_components(
         return idle_kwh, offhours_kwh, over_excess_kwh
 
     if over_threshold is not None and current_a is not None and current_a > over_threshold and current_a > 0:
-        if power_kw is not None:
-            ratio = min(1.0, max(0.0, (current_a - over_threshold) / current_a))
-            over_excess_kwh = interval_energy_kwh * ratio
-        elif voltage_v is not None and voltage_v > 0:
-            pf_value = pf if pf is not None else 0.85
-            over_power_kw = max(0.0, ((current_a - over_threshold) * voltage_v * pf_value) / 1000.0)
-            over_excess_kwh = min(interval_energy_kwh, over_power_kw * (duration_sec / 3600.0))
+        ratio = min(1.0, max(0.0, (current_a - over_threshold) / current_a))
+        over_excess_kwh = interval_energy_kwh * ratio
 
     return idle_kwh, offhours_kwh, over_excess_kwh
 

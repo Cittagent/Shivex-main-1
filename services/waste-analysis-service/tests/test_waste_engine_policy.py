@@ -139,6 +139,80 @@ def test_no_shift_configuration_treats_running_intervals_as_offhours_consistentl
     assert res.standby_energy_kwh == 0.0
 
 
+def test_fla_threshold_metadata_is_reported_from_device_service_contract():
+    rows = [
+        {
+            "timestamp": datetime(2026, 3, 13, 9, 0, tzinfo=timezone.utc),
+            "power": 5000.0,
+            "current": 12.0,
+            "voltage": 230.0,
+        },
+        {
+            "timestamp": datetime(2026, 3, 13, 9, 10, tzinfo=timezone.utc),
+            "power": 5200.0,
+            "current": 12.0,
+            "voltage": 230.0,
+        },
+    ]
+    res = compute_device_waste(
+        device_id="D5",
+        device_name="Device 5",
+        data_source_type="metered",
+        rows=rows,
+        threshold=2.5,
+        overconsumption_threshold=10.0,
+        tariff_rate=8.5,
+        shifts=[{"day_of_week": 4, "shift_start": "08:00", "shift_end": "18:00"}],
+        threshold_config={
+            "full_load_current_a": 10.0,
+            "idle_threshold_pct_of_fla": 0.25,
+        },
+    )
+
+    assert res.overconsumption_config_source == "device_service_derived"
+    assert res.overconsumption_config_used == {
+        "full_load_current_a": 10.0,
+        "idle_threshold_pct_of_fla": 0.25,
+        "derived_idle_threshold_a": 2.5,
+        "derived_overconsumption_threshold_a": 10.0,
+    }
+
+
+def test_overconsumption_uses_measured_interval_energy_ratio():
+    rows = [
+        {
+            "timestamp": datetime(2026, 3, 13, 9, 0, tzinfo=timezone.utc),
+            "energy_kwh": 100.0,
+            "current": 25.0,
+            "voltage": 230.0,
+        },
+        {
+            "timestamp": datetime(2026, 3, 13, 9, 1, tzinfo=timezone.utc),
+            "energy_kwh": 100.2,
+            "current": 25.0,
+            "voltage": 230.0,
+        },
+    ]
+    res = compute_device_waste(
+        device_id="D6",
+        device_name="Device 6",
+        data_source_type="metered",
+        rows=rows,
+        threshold=5.0,
+        overconsumption_threshold=20.0,
+        tariff_rate=8.5,
+        shifts=[{"shift_start": "08:00", "shift_end": "18:00"}],
+        threshold_config={
+            "full_load_current_a": 20.0,
+            "idle_threshold_pct_of_fla": 0.25,
+        },
+    )
+
+    assert res.idle_energy_kwh == 0.0
+    assert res.offhours_energy_kwh == 0.0
+    assert res.overconsumption_energy_kwh == 0.04
+
+
 def test_waste_normalizer_does_not_use_phase_diagnostics_as_business_current_voltage():
     row = {
         "timestamp": datetime(2026, 3, 13, 0, 0, tzinfo=timezone.utc),

@@ -18,15 +18,24 @@ interface BackendDevice extends BackendDeviceShape {}
 export interface Device extends DeviceShape {}
 
 export type DeviceLoadState = "running" | "idle" | "unloaded" | "unknown";
+export type DeviceOperatingBand = "unloaded" | "idle" | "in_load" | "overconsumption" | "unknown";
 
 export interface IdleConfig {
   device_id: string;
+  full_load_current_a: number | null;
+  idle_threshold_pct_of_fla: number | null;
+  derived_idle_threshold_a: number | null;
+  derived_overconsumption_threshold_a: number | null;
   idle_current_threshold: number | null;
   configured: boolean;
 }
 
 export interface DeviceWasteConfig {
   device_id: string;
+  full_load_current_a: number | null;
+  idle_threshold_pct_of_fla: number | null;
+  derived_idle_threshold_a: number | null;
+  derived_overconsumption_threshold_a: number | null;
   overconsumption_current_threshold_a: number | null;
   unoccupied_weekday_start_time: string | null;
   unoccupied_weekday_end_time: string | null;
@@ -38,9 +47,14 @@ export interface DeviceWasteConfig {
 export interface CurrentState {
   device_id: string;
   state: DeviceLoadState;
+  current_band: DeviceOperatingBand;
   current: number | null;
   voltage: number | null;
   threshold: number | null;
+  full_load_current_a: number | null;
+  idle_threshold_pct_of_fla: number | null;
+  derived_idle_threshold_a: number | null;
+  derived_overconsumption_threshold_a: number | null;
   timestamp: string | null;
   current_field: string | null;
   voltage_field: string | null;
@@ -61,6 +75,10 @@ export interface IdleStats {
   tariff_configured: boolean;
   pf_estimated: boolean;
   threshold_configured: boolean;
+  full_load_current_a: number | null;
+  idle_threshold_pct_of_fla: number | null;
+  derived_idle_threshold_a: number | null;
+  derived_overconsumption_threshold_a: number | null;
   idle_current_threshold: number | null;
   data_source_type: "metered" | "sensor" | string;
   tariff_cache?: string;
@@ -74,6 +92,10 @@ export interface DeviceLossStats {
   updated_at: string | null;
   tariff_configured: boolean;
   currency: string;
+  full_load_current_a?: number | null;
+  idle_threshold_pct_of_fla?: number | null;
+  derived_idle_threshold_a?: number | null;
+  derived_overconsumption_threshold_a?: number | null;
   today: {
     idle_kwh: number;
     idle_cost_inr: number | null;
@@ -212,16 +234,24 @@ export async function getIdleConfig(deviceId: string): Promise<IdleConfig> {
   const json = await res.json();
   return {
     device_id: json.device_id,
-    idle_current_threshold: json.idle_current_threshold,
+    full_load_current_a: json.full_load_current_a ?? null,
+    idle_threshold_pct_of_fla: json.idle_threshold_pct_of_fla ?? null,
+    derived_idle_threshold_a: json.derived_idle_threshold_a ?? json.idle_current_threshold ?? null,
+    derived_overconsumption_threshold_a:
+      json.derived_overconsumption_threshold_a ?? json.overconsumption_current_threshold_a ?? null,
+    idle_current_threshold: json.idle_current_threshold ?? json.derived_idle_threshold_a ?? null,
     configured: Boolean(json.configured),
   };
 }
 
-export async function saveIdleConfig(deviceId: string, idleCurrentThreshold: number): Promise<IdleConfig> {
+export async function saveIdleConfig(
+  deviceId: string,
+  payload: { full_load_current_a: number; idle_threshold_pct_of_fla?: number | null },
+): Promise<IdleConfig> {
   const res = await apiFetch(`${DEVICE_SERVICE_BASE}/api/v1/devices/${deviceId}/idle-config`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idle_current_threshold: idleCurrentThreshold }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     throw new Error(await readApiError(res));
@@ -229,7 +259,12 @@ export async function saveIdleConfig(deviceId: string, idleCurrentThreshold: num
   const json = await res.json();
   return {
     device_id: json.device_id,
-    idle_current_threshold: json.idle_current_threshold,
+    full_load_current_a: json.full_load_current_a ?? null,
+    idle_threshold_pct_of_fla: json.idle_threshold_pct_of_fla ?? null,
+    derived_idle_threshold_a: json.derived_idle_threshold_a ?? json.idle_current_threshold ?? null,
+    derived_overconsumption_threshold_a:
+      json.derived_overconsumption_threshold_a ?? json.overconsumption_current_threshold_a ?? null,
+    idle_current_threshold: json.idle_current_threshold ?? json.derived_idle_threshold_a ?? null,
     configured: Boolean(json.configured),
   };
 }
@@ -243,9 +278,14 @@ export async function getCurrentState(deviceId: string): Promise<CurrentState> {
   return {
     device_id: json.device_id,
     state: json.state ?? "unknown",
+    current_band: json.current_band ?? "unknown",
     current: json.current ?? null,
     voltage: json.voltage ?? null,
     threshold: json.threshold ?? null,
+    full_load_current_a: json.full_load_current_a ?? null,
+    idle_threshold_pct_of_fla: json.idle_threshold_pct_of_fla ?? null,
+    derived_idle_threshold_a: json.derived_idle_threshold_a ?? json.threshold ?? null,
+    derived_overconsumption_threshold_a: json.derived_overconsumption_threshold_a ?? null,
     timestamp: json.timestamp ?? null,
     current_field: json.current_field ?? null,
     voltage_field: json.voltage_field ?? null,
@@ -265,7 +305,12 @@ export async function getIdleStats(deviceId: string): Promise<IdleStats> {
     tariff_configured: Boolean(json.tariff_configured),
     pf_estimated: Boolean(json.pf_estimated),
     threshold_configured: Boolean(json.threshold_configured),
-    idle_current_threshold: json.idle_current_threshold ?? null,
+    full_load_current_a: json.full_load_current_a ?? null,
+    idle_threshold_pct_of_fla: json.idle_threshold_pct_of_fla ?? null,
+    derived_idle_threshold_a: json.derived_idle_threshold_a ?? json.idle_current_threshold ?? null,
+    derived_overconsumption_threshold_a:
+      json.derived_overconsumption_threshold_a ?? json.overconsumption_current_threshold_a ?? null,
+    idle_current_threshold: json.idle_current_threshold ?? json.derived_idle_threshold_a ?? null,
     data_source_type: json.data_source_type,
     tariff_cache: json.tariff_cache,
     tariff_stale: json.tariff_stale,
@@ -282,6 +327,11 @@ export async function getDeviceWasteConfig(deviceId: string): Promise<DeviceWast
   const json = await res.json();
   return {
     device_id: json.device_id,
+    full_load_current_a: json.full_load_current_a ?? null,
+    idle_threshold_pct_of_fla: json.idle_threshold_pct_of_fla ?? null,
+    derived_idle_threshold_a: json.derived_idle_threshold_a ?? json.idle_current_threshold ?? null,
+    derived_overconsumption_threshold_a:
+      json.derived_overconsumption_threshold_a ?? json.overconsumption_current_threshold_a ?? null,
     overconsumption_current_threshold_a: json.overconsumption_current_threshold_a ?? null,
     unoccupied_weekday_start_time: json.unoccupied_weekday_start_time ?? null,
     unoccupied_weekday_end_time: json.unoccupied_weekday_end_time ?? null,
@@ -294,7 +344,8 @@ export async function getDeviceWasteConfig(deviceId: string): Promise<DeviceWast
 export async function saveDeviceWasteConfig(
   deviceId: string,
   payload: {
-    overconsumption_current_threshold_a: number | null;
+    full_load_current_a?: number | null;
+    overconsumption_current_threshold_a?: number | null;
     unoccupied_weekday_start_time: string | null;
     unoccupied_weekday_end_time: string | null;
     unoccupied_weekend_start_time: string | null;
@@ -313,6 +364,11 @@ export async function saveDeviceWasteConfig(
   const json = await res.json();
   return {
     device_id: json.device_id,
+    full_load_current_a: json.full_load_current_a ?? null,
+    idle_threshold_pct_of_fla: json.idle_threshold_pct_of_fla ?? null,
+    derived_idle_threshold_a: json.derived_idle_threshold_a ?? json.idle_current_threshold ?? null,
+    derived_overconsumption_threshold_a:
+      json.derived_overconsumption_threshold_a ?? json.overconsumption_current_threshold_a ?? null,
     overconsumption_current_threshold_a: json.overconsumption_current_threshold_a ?? null,
     unoccupied_weekday_start_time: json.unoccupied_weekday_start_time ?? null,
     unoccupied_weekday_end_time: json.unoccupied_weekday_end_time ?? null,
@@ -648,6 +704,7 @@ export interface FleetSnapshotItem {
   plant_id?: string | null;
   runtime_status: string;
   load_state: DeviceLoadState;
+  current_band?: DeviceOperatingBand | null;
   location: string | null;
   first_telemetry_timestamp: string | null;
   last_seen_timestamp: string | null;
@@ -1088,6 +1145,11 @@ export async function getDeviceLossStats(deviceId: string): Promise<DeviceLossSt
     updated_at: json.updated_at ?? null,
     tariff_configured: Boolean(json.tariff_configured),
     currency: json.currency ?? "INR",
+    full_load_current_a: json.full_load_current_a ?? null,
+    idle_threshold_pct_of_fla: json.idle_threshold_pct_of_fla ?? null,
+    derived_idle_threshold_a: json.derived_idle_threshold_a ?? json.idle_current_threshold ?? null,
+    derived_overconsumption_threshold_a:
+      json.derived_overconsumption_threshold_a ?? json.overconsumption_current_threshold_a ?? null,
     today: {
       idle_kwh: Number(json.today?.idle_kwh ?? 0),
       idle_cost_inr: json.today?.idle_cost_inr == null ? null : Number(json.today.idle_cost_inr),

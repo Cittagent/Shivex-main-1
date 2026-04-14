@@ -58,6 +58,7 @@ async def test_live_dashboard_summary_is_tenant_scoped_without_loading_full_flee
                 Device(
                     device_id="SHARED-DEVICE-A",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Shared A",
                     device_type="compressor",
                     data_source_type="metered",
@@ -65,6 +66,7 @@ async def test_live_dashboard_summary_is_tenant_scoped_without_loading_full_flee
                 Device(
                     device_id="SHARED-DEVICE-B",
                     tenant_id="TENANT-B",
+                    plant_id="PLANT-1",
                     device_name="Shared B",
                     device_type="compressor",
                     data_source_type="metered",
@@ -149,6 +151,7 @@ async def test_dashboard_summary_uses_live_loss_totals_even_when_energy_service_
                 Device(
                     device_id="LOSS-DEVICE",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Loss A",
                     device_type="compressor",
                     data_source_type="metered",
@@ -219,6 +222,7 @@ async def test_dashboard_summary_uses_live_month_energy_when_energy_service_mont
                 Device(
                     device_id="MONTH-DEVICE",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Month Device",
                     device_type="compressor",
                     data_source_type="metered",
@@ -280,8 +284,8 @@ async def test_dashboard_summary_today_loss_matches_breakdown_and_live_device_to
     async with session_factory() as session:
         session.add_all(
             [
-                Device(device_id="D1", tenant_id="TENANT-A", device_name="Device 1", device_type="compressor"),
-                Device(device_id="D2", tenant_id="TENANT-A", device_name="Device 2", device_type="compressor"),
+                Device(device_id="D1", tenant_id="TENANT-A", plant_id="PLANT-1", device_name="Device 1", device_type="compressor"),
+                Device(device_id="D2", tenant_id="TENANT-A", plant_id="PLANT-1", device_name="Device 2", device_type="compressor"),
                 DeviceLiveState(
                     device_id="D1",
                     tenant_id="TENANT-A",
@@ -336,8 +340,8 @@ async def test_today_loss_breakdown_is_tenant_scoped_and_uses_current_day_live_s
     async with session_factory() as session:
         session.add_all(
             [
-                Device(device_id="SHARED-DEVICE-A", tenant_id="TENANT-A", device_name="A", device_type="compressor"),
-                Device(device_id="SHARED-DEVICE-B", tenant_id="TENANT-B", device_name="B", device_type="compressor"),
+                Device(device_id="SHARED-DEVICE-A", tenant_id="TENANT-A", plant_id="PLANT-1", device_name="A", device_type="compressor"),
+                Device(device_id="SHARED-DEVICE-B", tenant_id="TENANT-B", plant_id="PLANT-1", device_name="B", device_type="compressor"),
                 DeviceLiveState(
                     device_id="SHARED-DEVICE-A",
                     tenant_id="TENANT-A",
@@ -608,3 +612,60 @@ async def test_fleet_snapshot_uses_explicit_accessible_plant_scope(
 
     assert payload["total"] == 2
     assert [device["device_id"] for device in payload["devices"]] == ["P1", "P2"]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_summary_totals_match_sum_of_plant_filtered_views(
+    monkeypatch: pytest.MonkeyPatch,
+    session_factory,
+):
+    local_day = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata")).date()
+    async with session_factory() as session:
+        session.add_all(
+            [
+                Device(
+                    device_id="PLANT-1-DEVICE",
+                    tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
+                    device_name="Plant 1 Device",
+                    device_type="compressor",
+                    data_source_type="metered",
+                ),
+                Device(
+                    device_id="PLANT-2-DEVICE",
+                    tenant_id="TENANT-A",
+                    plant_id="PLANT-2",
+                    device_name="Plant 2 Device",
+                    device_type="compressor",
+                    data_source_type="metered",
+                ),
+                DeviceLiveState(
+                    device_id="PLANT-1-DEVICE",
+                    tenant_id="TENANT-A",
+                    runtime_status="running",
+                    day_bucket=local_day,
+                ),
+                DeviceLiveState(
+                    device_id="PLANT-2-DEVICE",
+                    tenant_id="TENANT-A",
+                    runtime_status="stopped",
+                    day_bucket=local_day,
+                ),
+            ]
+        )
+        await session.commit()
+
+        monkeypatch.setattr(LiveDashboardService, "_fetch_energy_json", AsyncMock(return_value=None))
+        monkeypatch.setattr(TariffCache, "get", AsyncMock(return_value=None))
+
+        service = LiveDashboardService(session)
+        all_plants = await service.get_dashboard_summary(tenant_id="TENANT-A")
+        plant_one = await service.get_dashboard_summary(tenant_id="TENANT-A", plant_id="PLANT-1")
+        plant_two = await service.get_dashboard_summary(tenant_id="TENANT-A", plant_id="PLANT-2")
+
+    assert all_plants["summary"]["total_devices"] == 2
+    assert plant_one["summary"]["total_devices"] == 1
+    assert plant_two["summary"]["total_devices"] == 1
+    assert all_plants["summary"]["total_devices"] == (
+        plant_one["summary"]["total_devices"] + plant_two["summary"]["total_devices"]
+    )

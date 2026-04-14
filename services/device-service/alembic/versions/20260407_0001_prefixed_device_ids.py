@@ -15,10 +15,10 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260407_0001_prefixed_device_ids"
-down_revision: Union[str, tuple[str, str], None] = "20260403_0001_dashboard_snapshots_tenant_scope"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "20260407_0001_prefixed_device_ids"
+down_revision = "20260403_0001_dashboard_snapshots_tenant_scope"
+branch_labels = None
+depends_on = None
 
 _DEVICE_ID_PATTERN = re.compile(r"^(AD|TD|VD)(\d{8})$")
 _CLASS_BY_PREFIX = {"AD": "active", "TD": "test", "VD": "virtual"}

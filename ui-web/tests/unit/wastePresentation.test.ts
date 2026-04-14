@@ -3,17 +3,17 @@ import assert from "node:assert/strict";
 
 import { formatCurrencyCodeValue, formatCurrencyValue, formatEnergyKwh } from "../../lib/presentation.ts";
 import {
+  deriveThresholdsFromFla,
   EXCLUSIVE_LOSS_BUCKET_HELP,
+  formatIdleThresholdPctLabel,
+  getEngineeringSaveBlockReason,
+  hasUnsavedEngineeringDraft,
   IDLE_WIDGET_SCOPE_HELP,
-  WASTE_ANALYSIS_POLICY_HELP,
-  getIdleSaveBlockReason,
-  getOverconsumptionSaveBlockReason,
   OVERCONSUMPTION_THRESHOLD_HELP,
   getOutsideShiftFinancialBucketMessage,
-  getThresholdDriftWarning,
-  validateIdleThresholdSave,
-  validateOverconsumptionThresholdSave,
-  validateThresholdGap,
+  parseEngineeringNumberDraft,
+  validateFlaAndIdlePct,
+  WASTE_ANALYSIS_POLICY_HELP,
 } from "../../lib/wasteSemantics.ts";
 
 test("formatEnergyKwh keeps small non-zero values visible", () => {
@@ -35,14 +35,14 @@ test("formatCurrencyCodeValue preserves cents for report summary cards", () => {
 });
 
 test("overconsumption help text matches exclusive accounting policy", () => {
-  assert.match(OVERCONSUMPTION_THRESHOLD_HELP, /after off-hours and idle-running checks/i);
-  assert.doesNotMatch(OVERCONSUMPTION_THRESHOLD_HELP, /independent of idle threshold/i);
+  assert.match(OVERCONSUMPTION_THRESHOLD_HELP, /derived from full load current/i);
+  assert.match(OVERCONSUMPTION_THRESHOLD_HELP, /measured energy above the FLA band/i);
 });
 
 test("shared loss copy explains exclusive buckets and outside-shift booking", () => {
-  assert.match(EXCLUSIVE_LOSS_BUCKET_HELP, /outside-shift energy is booked to Off-hours/i);
-  assert.match(IDLE_WIDGET_SCOPE_HELP, /during active shifts only/i);
-  assert.match(WASTE_ANALYSIS_POLICY_HELP, /outside-shift energy is counted as Off-Hours/i);
+  assert.match(EXCLUSIVE_LOSS_BUCKET_HELP, /measured telemetry energy/i);
+  assert.match(IDLE_WIDGET_SCOPE_HELP, /default idle band at 25% of FLA/i);
+  assert.match(WASTE_ANALYSIS_POLICY_HELP, /FLA drives classification bands/i);
 });
 
 test("outside-shift financial bucket message separates operational state from financial loss bucket", () => {
@@ -60,66 +60,53 @@ test("outside-shift financial bucket message separates operational state from fi
   );
 });
 
-test("threshold gap validation rejects overlapping idle and overconsumption thresholds", () => {
-  assert.equal(
-    validateThresholdGap(1, 0.5),
-    "Overconsumption threshold must be greater than idle threshold so waste categories remain exclusive.",
-  );
-  assert.equal(validateThresholdGap(1, 2), null);
-  assert.equal(validateThresholdGap(null, 2), null);
+test("engineering draft parser accepts numeric input and blanks", () => {
+  assert.equal(parseEngineeringNumberDraft(""), null);
+  assert.equal(parseEngineeringNumberDraft(" 0.25 "), 0.25);
+  assert.equal(parseEngineeringNumberDraft("abc"), null);
 });
 
-test("idle save validates against persisted over-threshold, not unsaved draft over-threshold", () => {
+test("FLA and idle percent validation enforces positive FLA and sub-100 idle percent", () => {
   assert.equal(
-    validateIdleThresholdSave(0.6, 0.5),
-    "Overconsumption threshold must be greater than idle threshold so waste categories remain exclusive.",
+    validateFlaAndIdlePct(null, 0.25),
+    "Full load current must be a positive number.",
   );
-  assert.equal(validateIdleThresholdSave(0.6, 1), null);
+  assert.equal(
+    validateFlaAndIdlePct(20, 1),
+    "Idle threshold percent must stay below 1.0 so the idle band remains below FLA.",
+  );
+  assert.equal(validateFlaAndIdlePct(20, 0.25), null);
 });
 
-test("waste save validates against persisted idle-threshold", () => {
+test("save block reason reuses the shared FLA validation", () => {
   assert.equal(
-    validateOverconsumptionThresholdSave(0.6, 0.5),
-    "Overconsumption threshold must be greater than idle threshold so waste categories remain exclusive.",
-  );
-  assert.equal(validateOverconsumptionThresholdSave(0.6, 1), null);
-});
-
-test("threshold drift warning explains unsaved sibling state", () => {
-  assert.match(
-    getThresholdDriftWarning({
-      saveTarget: "idle",
-      idleDraft: "0.6",
-      persistedIdleThreshold: 0.6,
-      overDraft: "1.0",
-      persistedOverThreshold: 0.5,
-    }) || "",
-    /unsaved changes/i,
-  );
-  assert.equal(
-    getThresholdDriftWarning({
-      saveTarget: "overconsumption",
-      idleDraft: "0.6",
-      persistedIdleThreshold: 0.6,
-      overDraft: "1.0",
-      persistedOverThreshold: 1.0,
-    }),
+    getEngineeringSaveBlockReason(20, 0.25),
     null,
   );
+  assert.match(getEngineeringSaveBlockReason(0, 0.25) || "", /full load current/i);
 });
 
-test("idle save block reason references saved overconsumption threshold", () => {
-  assert.match(
-    getIdleSaveBlockReason(0.2, 0.1) || "",
-    /saved overconsumption threshold is 0.10A/i,
-  );
-  assert.equal(getIdleSaveBlockReason(0.2, 0.8), null);
+test("unsaved engineering draft detection compares parsed numeric values", () => {
+  assert.equal(hasUnsavedEngineeringDraft("0.25", 0.25), false);
+  assert.equal(hasUnsavedEngineeringDraft("0.30", 0.25), true);
 });
 
-test("waste save block reason references saved idle threshold", () => {
-  assert.match(
-    getOverconsumptionSaveBlockReason(0.6, 0.5) || "",
-    /saved idle threshold is 0.60A/i,
-  );
-  assert.equal(getOverconsumptionSaveBlockReason(0.2, 0.8), null);
+test("derived thresholds use FLA and the default 25 percent idle band", () => {
+  assert.deepEqual(deriveThresholdsFromFla(20, null), {
+    fullLoadCurrent: 20,
+    idleThresholdPct: 0.25,
+    derivedIdleThreshold: 5,
+    derivedOverconsumptionThreshold: 20,
+  });
+  assert.deepEqual(deriveThresholdsFromFla(null, 0.4), {
+    fullLoadCurrent: null,
+    idleThresholdPct: 0.4,
+    derivedIdleThreshold: null,
+    derivedOverconsumptionThreshold: null,
+  });
+});
+
+test("idle threshold percent label renders as a readable percentage", () => {
+  assert.equal(formatIdleThresholdPctLabel(0.25), "25% of FLA");
+  assert.equal(formatIdleThresholdPctLabel(null), "25% of FLA");
 });

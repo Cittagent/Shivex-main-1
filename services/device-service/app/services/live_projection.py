@@ -19,6 +19,7 @@ from app.models.device import Device, DeviceLiveState, DeviceShift, RuntimeStatu
 from app.repositories.device import DeviceRepository
 from app.services.health_config import HealthConfigService
 from app.services.idle_running import IdleRunningService, TariffCache
+from app.services.load_thresholds import classify_current_band, resolve_device_thresholds
 from app.services.runtime_state import resolve_load_state, resolve_runtime_status
 from app.services.shift import ShiftService
 from services.shared.energy_accounting import aggregate_window, split_loss_components
@@ -54,15 +55,15 @@ def _health_machine_state_from_live_state(load_state: Optional[str], runtime_sta
 def _health_machine_state_for_recompute(
     *,
     latest_telemetry: dict[str, Any],
-    idle_threshold: Optional[float],
+    device: Device,
     persisted_load_state: Optional[str],
     persisted_runtime_status: Optional[str],
 ) -> str:
     mapped = IdleRunningService.map_telemetry(latest_telemetry)
-    derived_load_state = IdleRunningService.detect_device_state(
+    derived_load_state = IdleRunningService.detect_device_state_with_thresholds(
         current=mapped.current,
         voltage=mapped.voltage,
-        threshold=idle_threshold,
+        thresholds=resolve_device_thresholds(device),
     )
     if derived_load_state in {"running", "idle", "unloaded"}:
         return _health_machine_state_from_live_state(derived_load_state, RuntimeStatus.RUNNING.value)
@@ -345,10 +346,11 @@ class LiveProjectionService:
         power_kw = normalized.business_power_w / 1000.0
         current_a = normalized.current_a
         voltage_v = normalized.voltage_v
-        load_state = IdleRunningService.detect_device_state(
+        thresholds = resolve_device_thresholds(device)
+        load_state = IdleRunningService.detect_device_state_with_thresholds(
             current=current_a,
             voltage=voltage_v,
-            threshold=self._to_float(device.idle_current_threshold),
+            thresholds=thresholds,
         )
         previous_load_state = state.load_state
         previous_idle_streak_started_at = self._as_utc(state.idle_streak_started_at)
@@ -394,8 +396,8 @@ class LiveProjectionService:
             if running_signal:
                 state.today_running_seconds = int(state.today_running_seconds or 0) + int(dt_sec)
 
-        idle_threshold = self._to_float(device.idle_current_threshold)
-        over_threshold = self._to_float(device.overconsumption_current_threshold_a)
+        idle_threshold = thresholds.derived_idle_threshold_a
+        over_threshold = thresholds.derived_overconsumption_threshold_a
         idle_delta = 0.0
         off_delta = 0.0
         over_delta = 0.0
@@ -517,7 +519,7 @@ class LiveProjectionService:
             if telemetry_numeric:
                 machine_state = _health_machine_state_for_recompute(
                     latest_telemetry=latest,
-                    idle_threshold=self._to_float(device.idle_current_threshold),
+                    device=device,
                     persisted_load_state=state.load_state,
                     persisted_runtime_status=state.runtime_status,
                 )
@@ -737,8 +739,8 @@ class LiveProjectionService:
             rows,
             platform_tz=local_tz,
             shifts=[shift for shift in (device.shifts or []) if shift.is_active],
-            idle_threshold=self._to_float(device.idle_current_threshold),
-            over_threshold=self._to_float(device.overconsumption_current_threshold_a),
+            idle_threshold=resolve_device_thresholds(device).derived_idle_threshold_a,
+            over_threshold=resolve_device_thresholds(device).derived_overconsumption_threshold_a,
             config_source=device,
         )
 
@@ -791,9 +793,19 @@ class LiveProjectionService:
         if row is None:
             raise ValueError(f"Device '{device_id}' not found")
         device, state = row
+        thresholds = resolve_device_thresholds(device)
         authoritative_last_seen = state.last_telemetry_ts if state and state.last_telemetry_ts is not None else device.last_seen_timestamp
         runtime_status = resolve_runtime_status(authoritative_last_seen)
         load_state = resolve_load_state(state.load_state if state else None, authoritative_last_seen)
+        current_band = (
+            classify_current_band(
+                float(state.last_current_a) if state and state.last_current_a is not None else None,
+                float(state.last_voltage_v) if state and state.last_voltage_v is not None else None,
+                thresholds,
+            )
+            if runtime_status == RuntimeStatus.RUNNING.value
+            else "unknown"
+        )
         first_activation_ts = self._as_utc(device.first_telemetry_timestamp)
         idle_streak_started_at = self._as_utc(state.idle_streak_started_at) if state else None
         return {
@@ -803,6 +815,11 @@ class LiveProjectionService:
             "plant_id": device.plant_id,
             "runtime_status": runtime_status,
             "load_state": load_state,
+            "current_band": current_band,
+            "full_load_current_a": thresholds.full_load_current_a,
+            "idle_threshold_pct_of_fla": thresholds.idle_threshold_pct_of_fla,
+            "derived_idle_threshold_a": thresholds.derived_idle_threshold_a,
+            "derived_overconsumption_threshold_a": thresholds.derived_overconsumption_threshold_a,
             "idle_streak_started_at": idle_streak_started_at.isoformat() if idle_streak_started_at is not None else None,
             "idle_streak_duration_sec": int(state.idle_streak_duration_sec) if state else 0,
             "location": device.location,

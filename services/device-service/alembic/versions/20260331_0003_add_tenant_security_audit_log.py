@@ -11,10 +11,10 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260331_0003_add_tenant_security_audit_log"
-down_revision: Union[str, tuple[str, str], None] = "20260331_0002_enforce_tenant_not_null"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "20260331_0003_add_tenant_security_audit_log"
+down_revision = "20260331_0002_enforce_tenant_not_null"
+branch_labels = None
+depends_on = None
 
 
 def upgrade() -> None:
@@ -53,4 +53,3 @@ def downgrade() -> None:
     op.drop_index("ix_audit_created_at", table_name="tenant_security_audit_log")
     op.drop_index("ix_audit_caller_tenant", table_name="tenant_security_audit_log")
     op.drop_table("tenant_security_audit_log")
-

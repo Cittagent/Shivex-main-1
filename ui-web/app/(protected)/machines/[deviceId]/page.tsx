@@ -12,8 +12,6 @@ import {
   saveIdleConfig,
   getCurrentState,
   getDeviceLossStats,
-  getDeviceWasteConfig,
-  saveDeviceWasteConfig,
   CurrentState,
   DeviceLossStats,
   getShifts,
@@ -63,12 +61,12 @@ import { formatCurrencyValue, formatEnergyKwh } from "@/lib/presentation";
 import {
   EXCLUSIVE_LOSS_BUCKET_HELP,
   OVERCONSUMPTION_THRESHOLD_HELP,
+  deriveThresholdsFromFla,
+  formatIdleThresholdPctLabel,
+  getEngineeringSaveBlockReason,
+  hasUnsavedEngineeringDraft,
   getOutsideShiftFinancialBucketMessage,
-  getIdleSaveBlockReason,
-  getOverconsumptionSaveBlockReason,
-  getThresholdDriftWarning,
-  validateIdleThresholdSave,
-  validateOverconsumptionThresholdSave,
+  parseEngineeringNumberDraft,
 } from "@/lib/wasteSemantics";
 import { getVisibleDeviceDetailTabs } from "@/lib/deviceDetailTabs";
 
@@ -670,14 +668,12 @@ export default function MachineDashboardPage() {
   const [healthScore, setHealthScore] = useState<HealthScore | null>(null);
   const [currentState, setCurrentState] = useState<CurrentState | null>(null);
   const [lossStats, setLossStats] = useState<DeviceLossStats | null>(null);
-  const [idleThresholdInput, setIdleThresholdInput] = useState<string>("");
-  const [persistedIdleThreshold, setPersistedIdleThreshold] = useState<number | null>(null);
-  const [idleSaveMessage, setIdleSaveMessage] = useState<string>("");
-  const [idleSaving, setIdleSaving] = useState(false);
-  const [overconsumptionThresholdInput, setOverconsumptionThresholdInput] = useState<string>("");
-  const [persistedOverconsumptionThreshold, setPersistedOverconsumptionThreshold] = useState<number | null>(null);
-  const [wasteConfigSaving, setWasteConfigSaving] = useState(false);
-  const [wasteConfigMessage, setWasteConfigMessage] = useState<string>("");
+  const [fullLoadCurrentInput, setFullLoadCurrentInput] = useState<string>("");
+  const [persistedFullLoadCurrent, setPersistedFullLoadCurrent] = useState<number | null>(null);
+  const [idleThresholdPctInput, setIdleThresholdPctInput] = useState<string>("");
+  const [persistedIdleThresholdPct, setPersistedIdleThresholdPct] = useState<number | null>(null);
+  const [engineeringSaveMessage, setEngineeringSaveMessage] = useState<string>("");
+  const [engineeringSaving, setEngineeringSaving] = useState(false);
   const [widgetConfig, setWidgetConfig] = useState<DashboardWidgetConfig | null>(null);
   const [selectedWidgetFields, setSelectedWidgetFields] = useState<string[]>([]);
   const [widgetSaveMessage, setWidgetSaveMessage] = useState<string>("");
@@ -731,26 +727,24 @@ export default function MachineDashboardPage() {
         setWidgetDirty(false);
       }
       setHealthScore(bootstrap.health_score);
-      setIdleThresholdInput(
-        bootstrap.idle_config?.idle_current_threshold !== null &&
-        bootstrap.idle_config?.idle_current_threshold !== undefined
-          ? String(bootstrap.idle_config.idle_current_threshold)
+      setFullLoadCurrentInput(
+        bootstrap.idle_config?.full_load_current_a != null
+          ? String(bootstrap.idle_config.full_load_current_a)
           : ""
       );
-      setPersistedIdleThreshold(
-        bootstrap.idle_config?.idle_current_threshold !== null &&
-        bootstrap.idle_config?.idle_current_threshold !== undefined
-          ? Number(bootstrap.idle_config.idle_current_threshold)
+      setPersistedFullLoadCurrent(
+        bootstrap.idle_config?.full_load_current_a != null
+          ? Number(bootstrap.idle_config.full_load_current_a)
           : null,
       );
-      setOverconsumptionThresholdInput(
-        bootstrap.waste_config?.overconsumption_current_threshold_a != null
-          ? String(bootstrap.waste_config.overconsumption_current_threshold_a)
+      setIdleThresholdPctInput(
+        bootstrap.idle_config?.idle_threshold_pct_of_fla != null
+          ? String(bootstrap.idle_config.idle_threshold_pct_of_fla)
           : ""
       );
-      setPersistedOverconsumptionThreshold(
-        bootstrap.waste_config?.overconsumption_current_threshold_a != null
-          ? Number(bootstrap.waste_config.overconsumption_current_threshold_a)
+      setPersistedIdleThresholdPct(
+        bootstrap.idle_config?.idle_threshold_pct_of_fla != null
+          ? Number(bootstrap.idle_config.idle_threshold_pct_of_fla)
           : null,
       );
       
@@ -823,14 +817,24 @@ export default function MachineDashboardPage() {
   const loadIdleConfig = async () => {
     try {
       const config = await getIdleConfig(deviceId);
-      setIdleThresholdInput(
-        config.idle_current_threshold !== null && config.idle_current_threshold !== undefined
-          ? String(config.idle_current_threshold)
+      setFullLoadCurrentInput(
+        config.full_load_current_a != null
+          ? String(config.full_load_current_a)
           : ""
       );
-      setPersistedIdleThreshold(
-        config.idle_current_threshold !== null && config.idle_current_threshold !== undefined
-          ? Number(config.idle_current_threshold)
+      setPersistedFullLoadCurrent(
+        config.full_load_current_a != null
+          ? Number(config.full_load_current_a)
+          : null,
+      );
+      setIdleThresholdPctInput(
+        config.idle_threshold_pct_of_fla != null
+          ? String(config.idle_threshold_pct_of_fla)
+          : ""
+      );
+      setPersistedIdleThresholdPct(
+        config.idle_threshold_pct_of_fla != null
+          ? Number(config.idle_threshold_pct_of_fla)
           : null,
       );
     } catch (err) {
@@ -853,24 +857,6 @@ export default function MachineDashboardPage() {
       setLossStats(stats);
     } catch (err) {
       console.error("Failed to load device loss stats:", err);
-    }
-  };
-
-  const loadWasteConfig = async () => {
-    try {
-      const cfg = await getDeviceWasteConfig(deviceId);
-      setOverconsumptionThresholdInput(
-        cfg.overconsumption_current_threshold_a != null
-          ? String(cfg.overconsumption_current_threshold_a)
-          : ""
-      );
-      setPersistedOverconsumptionThreshold(
-        cfg.overconsumption_current_threshold_a != null
-          ? Number(cfg.overconsumption_current_threshold_a)
-          : null,
-      );
-    } catch (err) {
-      console.error("Failed to load waste config:", err);
     }
   };
 
@@ -1033,57 +1019,25 @@ export default function MachineDashboardPage() {
     }
   };
 
-  const handleSaveIdleThreshold = async () => {
-    const parsed = parsedIdleDraft;
-    if (parsed == null || idleSaveBlockReason) {
-      return;
-    }
-    const thresholdError = validateIdleThresholdSave(parsed, persistedOverconsumptionThreshold);
-    if (thresholdError) {
+  const handleSaveEngineeringConfig = async () => {
+    const fullLoadCurrent = parsedFullLoadCurrentDraft;
+    const idleThresholdPct = resolvedIdleThresholdPctDraft;
+    if (fullLoadCurrent == null || engineeringSaveBlockReason) {
       return;
     }
     try {
-      setIdleSaving(true);
-      setIdleSaveMessage("");
-      await saveIdleConfig(deviceId, parsed);
-      await Promise.all([loadIdleConfig(), loadWasteConfig(), loadCurrentState(), loadLossStats()]);
-      setIdleSaveMessage(`Saved: Below ${parsed.toFixed(2)}A = Idle Running`);
-    } catch (err) {
-      alert("Failed: " + (err as Error).message);
-    } finally {
-      setIdleSaving(false);
-    }
-  };
-
-  const handleSaveWasteConfig = async () => {
-    const hasThreshold = overconsumptionThresholdInput.trim().length > 0;
-    const thresholdParsed = hasThreshold ? parsedOverconsumptionDraft : null;
-    if ((hasThreshold && thresholdParsed == null) || wasteSaveBlockReason) {
-      return;
-    }
-    const thresholdError = validateOverconsumptionThresholdSave(
-      persistedIdleThreshold,
-      hasThreshold ? thresholdParsed : null,
-    );
-    if (thresholdError) {
-      return;
-    }
-    try {
-      setWasteConfigSaving(true);
-      setWasteConfigMessage("");
-      await saveDeviceWasteConfig(deviceId, {
-        overconsumption_current_threshold_a: hasThreshold ? Number(thresholdParsed) : null,
-        unoccupied_weekday_start_time: null,
-        unoccupied_weekday_end_time: null,
-        unoccupied_weekend_start_time: null,
-        unoccupied_weekend_end_time: null,
+      setEngineeringSaving(true);
+      setEngineeringSaveMessage("");
+      await saveIdleConfig(deviceId, {
+        full_load_current_a: fullLoadCurrent,
+        idle_threshold_pct_of_fla: idleThresholdPct,
       });
-      await Promise.all([loadIdleConfig(), loadWasteConfig(), loadLossStats()]);
-      setWasteConfigMessage("Waste configuration saved.");
+      await Promise.all([loadIdleConfig(), loadCurrentState(), loadLossStats()]);
+      setEngineeringSaveMessage("FLA-based load classification saved.");
     } catch (err) {
       alert("Failed: " + (err as Error).message);
     } finally {
-      setWasteConfigSaving(false);
+      setEngineeringSaving(false);
     }
   };
 
@@ -1161,35 +1115,42 @@ export default function MachineDashboardPage() {
         : effectiveLoadState === "unloaded"
           ? "Unloaded"
           : "Unknown";
+  const currentBandLabel =
+    currentState?.current_band === "in_load"
+      ? "In Load"
+      : currentState?.current_band === "overconsumption"
+        ? "Overconsumption"
+        : currentState?.current_band === "idle"
+          ? "Idle"
+          : currentState?.current_band === "unloaded"
+            ? "Unloaded"
+            : "Unknown";
   const noActiveShiftWindow = uptime?.uptime_percentage == null;
   const outsideShiftFinancialBucketMessage = noActiveShiftWindow
     ? getOutsideShiftFinancialBucketMessage(effectiveLoadStateLabel)
     : null;
-  const parsedIdleDraft = idleThresholdInput.trim().length > 0 ? Number(idleThresholdInput) : null;
-  const parsedOverconsumptionDraft =
-    overconsumptionThresholdInput.trim().length > 0 ? Number(overconsumptionThresholdInput) : null;
-  const idleThresholdDriftWarning = getThresholdDriftWarning({
-    saveTarget: "idle",
-    idleDraft: idleThresholdInput,
-    persistedIdleThreshold,
-    overDraft: overconsumptionThresholdInput,
-    persistedOverThreshold: persistedOverconsumptionThreshold,
-  });
-  const wasteThresholdDriftWarning = getThresholdDriftWarning({
-    saveTarget: "overconsumption",
-    idleDraft: idleThresholdInput,
-    persistedIdleThreshold,
-    overDraft: overconsumptionThresholdInput,
-    persistedOverThreshold: persistedOverconsumptionThreshold,
-  });
-  const idleSaveBlockReason = getIdleSaveBlockReason(parsedIdleDraft, persistedOverconsumptionThreshold);
-  const wasteSaveBlockReason = getOverconsumptionSaveBlockReason(
-    persistedIdleThreshold,
-    parsedOverconsumptionDraft,
+  const parsedFullLoadCurrentDraft = parseEngineeringNumberDraft(fullLoadCurrentInput);
+  const parsedIdleThresholdPctDraft = parseEngineeringNumberDraft(idleThresholdPctInput);
+  const resolvedIdleThresholdPctDraft =
+    idleThresholdPctInput.trim().length > 0
+      ? parsedIdleThresholdPctDraft
+      : (persistedIdleThresholdPct ?? 0.25);
+  const engineeringSaveBlockReason = getEngineeringSaveBlockReason(
+    parsedFullLoadCurrentDraft,
+    resolvedIdleThresholdPctDraft,
   );
-  const idleDraftDiffersFromSaved = (parsedIdleDraft ?? null) !== (persistedIdleThreshold ?? null);
-  const overDraftDiffersFromSaved =
-    (parsedOverconsumptionDraft ?? null) !== (persistedOverconsumptionThreshold ?? null);
+  const fullLoadCurrentDraftDiffersFromSaved = hasUnsavedEngineeringDraft(
+    fullLoadCurrentInput,
+    persistedFullLoadCurrent,
+  );
+  const idleThresholdPctDraftDiffersFromSaved = hasUnsavedEngineeringDraft(
+    idleThresholdPctInput,
+    persistedIdleThresholdPct,
+  );
+  const thresholdPreview = deriveThresholdsFromFla(
+    parsedFullLoadCurrentDraft,
+    resolvedIdleThresholdPctDraft,
+  );
   const shiftTimeEqual = newShift.shift_start === newShift.shift_end;
   const shiftOverlapConflicts = findOverlapConflicts(newShift, shifts);
   const shiftFormError = shiftTimeEqual
@@ -1809,46 +1770,90 @@ export default function MachineDashboardPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Idle Running Configuration</CardTitle>
+                <CardTitle>Load Classification Configuration</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
                   <p className="text-sm text-slate-600">
-                    If current is below this value (but not zero), the machine is considered idle.
+                    Full load current (FLA) is the primary engineering input. Idle is derived as a percentage of FLA,
+                    and overconsumption starts above FLA. Loss booking still uses measured telemetry energy.
                   </p>
-                  <div className="flex flex-col md:flex-row md:items-end gap-3">
-                    <div className="w-full md:w-72">
-                      <label className="block text-sm font-medium mb-1">Idle Current Threshold (A)</label>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Full Load Current (A)</label>
                       <input
                         type="number"
                         min="0.01"
                         step="0.01"
-                        value={idleThresholdInput}
-                        onChange={(e) => setIdleThresholdInput(e.target.value)}
+                        value={fullLoadCurrentInput}
+                        onChange={(e) => setFullLoadCurrentInput(e.target.value)}
                         className="w-full px-3 py-2 border rounded-md"
-                        placeholder="e.g. 5.00"
+                        placeholder="e.g. 20.00"
                       />
                       <p className="mt-1 text-xs text-slate-500">
-                        Saved: {persistedIdleThreshold != null ? `${persistedIdleThreshold.toFixed(2)} A` : "Not configured"}
+                        Saved: {persistedFullLoadCurrent != null ? `${persistedFullLoadCurrent.toFixed(2)} A` : "Not configured"}
                       </p>
-                      {idleDraftDiffersFromSaved && (
+                      {fullLoadCurrentDraftDiffersFromSaved && (
                         <p className="mt-1 text-xs text-amber-700">Draft differs from saved value.</p>
                       )}
                     </div>
-                    <Button onClick={handleSaveIdleThreshold} disabled={idleSaving || Boolean(idleSaveBlockReason)}>
-                      {idleSaving ? "Saving..." : "Save Threshold"}
-                    </Button>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Idle Threshold Percent of FLA</label>
+                      <input
+                        type="number"
+                        min="0.01"
+                        max="0.99"
+                        step="0.01"
+                        value={idleThresholdPctInput}
+                        onChange={(e) => setIdleThresholdPctInput(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-md"
+                        placeholder="Defaults to 0.25"
+                      />
+                      <p className="mt-1 text-xs text-slate-500">
+                        Saved: {persistedIdleThresholdPct != null ? formatIdleThresholdPctLabel(persistedIdleThresholdPct) : "25% of FLA"}
+                      </p>
+                      {idleThresholdPctDraftDiffersFromSaved && (
+                        <p className="mt-1 text-xs text-amber-700">Draft differs from saved value.</p>
+                      )}
+                    </div>
                   </div>
-                  {idleSaveMessage && (
-                    <p className="text-sm text-emerald-700">{idleSaveMessage}</p>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      onClick={handleSaveEngineeringConfig}
+                      disabled={engineeringSaving || Boolean(engineeringSaveBlockReason)}
+                    >
+                      {engineeringSaving ? "Saving..." : "Save Classification"}
+                    </Button>
+                    {engineeringSaveMessage && (
+                      <span className="text-sm text-emerald-700">{engineeringSaveMessage}</span>
+                    )}
+                  </div>
+                  {engineeringSaveBlockReason && (
+                    <p className="text-sm text-amber-700">{engineeringSaveBlockReason}</p>
                   )}
-                  {idleSaveBlockReason && (
-                    <p className="text-sm text-amber-700">{idleSaveBlockReason}</p>
-                  )}
-                  {idleThresholdDriftWarning && (
-                    <p className="text-sm text-amber-700">{idleThresholdDriftWarning}</p>
-                  )}
+
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+                    <p>Idle default: 25% of FLA unless you override the idle percentage.</p>
+                    <p>
+                      Derived idle threshold:{" "}
+                      <span className="font-semibold text-slate-800">
+                        {thresholdPreview.derivedIdleThreshold != null
+                          ? `${thresholdPreview.derivedIdleThreshold.toFixed(2)} A`
+                          : "Unavailable until FLA is configured"}
+                      </span>
+                    </p>
+                    <p>
+                      Derived overconsumption threshold:{" "}
+                      <span className="font-semibold text-slate-800">
+                        {thresholdPreview.derivedOverconsumptionThreshold != null
+                          ? `${thresholdPreview.derivedOverconsumptionThreshold.toFixed(2)} A`
+                          : "Unavailable until FLA is configured"}
+                      </span>
+                    </p>
+                    <p>
+                      Current operating band:{" "}
+                      <span className="font-semibold text-slate-800">{currentBandLabel}</span>
+                    </p>
                     <p>
                       Auto-detected current field:{" "}
                       <span className="font-semibold text-slate-800">
@@ -1861,65 +1866,12 @@ export default function MachineDashboardPage() {
                         {machine.data_source_type || "metered"}
                       </span>
                     </p>
+                    <p>{OVERCONSUMPTION_THRESHOLD_HELP}</p>
                     {!currentState?.current_field && (
                       <p className="text-amber-700">
-                        No current parameter found in telemetry. Idle detection will remain unavailable until current data is received.
+                        No current parameter found in telemetry. Idle and overconsumption detection will remain unavailable until current data is received.
                       </p>
                     )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Waste Configuration</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <p className="text-sm text-slate-600">
-                    Configure dedicated overconsumption threshold.
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Overconsumption Threshold (A)</label>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={overconsumptionThresholdInput}
-                        onChange={(e) => setOverconsumptionThresholdInput(e.target.value)}
-                        className="w-full px-3 py-2 border rounded-md"
-                        placeholder="Leave empty to skip category"
-                      />
-                      <p className="mt-1 text-xs text-slate-500">
-                        Saved: {persistedOverconsumptionThreshold != null ? `${persistedOverconsumptionThreshold.toFixed(2)} A` : "Not configured"}
-                      </p>
-                      {overDraftDiffersFromSaved && (
-                        <p className="mt-1 text-xs text-amber-700">Draft differs from saved value.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <Button onClick={handleSaveWasteConfig} disabled={wasteConfigSaving || Boolean(wasteSaveBlockReason)}>
-                      {wasteConfigSaving ? "Saving..." : "Save Waste Config"}
-                    </Button>
-                    {wasteConfigMessage && (
-                      <span className="text-sm text-emerald-700">{wasteConfigMessage}</span>
-                    )}
-                  </div>
-                  {wasteSaveBlockReason && (
-                    <p className="text-sm text-amber-700">{wasteSaveBlockReason}</p>
-                  )}
-                  {wasteThresholdDriftWarning && (
-                    <p className="text-sm text-amber-700">{wasteThresholdDriftWarning}</p>
-                  )}
-
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
-                    <p>
-                      {OVERCONSUMPTION_THRESHOLD_HELP}
-                    </p>
                   </div>
                 </div>
               </CardContent>

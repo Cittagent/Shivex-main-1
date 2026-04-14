@@ -9,7 +9,7 @@ import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status, Header
 from fastapi.responses import StreamingResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +62,7 @@ from app.services.device import DeviceService
 from app.services.device_errors import (
     DeviceAlreadyExistsError,
     DeviceIdAllocationError,
+    DevicePlantRequiredError,
     HardwareInstallationConflictError,
     HardwareInstallationCompatibilityError,
     HardwareInstallationNotFoundError,
@@ -114,10 +115,25 @@ def get_tenant_id(request: Request) -> str | None:
 
 
 class IdleConfigRequest(BaseModel):
-    idle_current_threshold: float = Field(..., gt=0)
+    full_load_current_a: Optional[float] = Field(default=None, gt=0)
+    idle_threshold_pct_of_fla: Optional[float] = Field(default=None, gt=0, lt=1)
+    idle_current_threshold: Optional[float] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> "IdleConfigRequest":
+        if (
+            self.full_load_current_a is None
+            and self.idle_threshold_pct_of_fla is None
+            and self.idle_current_threshold is None
+        ):
+            raise ValueError(
+                "One of full_load_current_a, idle_threshold_pct_of_fla, or deprecated idle_current_threshold is required."
+            )
+        return self
 
 
 class DeviceWasteConfigRequest(BaseModel):
+    full_load_current_a: Optional[float] = Field(default=None, gt=0)
     overconsumption_current_threshold_a: Optional[float] = Field(default=None, gt=0)
     unoccupied_weekday_start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     unoccupied_weekday_end_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")
@@ -1004,6 +1020,14 @@ async def create_device(
     try:
         device = await service.create_device(device_data)
         return DeviceSingleResponse(data=device)
+    except DevicePlantRequiredError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "PLANT_REQUIRED",
+                "message": str(e),
+            },
+        ) from e
     except DeviceAlreadyExistsError as e:
         logger.warning(
             "Device creation conflict",
@@ -1317,7 +1341,40 @@ async def update_device(
                     "message": "You do not have access to this device's plant.",
                 },
             )
-    device = await service.update_device(device_id, device_data, tenant_id)
+    next_plant_id = existing_device.plant_id
+    if "plant_id" in device_data.model_fields_set:
+        if device_data.plant_id is None or not device_data.plant_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "PLANT_REQUIRED",
+                    "message": "Plant ID is required. Devices cannot exist without a plant assignment.",
+                },
+            )
+        next_plant_id = device_data.plant_id.strip()
+        device_data.plant_id = next_plant_id
+
+    if auth["role"] in ("plant_manager", "operator", "viewer") and next_plant_id not in auth["plant_ids"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "PLANT_ACCESS_DENIED",
+                "message": "You do not have access to this plant.",
+            },
+        )
+
+    await _validate_org_plant_access(request, tenant_id=tenant_id, plant_id=next_plant_id)
+
+    try:
+        device = await service.update_device(device_id, device_data, tenant_id)
+    except DevicePlantRequiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "PLANT_REQUIRED",
+                "message": str(exc),
+            },
+        ) from exc
     
     if not device:
         raise HTTPException(
@@ -2619,7 +2676,13 @@ async def set_idle_config(
         )
     service = IdleRunningService(db, TenantContext.from_request(request))
     try:
-        data = await service.set_idle_config(device_id, get_required_tenant_id(request), payload.idle_current_threshold)
+        data = await service.set_idle_config(
+            device_id,
+            get_required_tenant_id(request),
+            full_load_current_a=payload.full_load_current_a,
+            idle_threshold_pct_of_fla=payload.idle_threshold_pct_of_fla,
+            idle_current_threshold=payload.idle_current_threshold,
+        )
         return {"success": True, **data}
     except ThresholdConfigurationError as exc:
         raise HTTPException(
@@ -2718,6 +2781,7 @@ async def set_waste_config(
             device_id=device_id,
             tenant_id=tenant_id,
             overconsumption_current_threshold_a=payload.overconsumption_current_threshold_a,
+            full_load_current_a=payload.full_load_current_a,
             unoccupied_weekday_start_time=payload.unoccupied_weekday_start_time,
             unoccupied_weekday_end_time=payload.unoccupied_weekday_end_time,
             unoccupied_weekend_start_time=payload.unoccupied_weekend_start_time,

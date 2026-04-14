@@ -13,10 +13,10 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260413_0002"
-down_revision: Union[str, tuple[str, str], None] = "20260413_0001"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "20260413_0002"
+down_revision = "20260413_0001"
+branch_labels = None
+depends_on = None
 
 
 def upgrade() -> None:

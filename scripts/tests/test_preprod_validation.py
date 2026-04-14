@@ -118,3 +118,39 @@ def test_make_config_maps_full_reset_to_full_validation_mode(monkeypatch, tmp_pa
     assert config.mode == "full-validation"
     assert config.reset_stack is True
     assert config.stop_on_first_defect is True
+
+
+def test_full_reset_purges_standalone_simulators_before_compose_reset(tmp_path: Path) -> None:
+    runner = preprod_validation.PreprodValidationRunner(_config(tmp_path))
+    calls: list[tuple[str, list[str]]] = []
+
+    def _fake_run_command(name: str, command: list[str]):
+        calls.append((name, command))
+        return preprod_validation.CommandResult(
+            name=name,
+            command=" ".join(command),
+            status="PASS",
+            returncode=0,
+            duration_seconds=0.0,
+            stdout_path=str(tmp_path / f"{name}.stdout"),
+            stderr_path=str(tmp_path / f"{name}.stderr"),
+        )
+
+    try:
+        runner.config.reset_stack = True
+        runner.run_command = _fake_run_command  # type: ignore[method-assign]
+
+        runner.reset_stack_if_requested()
+
+        assert calls == [
+            ("simulator-purge", ["./scripts/simulatorctl.sh", "purge"]),
+            ("docker-compose-down", ["docker", "compose", "down", "-v", "--remove-orphans"]),
+            ("docker-compose-up", ["docker", "compose", "up", "-d", "--build"]),
+        ]
+        assert runner.reset_steps_performed == [
+            "./scripts/simulatorctl.sh purge",
+            "docker compose down -v --remove-orphans",
+            "docker compose up -d --build",
+        ]
+    finally:
+        runner.close()

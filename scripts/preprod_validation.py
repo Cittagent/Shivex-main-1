@@ -678,9 +678,32 @@ class PreprodValidationRunner:
         completed = subprocess.run(command, cwd=str(REPO_ROOT), capture_output=True, text=True)
         return completed.stdout.strip() or completed.stderr.strip() or f"docker inspect exited {completed.returncode}"
 
+    def _purge_standalone_simulators(self) -> CommandResult:
+        return self.run_command(
+            "simulator-purge",
+            ["./scripts/simulatorctl.sh", "purge"],
+        )
+
     def reset_stack_if_requested(self) -> None:
         if not self.config.reset_stack:
             return
+        purge = self._purge_standalone_simulators()
+        if purge.status != "PASS":
+            self.mark_fail(
+                "fresh_reset_sanity",
+                "Standalone telemetry simulator cleanup failed before reset.",
+                command=purge.command,
+                error_output=Path(purge.stderr_path).read_text(encoding="utf-8"),
+                affected_module="infrastructure",
+                classification="environment/data issue",
+                production_blocking=True,
+                evidence=[
+                    Evidence("simulator purge stdout", purge.stdout_path),
+                    Evidence("simulator purge stderr", purge.stderr_path),
+                ],
+            )
+            return
+        self.reset_steps_performed.append("./scripts/simulatorctl.sh purge")
         down = self.run_command(
             "docker-compose-down",
             ["docker", "compose", "down", "-v", "--remove-orphans"],

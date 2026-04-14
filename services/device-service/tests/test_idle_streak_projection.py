@@ -24,6 +24,7 @@ os.environ.setdefault("DATABASE_URL", "mysql+aiomysql://test:test@127.0.0.1:3306
 
 from app.database import Base
 from app.models import Device, DeviceLiveState
+from app.services import live_projection as live_projection_module
 from app.services.live_projection import LiveProjectionService
 
 
@@ -56,9 +57,10 @@ async def _seed_device(session, *, device_id: str = "IDLE-DEVICE-1") -> None:
         Device(
             device_id=device_id,
             tenant_id="TENANT-A",
+            plant_id="PLANT-1",
             device_name="Idle Device",
             device_type="compressor",
-            idle_current_threshold=5.0,
+            full_load_current_a=20.0,
             created_at=datetime(2026, 4, 12, 0, 0, 0),
         )
     )
@@ -97,10 +99,10 @@ async def _apply_running_sample(service: LiveProjectionService, *, device_id: st
 async def test_idle_streak_starts_on_first_idle_sample(session_factory, monkeypatch):
     async with session_factory() as session:
         await _seed_device(session)
-        monkeypatch.setattr("app.services.live_projection.TariffCache.get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
+        monkeypatch.setattr(live_projection_module.TariffCache, "get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
         service = await _make_service(session)
 
-        first_ts = datetime(2026, 4, 12, 10, 0, 0, tzinfo=timezone.utc)
+        first_ts = datetime.now(timezone.utc)
         item = await _apply_idle_sample(service, device_id="IDLE-DEVICE-1", ts=first_ts)
 
         live_state = await session.get(DeviceLiveState, {"device_id": "IDLE-DEVICE-1", "tenant_id": "TENANT-A"})
@@ -117,7 +119,7 @@ async def test_idle_streak_starts_on_first_idle_sample(session_factory, monkeypa
 async def test_idle_streak_continues_across_continuous_idle_telemetry(session_factory, monkeypatch):
     async with session_factory() as session:
         await _seed_device(session)
-        monkeypatch.setattr("app.services.live_projection.TariffCache.get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
+        monkeypatch.setattr(live_projection_module.TariffCache, "get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
         service = await _make_service(session)
 
         first_ts = datetime(2026, 4, 12, 10, 0, 0, tzinfo=timezone.utc)
@@ -133,18 +135,18 @@ async def test_idle_streak_continues_across_continuous_idle_telemetry(session_fa
 async def test_idle_streak_resets_on_non_idle_transition(session_factory, monkeypatch):
     async with session_factory() as session:
         await _seed_device(session)
-        monkeypatch.setattr("app.services.live_projection.TariffCache.get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
+        monkeypatch.setattr(live_projection_module.TariffCache, "get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
         service = await _make_service(session)
 
         await _apply_idle_sample(
             service,
             device_id="IDLE-DEVICE-1",
-            ts=datetime(2026, 4, 12, 10, 0, 0, tzinfo=timezone.utc),
+            ts=datetime.now(timezone.utc),
         )
         item = await _apply_running_sample(
             service,
             device_id="IDLE-DEVICE-1",
-            ts=datetime(2026, 4, 12, 10, 5, 0, tzinfo=timezone.utc),
+            ts=datetime.now(timezone.utc),
         )
 
         assert item["load_state"] == "running"
@@ -156,7 +158,7 @@ async def test_idle_streak_resets_on_non_idle_transition(session_factory, monkey
 async def test_idle_streak_resets_on_telemetry_continuity_break(session_factory, monkeypatch):
     async with session_factory() as session:
         await _seed_device(session)
-        monkeypatch.setattr("app.services.live_projection.TariffCache.get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
+        monkeypatch.setattr(live_projection_module.TariffCache, "get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
         service = await _make_service(session)
 
         first_ts = datetime(2026, 4, 12, 10, 0, 0, tzinfo=timezone.utc)
@@ -172,7 +174,7 @@ async def test_idle_streak_resets_on_telemetry_continuity_break(session_factory,
 async def test_idle_streak_survives_day_rollover_when_idle_is_continuous(session_factory, monkeypatch):
     async with session_factory() as session:
         await _seed_device(session)
-        monkeypatch.setattr("app.services.live_projection.TariffCache.get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
+        monkeypatch.setattr(live_projection_module.TariffCache, "get", AsyncMock(return_value={"rate": 0.0, "currency": "INR"}))
         service = await _make_service(session)
 
         first_ts = datetime(2026, 4, 12, 18, 29, 45, tzinfo=timezone.utc)  # 23:59:45 IST

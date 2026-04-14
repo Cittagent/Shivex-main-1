@@ -12,6 +12,15 @@ from app.utils.circuit_breaker import get_or_create_circuit_breaker
 from app.services.internal_http import internal_get
 
 
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 class DeviceMetaCache:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
@@ -37,6 +46,10 @@ class DeviceMetaCache:
                 return cached[1]
 
             data = {
+                "full_load_current_a": None,
+                "idle_threshold_pct_of_fla": None,
+                "derived_idle_threshold_a": None,
+                "derived_overconsumption_threshold_a": None,
                 "idle_threshold": None,
                 "over_threshold": None,
                 "shifts": [],
@@ -79,7 +92,17 @@ class DeviceMetaCache:
                         idle_payload = idle_r.json()
                         idle = idle_payload.get("data", idle_payload) if isinstance(idle_payload, dict) else {}
                         if isinstance(idle, dict):
-                            data["idle_threshold"] = idle.get("idle_current_threshold")
+                            data["full_load_current_a"] = _to_float(idle.get("full_load_current_a"))
+                            data["idle_threshold_pct_of_fla"] = _to_float(idle.get("idle_threshold_pct_of_fla"))
+                            data["derived_idle_threshold_a"] = _to_float(
+                                idle.get("derived_idle_threshold_a") or idle.get("idle_current_threshold")
+                            )
+                            data["derived_overconsumption_threshold_a"] = _to_float(
+                                idle.get("derived_overconsumption_threshold_a")
+                                or idle.get("overconsumption_current_threshold_a")
+                                or data["full_load_current_a"]
+                            )
+                            data["idle_threshold"] = data["derived_idle_threshold_a"]
                     success, waste_r = await self._breaker.call(
                         lambda: internal_get(
                             client,
@@ -95,7 +118,17 @@ class DeviceMetaCache:
                         waste_payload = waste_r.json()
                         waste = waste_payload.get("data", waste_payload) if isinstance(waste_payload, dict) else {}
                         if isinstance(waste, dict):
-                            data["over_threshold"] = waste.get("overconsumption_current_threshold_a")
+                            data["full_load_current_a"] = (
+                                _to_float(waste.get("full_load_current_a")) or data["full_load_current_a"]
+                            )
+                            data["idle_threshold_pct_of_fla"] = (
+                                _to_float(waste.get("idle_threshold_pct_of_fla")) or data["idle_threshold_pct_of_fla"]
+                            )
+                            data["derived_overconsumption_threshold_a"] = _to_float(
+                                waste.get("derived_overconsumption_threshold_a")
+                                or waste.get("overconsumption_current_threshold_a")
+                            ) or data["derived_overconsumption_threshold_a"]
+                            data["over_threshold"] = data["derived_overconsumption_threshold_a"]
                     success, shift_r = await self._breaker.call(
                         lambda: internal_get(
                             client,

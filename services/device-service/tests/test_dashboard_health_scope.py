@@ -63,6 +63,7 @@ async def test_dashboard_bootstrap_uses_tenant_scoped_health_score(monkeypatch: 
                 Device(
                     device_id="TENANT-A-DEVICE",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Shared A",
                     device_type="compressor",
                     data_source_type="metered",
@@ -70,6 +71,7 @@ async def test_dashboard_bootstrap_uses_tenant_scoped_health_score(monkeypatch: 
                 Device(
                     device_id="TENANT-B-DEVICE",
                     tenant_id="TENANT-B",
+                    plant_id="PLANT-1",
                     device_name="Shared B",
                     device_type="compressor",
                     data_source_type="metered",
@@ -173,6 +175,7 @@ async def test_dashboard_bootstrap_uses_generic_health_scoring_contract(monkeypa
                 Device(
                     device_id="GENERIC-DEVICE",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Generic",
                     device_type="compressor",
                     data_source_type="metered",

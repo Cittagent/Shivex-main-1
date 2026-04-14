@@ -114,9 +114,9 @@ class Device(Base):
     
     # Multi-tenant support
     tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), primary_key=True, nullable=False, index=True)
-    plant_id: Mapped[Optional[str]] = mapped_column(
+    plant_id: Mapped[str] = mapped_column(
         String(36),
-        nullable=True,
+        nullable=False,
         index=True,
         comment="Soft ref to plants.id in auth-service",
     )
@@ -165,6 +165,15 @@ class Device(Base):
     overconsumption_current_threshold_a: Mapped[Optional[float]] = mapped_column(
         Numeric(10, 4),
         nullable=True,
+    )
+    full_load_current_a: Mapped[Optional[float]] = mapped_column(
+        Numeric(10, 4),
+        nullable=True,
+    )
+    idle_threshold_pct_of_fla: Mapped[float] = mapped_column(
+        Numeric(6, 4),
+        nullable=False,
+        default=0.25,
     )
     unoccupied_weekday_start_time: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
     unoccupied_weekday_end_time: Mapped[Optional[time]] = mapped_column(Time, nullable=True)

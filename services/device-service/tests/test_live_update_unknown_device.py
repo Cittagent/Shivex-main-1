@@ -181,6 +181,7 @@ async def test_live_update_happy_path_still_updates_known_device(monkeypatch, li
             Device(
                 device_id="KNOWN-DEVICE",
                 tenant_id="tenant-a",
+                plant_id="PLANT-1",
                 device_name="Known Device",
                 device_type="compressor",
             )

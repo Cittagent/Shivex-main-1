@@ -11,13 +11,13 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260324_0003_backfill_legacy_tenant_ids"
-down_revision: Union[str, tuple[str, str], None] = (
+revision = "20260324_0003_backfill_legacy_tenant_ids"
+down_revision = (
     "add_dashboard_snapshot_minio_storage",
     "add_waste_config_fields",
 )
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+branch_labels = None
+depends_on = None
 
 
 def upgrade() -> None:

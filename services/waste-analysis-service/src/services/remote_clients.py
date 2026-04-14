@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 INTERNAL_HEADERS = {"X-Internal-Service": "waste-analysis-service"}
 
 
+def _to_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 @dataclass
 class TariffSnapshot:
     rate: Optional[float]
@@ -107,7 +116,7 @@ class DeviceClient:
             payload = resp.json()
             return payload.get("data", []) if isinstance(payload, dict) else []
 
-    async def get_idle_config(self, device_id: str, tenant_id: str | None = None) -> Optional[float]:
+    async def get_idle_config(self, device_id: str, tenant_id: str | None = None) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=15.0) as client:
             headers = {**INTERNAL_HEADERS, **({"X-Tenant-Id": tenant_id} if tenant_id else {})}
             resp = await client.get(
@@ -116,11 +125,22 @@ class DeviceClient:
                 headers=headers,
             )
             if resp.status_code != 200:
-                return None
+                return {}
             payload = resp.json()
             cfg = payload.get("data", payload) if isinstance(payload, dict) else {}
-            threshold = cfg.get("idle_current_threshold")
-            return float(threshold) if threshold is not None else None
+            if not isinstance(cfg, dict):
+                return {}
+            return {
+                "device_id": cfg.get("device_id") or device_id,
+                "configured": bool(cfg.get("configured")),
+                "full_load_current_a": _to_float(cfg.get("full_load_current_a")),
+                "idle_threshold_pct_of_fla": _to_float(cfg.get("idle_threshold_pct_of_fla")),
+                "derived_idle_threshold_a": _to_float(
+                    cfg.get("derived_idle_threshold_a") or cfg.get("idle_current_threshold")
+                ),
+                "derived_overconsumption_threshold_a": _to_float(cfg.get("derived_overconsumption_threshold_a")),
+                "idle_current_threshold": _to_float(cfg.get("idle_current_threshold")),
+            }
 
     async def get_waste_config(self, device_id: str, tenant_id: str | None = None) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -133,7 +153,23 @@ class DeviceClient:
             if resp.status_code != 200:
                 return {}
             payload = resp.json()
-            return payload.get("data", payload) if isinstance(payload, dict) else {}
+            cfg = payload.get("data", payload) if isinstance(payload, dict) else {}
+            if not isinstance(cfg, dict):
+                return {}
+            return {
+                **cfg,
+                "full_load_current_a": _to_float(cfg.get("full_load_current_a")),
+                "idle_threshold_pct_of_fla": _to_float(cfg.get("idle_threshold_pct_of_fla")),
+                "derived_idle_threshold_a": _to_float(
+                    cfg.get("derived_idle_threshold_a") or cfg.get("idle_current_threshold")
+                ),
+                "derived_overconsumption_threshold_a": _to_float(
+                    cfg.get("derived_overconsumption_threshold_a")
+                    or cfg.get("overconsumption_current_threshold_a")
+                ),
+                "idle_current_threshold": _to_float(cfg.get("idle_current_threshold")),
+                "overconsumption_current_threshold_a": _to_float(cfg.get("overconsumption_current_threshold_a")),
+            }
 
     async def get_site_waste_config(self, tenant_id: str | None = None) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=15.0) as client:

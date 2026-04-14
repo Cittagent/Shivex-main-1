@@ -181,6 +181,7 @@ async def test_apply_live_update_marks_device_running_on_first_sample_without_lo
         device = Device(
             device_id="DEVICE-ONLINE-1",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Device Online 1",
             device_type="compressor",
             created_at=datetime(2026, 4, 9, 10, 0, 0),
@@ -253,6 +254,7 @@ async def test_apply_live_update_handles_missing_tariff_without_crashing():
         device = Device(
             device_id="DEVICE-NO-TARIFF-1",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Device No Tariff 1",
             device_type="compressor",
             created_at=datetime(2026, 4, 9, 10, 0, 0),
@@ -311,9 +313,10 @@ async def test_apply_live_update_passes_idle_machine_state_to_health_service():
         device = Device(
             device_id="DEVICE-IDLE-1",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Device Idle 1",
             device_type="compressor",
-            idle_current_threshold=5.0,
+            full_load_current_a=20.0,
             created_at=datetime(2026, 4, 9, 10, 0, 0),
         )
         session.add(device)
@@ -363,9 +366,10 @@ async def test_apply_live_update_passes_unload_machine_state_to_health_service()
         device = Device(
             device_id="DEVICE-UNLOAD-1",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Device Unload 1",
             device_type="compressor",
-            idle_current_threshold=5.0,
+            full_load_current_a=20.0,
             created_at=datetime(2026, 4, 9, 10, 0, 0),
         )
         session.add(device)
@@ -415,6 +419,7 @@ async def test_apply_live_update_keeps_first_telemetry_timestamp_on_later_sample
         device = Device(
             device_id="DEVICE-ONLINE-2",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Device Online 2",
             device_type="compressor",
             created_at=datetime(2026, 4, 9, 10, 0, 0),
@@ -487,6 +492,7 @@ async def test_backfill_first_telemetry_timestamps_uses_earliest_post_onboarding
         device = Device(
             device_id="DEVICE-BACKFILL-1",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Backfill Device",
             device_type="compressor",
             created_at=datetime(2026, 4, 9, 10, 0, 0),
@@ -494,6 +500,7 @@ async def test_backfill_first_telemetry_timestamps_uses_earliest_post_onboarding
         other = Device(
             device_id="DEVICE-BACKFILL-2",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Empty Device",
             device_type="compressor",
             created_at=datetime(2026, 4, 9, 10, 0, 0),
@@ -550,6 +557,7 @@ async def test_update_last_seen_does_not_mutate_first_telemetry_timestamp():
         device = Device(
             device_id="DEVICE-HEARTBEAT-1",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Heartbeat Device",
             device_type="compressor",
             created_at=datetime(2026, 4, 9, 10, 0, 0, tzinfo=timezone.utc),
@@ -599,6 +607,7 @@ async def test_apply_live_update_scores_generic_telemetry_fields():
         device = Device(
             device_id="DEVICE-GENERIC-1",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Generic Device",
             device_type="compressor",
         )
@@ -722,10 +731,10 @@ async def test_recompute_today_loss_projection_rebuilds_overconsumption_from_thr
         device = Device(
             device_id="DEVICE-LOSS-1",
             tenant_id="ORG-1",
+            plant_id="PLANT-1",
             device_name="Device Loss 1",
             device_type="compressor",
-            idle_current_threshold=5.0,
-            overconsumption_current_threshold_a=20.0,
+            full_load_current_a=20.0,
         )
         shift = DeviceShift(
             device_id="DEVICE-LOSS-1",
@@ -753,9 +762,11 @@ async def test_recompute_today_loss_projection_rebuilds_overconsumption_from_thr
             return {"configured": True, "rate": 5.0, "currency": "INR"}
 
         async def fake_window(*_args, **_kwargs):
+            first_ts = datetime.now(timezone.utc)
+            second_ts = first_ts + timedelta(minutes=5)
             return [
-                {"timestamp": "2026-04-04T04:30:00+00:00", "current": 25.0, "voltage": 230.0, "power": 5750.0},
-                {"timestamp": "2026-04-04T04:35:00+00:00", "current": 25.0, "voltage": 230.0, "power": 5750.0},
+                {"timestamp": first_ts.isoformat(), "current": 25.0, "voltage": 230.0, "power": 5750.0},
+                {"timestamp": second_ts.isoformat(), "current": 25.0, "voltage": 230.0, "power": 5750.0},
             ]
 
         from app.services import live_projection as live_projection_module
@@ -798,12 +809,14 @@ async def test_recompute_after_configuration_change_uses_tenant_scoped_health_co
                 Device(
                     device_id="TENANT-A-DEVICE",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Shared A",
                     device_type="compressor",
                 ),
                 Device(
                     device_id="TENANT-B-DEVICE",
                     tenant_id="TENANT-B",
+                    plant_id="PLANT-1",
                     device_name="Shared B",
                     device_type="compressor",
                 ),
@@ -869,6 +882,7 @@ async def test_recompute_after_configuration_change_falls_back_to_running_for_fr
                 Device(
                     device_id="RECOMPUTE-DEVICE",
                     tenant_id="TENANT-1",
+                    plant_id="PLANT-1",
                     device_name="Recompute Device",
                     device_type="compressor",
                 ),
@@ -917,6 +931,7 @@ async def test_get_device_snapshot_item_includes_plant_id():
             Device(
                 device_id="DEVICE-PLANT-1",
                 tenant_id="ORG-1",
+                plant_id="PLANT-1",
                 device_name="Device Plant 1",
                 device_type="compressor",
                 plant_id="PLANT-1",

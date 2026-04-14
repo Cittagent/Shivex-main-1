@@ -118,12 +118,14 @@ class DeviceUpdate(BaseModel):
     automatically based on telemetry activity.
     """
     
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     device_name: Optional[str] = Field(None, min_length=1, max_length=255)
     device_type: Optional[str] = Field(None, min_length=1, max_length=100)
     manufacturer: Optional[str] = Field(None, max_length=255)
     model: Optional[str] = Field(None, max_length=255)
     location: Optional[str] = Field(None, max_length=500)
-    plant_id: str | None = Field(default=None, description="Plant this device belongs to")
+    plant_id: str | None = Field(default=None, min_length=1, max_length=36, description="Plant this device belongs to")
     data_source_type: Optional[str] = Field(None, description="Telemetry source type: 'metered' or 'sensor'")
     energy_flow_mode: Optional[str] = Field(None, description="Power flow mode: 'consumption_only' or 'bidirectional'")
     polarity_mode: Optional[str] = Field(None, description="Telemetry polarity mode: 'normal' or 'inverted'")
@@ -133,6 +135,8 @@ class DeviceUpdate(BaseModel):
 
     @model_validator(mode='after')
     def validate_update_fields(self) -> 'DeviceUpdate':
+        if "plant_id" in self.model_fields_set and self.plant_id is None:
+            raise ValueError("plant_id cannot be null")
         if self.data_source_type is not None and self.data_source_type not in ("metered", "sensor"):
             raise ValueError("data_source_type must be 'metered' or 'sensor'")
         if self.energy_flow_mode is not None and self.energy_flow_mode not in ("consumption_only", "bidirectional"):
@@ -159,7 +163,9 @@ class DeviceResponse(DeviceBase):
     updated_at: datetime
     deleted_at: Optional[datetime] = None
     first_telemetry_timestamp: Optional[datetime] = None
-    
+    full_load_current_a: Optional[float] = None
+    idle_threshold_pct_of_fla: float = 0.25
+
     # Legacy status - DEPRECATED but included for backward compatibility
     legacy_status: str = "active"
     
@@ -781,6 +787,7 @@ class FleetSnapshotItem(BaseModel):
     plant_id: Optional[str] = None
     runtime_status: str
     load_state: str = "unknown"
+    current_band: Optional[str] = None
     location: Optional[str] = None
     first_telemetry_timestamp: Optional[datetime] = None
     last_seen_timestamp: Optional[datetime] = None

@@ -191,9 +191,11 @@ def compute_device_waste(
     overconsumption_threshold: Optional[float],
     tariff_rate: Optional[float],
     shifts: list[dict[str, Any]],
+    threshold_config: Optional[dict[str, Any]] = None,
     device_power_config: Optional[dict[str, Any]] = None,
 ) -> DeviceWasteResult:
     warnings: list[str] = []
+    threshold_config = threshold_config or {}
     power_unit_input = "unknown"
     power_unit_normalized_to = "kW"
     normalization_applied = False
@@ -264,7 +266,7 @@ def compute_device_waste(
     has_current_voltage = any(x.current_a is not None and x.voltage_v is not None for x in intervals)
     if threshold is None:
         idle_status = "needs_configuration"
-        warnings.append("IDLE_THRESHOLD_NOT_CONFIGURED: idle threshold is required for idle waste calculation")
+        warnings.append("FLA_NOT_CONFIGURED: full load current is required for idle waste calculation")
         idle_quality = "insufficient"
     else:
         idle_quality = "high" if has_current_voltage else "insufficient"
@@ -273,7 +275,7 @@ def compute_device_waste(
 
     over_skip_reason: Optional[str] = None
     if overconsumption_threshold is None:
-        over_skip_reason = "Current threshold not configured for this device"
+        over_skip_reason = "Full load current not configured for this device"
 
     off_skip_reason: Optional[str] = None
 
@@ -384,9 +386,18 @@ def compute_device_waste(
         overconsumption_cost=overconsumption_cost,
         overconsumption_skipped_reason=over_skip_reason,
         overconsumption_pf_estimated=over_pf_estimated,
-        overconsumption_config_source=("device_override" if overconsumption_threshold is not None else None),
+        overconsumption_config_source=("device_service_derived" if overconsumption_threshold is not None else None),
         overconsumption_config_used=(
-            {"threshold_a": round(float(overconsumption_threshold), 4)}
+            {
+                "full_load_current_a": round(float(threshold_config["full_load_current_a"]), 4)
+                if threshold_config.get("full_load_current_a") is not None
+                else None,
+                "idle_threshold_pct_of_fla": round(float(threshold_config["idle_threshold_pct_of_fla"]), 4)
+                if threshold_config.get("idle_threshold_pct_of_fla") is not None
+                else None,
+                "derived_idle_threshold_a": round(float(threshold), 4) if threshold is not None else None,
+                "derived_overconsumption_threshold_a": round(float(overconsumption_threshold), 4),
+            }
             if overconsumption_threshold is not None
             else None
         ),

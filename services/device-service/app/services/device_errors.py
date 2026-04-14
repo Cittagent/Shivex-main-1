@@ -15,6 +15,10 @@ class DeviceIdAllocationError(DeviceCreateError):
     """Raised when the backend cannot allocate a unique generated device_id."""
 
 
+class DevicePlantRequiredError(DeviceCreateError):
+    """Raised when a device create or update would leave the device without a plant."""
+
+
 class HardwareInventoryError(Exception):
     """Base class for hardware inventory workflow failures."""
 

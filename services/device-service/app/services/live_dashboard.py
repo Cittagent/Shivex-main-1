@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.device import Device, DeviceLiveState, DeviceShift, RuntimeStatus, TELEMETRY_TIMEOUT_SECONDS
 from app.services.idle_running import TariffCache
+from app.services.load_thresholds import classify_current_band, resolve_device_thresholds
 from app.services.live_projection import LiveProjectionService
 from app.services.runtime_state import load_state_sql, runtime_status_sql
 from services.shared.tenant_context import TenantContext, build_internal_headers
@@ -268,6 +269,16 @@ class LiveDashboardService:
         device_ids: list[str] = []
         for device, state, first_telemetry_ts, runtime_status, load_state, last_seen_ts in rows:
             device_ids.append(device.device_id)
+            thresholds = resolve_device_thresholds(device)
+            current_band = (
+                classify_current_band(
+                    float(state.last_current_a) if state and state.last_current_a is not None else None,
+                    float(state.last_voltage_v) if state and state.last_voltage_v is not None else None,
+                    thresholds,
+                )
+                if runtime_status == RuntimeStatus.RUNNING.value
+                else "unknown"
+            )
             page_items.append(
                 {
                     "device_id": device.device_id,
@@ -276,6 +287,7 @@ class LiveDashboardService:
                     "plant_id": device.plant_id,
                     "runtime_status": runtime_status,
                     "load_state": load_state or "unknown",
+                    "current_band": current_band,
                     "location": device.location,
                     "first_telemetry_timestamp": self._iso_utc(first_telemetry_ts),
                     "last_seen_timestamp": last_seen_ts.isoformat() if last_seen_ts is not None else None,

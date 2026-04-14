@@ -49,6 +49,7 @@ async def test_materialize_latest_bucket_preserves_tenant_ids(session_factory, m
                 Device(
                     device_id="DEVICE-A",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Device A",
                     device_type="compressor",
                     data_source_type="metered",
@@ -56,6 +57,7 @@ async def test_materialize_latest_bucket_preserves_tenant_ids(session_factory, m
                 Device(
                     device_id="DEVICE-B",
                     tenant_id="TENANT-B",
+                    plant_id="PLANT-1",
                     device_name="Device B",
                     device_type="compressor",
                     data_source_type="metered",
@@ -90,6 +92,7 @@ async def test_get_trends_filters_by_tenant_id(session_factory):
                 Device(
                     device_id="SHARED-DEVICE",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Tenant A Device",
                     device_type="compressor",
                     data_source_type="metered",
@@ -97,6 +100,7 @@ async def test_get_trends_filters_by_tenant_id(session_factory):
                 Device(
                     device_id="SHARED-DEVICE",
                     tenant_id="TENANT-B",
+                    plant_id="PLANT-1",
                     device_name="Tenant B Device",
                     device_type="compressor",
                     data_source_type="metered",
@@ -161,6 +165,7 @@ async def test_get_trends_returns_metric_specific_fallback_for_quiet_window(sess
                 Device(
                     device_id="DEVICE-FALLBACK",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Tenant A Device",
                     device_type="compressor",
                     data_source_type="metered",
@@ -212,6 +217,7 @@ async def test_get_trends_omits_fallback_beyond_horizon(session_factory):
                 Device(
                     device_id="DEVICE-OLD",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Tenant A Device",
                     device_type="compressor",
                     data_source_type="metered",
@@ -261,6 +267,7 @@ async def test_get_trends_uses_metric_specific_message_for_uptime(session_factor
                 Device(
                     device_id="DEVICE-UPTIME",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Tenant A Device",
                     device_type="compressor",
                     data_source_type="metered",

@@ -160,6 +160,7 @@ The script will:
 ./scripts/simulatorctl.sh logs COMPRESSOR-001
 ./scripts/simulatorctl.sh stop COMPRESSOR-001
 ./scripts/simulatorctl.sh restart COMPRESSOR-001
+./scripts/simulatorctl.sh purge
 ```
 
 Notes:
@@ -168,6 +169,7 @@ Notes:
 - The simulator publishes to a tenant-prefixed topic.
 - The data service expects tenant-prefixed telemetry topics.
 - You must start the main compose stack first, because the script attaches to the compose network and talks to `device-service`.
+- `docker compose down -v --remove-orphans` does not remove these standalone simulator containers. Use `./scripts/simulatorctl.sh purge`, or run `python3 scripts/preprod_validation.py --mode full-reset`, to get a truly clean local reset.
 
 ### Optional demo profile
 

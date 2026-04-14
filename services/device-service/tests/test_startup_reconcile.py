@@ -122,3 +122,35 @@ async def test_reconciliation_cycle_skips_fleet_snapshot_refresh_without_repairs
 
     reconcile_mock.assert_awaited_once_with(max_devices=500)
     materialize_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_demo_devices_supplies_non_empty_plant_assignment(monkeypatch):
+    captured_payloads = []
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def scalar(self, _query):
+            return None
+
+    class _FakeService:
+        def __init__(self, session):
+            self.session = session
+
+        async def create_device(self, payload):
+            captured_payloads.append(payload)
+
+    monkeypatch.setitem(sys.modules, "app.database", SimpleNamespace(AsyncSessionLocal=lambda: _FakeSession()))
+    monkeypatch.setitem(sys.modules, "app.services.device", SimpleNamespace(DeviceService=_FakeService))
+    monkeypatch.setenv("BOOTSTRAP_DEMO_TENANT_ID", "TENANT-DEMO")
+    monkeypatch.setenv("BOOTSTRAP_DEMO_PLANT_ID", "PLANT-DEMO")
+
+    await device_app_module._bootstrap_demo_devices()
+
+    assert len(captured_payloads) == len(device_app_module.DEMO_DEVICES)
+    assert {payload.plant_id for payload in captured_payloads} == {"PLANT-DEMO"}

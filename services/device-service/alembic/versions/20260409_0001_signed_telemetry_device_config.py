@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260409_0001_signed_telemetry_device_config"
-down_revision: Union[str, tuple[str, str], None] = "20260407_0003_hardware_unit_allocator_refinement"
+revision = "20260409_0001_signed_telemetry_device_config"
+down_revision = "20260407_0003_hardware_unit_allocator_refinement"
 branch_labels = None
 depends_on = None
 

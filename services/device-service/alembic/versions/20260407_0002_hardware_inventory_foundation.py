@@ -13,10 +13,10 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260407_0002_hardware_inventory_foundation"
-down_revision: Union[str, tuple[str, str], None] = "20260407_0001_prefixed_device_ids"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "20260407_0002_hardware_inventory_foundation"
+down_revision = "20260407_0001_prefixed_device_ids"
+branch_labels = None
+depends_on = None
 
 
 def _inspector() -> sa.Inspector:

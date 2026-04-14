@@ -38,6 +38,7 @@ os.environ["DATABASE_URL"] = "mysql+aiomysql://test:test@127.0.0.1:3306/test_db"
 from app.database import Base
 from app.models.device import Device, DeviceLiveState, DeviceShift
 from app.services.dashboard import DashboardService
+from app.services import live_projection as live_projection_module
 from app.services.live_projection import LiveProjectionService
 from services.shared.tenant_context import TenantContext
 from src.services.waste_engine import compute_device_waste
@@ -88,10 +89,11 @@ async def test_live_projection_loss_stats_and_waste_analysis_share_exclusive_acc
                 Device(
                     device_id="LOSS-DEVICE-1",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Loss Device",
                     device_type="compressor",
-                    idle_current_threshold=1.0,
-                    overconsumption_current_threshold_a=20.0,
+                    full_load_current_a=20.0,
+                    idle_threshold_pct_of_fla=0.05,
                 ),
                 DeviceLiveState(
                     device_id="LOSS-DEVICE-1",
@@ -119,7 +121,7 @@ async def test_live_projection_loss_stats_and_waste_analysis_share_exclusive_acc
         async def fake_tariff_get(_tenant_id):
             return {"configured": True, "rate": 5.0, "currency": "INR", "stale": False, "cache": "miss"}
 
-        monkeypatch.setattr("app.services.live_projection.TariffCache.get", AsyncMock(side_effect=fake_tariff_get))
+        monkeypatch.setattr(live_projection_module.TariffCache, "get", AsyncMock(side_effect=fake_tariff_get))
         monkeypatch.setattr(service, "_fetch_telemetry_window", AsyncMock(return_value=rows))
         monkeypatch.setattr(DashboardService, "_get_tariff", AsyncMock(return_value=(5.0, "INR")))
 

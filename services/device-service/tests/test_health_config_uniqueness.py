@@ -47,6 +47,7 @@ async def _seed_device(session, device_id: str = "DEVICE-1", tenant_id: str = "T
         Device(
             device_id=device_id,
             tenant_id=tenant_id,
+            plant_id="PLANT-1",
             device_name="Device 1",
             device_type="compressor",
         )

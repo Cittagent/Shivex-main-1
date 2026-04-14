@@ -12,10 +12,10 @@ prior deployment or simulator run.
 from typing import Sequence, Union
 
 # Alembic identifiers.
-revision: str = "20260401_0001"
-down_revision: Union[str, tuple[str, str], None] = "20260331_0003_add_tenant_security_audit_log"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "20260401_0001"
+down_revision = "20260331_0003_add_tenant_security_audit_log"
+branch_labels = None
+depends_on = None
 
 
 def upgrade() -> None:

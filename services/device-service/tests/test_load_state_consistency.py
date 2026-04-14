@@ -70,6 +70,7 @@ async def _seed_running_idle_device(
         Device(
             device_id=device_id,
             tenant_id=tenant_id,
+            plant_id="PLANT-1",
             device_name="Machine 1",
             device_type="compressor",
             location="Plant 1",

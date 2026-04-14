@@ -21,10 +21,14 @@ for path in (BASE_DIR, SERVICES_DIR, PROJECT_ROOT):
         sys.path.insert(0, str(path))
 
 os.environ["DATABASE_URL"] = "mysql+aiomysql://test:test@127.0.0.1:3306/test_db"
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 
 from app.api.v1.devices import _refresh_loss_views_after_waste_config_change
 from app.database import Base
 from app.models.device import Device, DeviceLiveState
+from app.services import dashboard as dashboard_module
+from app.services import idle_running as idle_running_module
+from app.services import live_projection as live_projection_module
 from app.services.dashboard import DashboardService
 from app.services.idle_running import IdleRunningService, ThresholdConfigurationError
 from services.shared.tenant_context import TenantContext
@@ -66,19 +70,21 @@ async def test_get_device_loss_stats_reads_tenant_scoped_live_state(session_fact
         session.add_all(
             [
                 Device(
-                    device_id="SHARED-DEVICE",
+                    device_id="SHARED-DEVICE-A",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Shared A",
                     device_type="compressor",
                 ),
                 Device(
-                    device_id="SHARED-DEVICE",
+                    device_id="SHARED-DEVICE-B",
                     tenant_id="TENANT-B",
+                    plant_id="PLANT-1",
                     device_name="Shared B",
                     device_type="compressor",
                 ),
                 DeviceLiveState(
-                    device_id="SHARED-DEVICE",
+                    device_id="SHARED-DEVICE-A",
                     tenant_id="TENANT-A",
                     runtime_status="running",
                     load_state="running",
@@ -91,7 +97,7 @@ async def test_get_device_loss_stats_reads_tenant_scoped_live_state(session_fact
                     version=1,
                 ),
                 DeviceLiveState(
-                    device_id="SHARED-DEVICE",
+                    device_id="SHARED-DEVICE-B",
                     tenant_id="TENANT-B",
                     runtime_status="running",
                     load_state="running",
@@ -110,11 +116,11 @@ async def test_get_device_loss_stats_reads_tenant_scoped_live_state(session_fact
         monkeypatch.setattr(DashboardService, "_get_tariff", AsyncMock(return_value=(5.0, "INR")))
 
         payload_a = await DashboardService(session, _tenant_ctx("TENANT-A")).get_device_loss_stats(
-            "SHARED-DEVICE",
+            "SHARED-DEVICE-A",
             "TENANT-A",
         )
         payload_b = await DashboardService(session, _tenant_ctx("TENANT-B")).get_device_loss_stats(
-            "SHARED-DEVICE",
+            "SHARED-DEVICE-B",
             "TENANT-B",
         )
 
@@ -132,15 +138,18 @@ async def test_refresh_loss_views_after_waste_config_change_runs_recompute_and_s
     materialize_summary = AsyncMock(return_value={"success": True})
 
     monkeypatch.setattr(
-        "app.services.live_projection.LiveProjectionService.recompute_today_loss_projection",
+        live_projection_module.LiveProjectionService,
+        "recompute_today_loss_projection",
         recompute,
     )
     monkeypatch.setattr(
-        "app.services.dashboard.DashboardService.materialize_energy_and_loss_snapshots",
+        dashboard_module.DashboardService,
+        "materialize_energy_and_loss_snapshots",
         materialize_loss,
     )
     monkeypatch.setattr(
-        "app.services.dashboard.DashboardService.materialize_dashboard_summary_snapshot",
+        dashboard_module.DashboardService,
+        "materialize_dashboard_summary_snapshot",
         materialize_summary,
     )
 
@@ -163,10 +172,11 @@ async def test_idle_stats_remain_idle_only_and_are_not_polluted_by_loss_fields(s
             Device(
                 device_id="IDLE-ONLY",
                 tenant_id="TENANT-A",
+                plant_id="PLANT-1",
                 device_name="Idle Only",
                 device_type="compressor",
                 data_source_type="metered",
-                idle_current_threshold=1.0,
+                full_load_current_a=4.0,
             )
         )
         await session.commit()
@@ -174,7 +184,7 @@ async def test_idle_stats_remain_idle_only_and_are_not_polluted_by_loss_fields(s
         async def fake_tariff_get(cls, tenant_id):
             return {"configured": True, "rate": 2.5, "currency": "INR", "stale": False, "cache": "miss"}
 
-        monkeypatch.setattr("app.services.idle_running.TariffCache.get", classmethod(fake_tariff_get))
+        monkeypatch.setattr(idle_running_module.TariffCache, "get", classmethod(fake_tariff_get))
         monkeypatch.setattr(IdleRunningService, "aggregate_device_idle", AsyncMock(return_value=None))
 
         service = IdleRunningService(session, _tenant_ctx("TENANT-A"))
@@ -186,15 +196,16 @@ async def test_idle_stats_remain_idle_only_and_are_not_polluted_by_loss_fields(s
 
 
 @pytest.mark.asyncio
-async def test_threshold_gap_validation_rejects_overlapping_waste_threshold(session_factory):
+async def test_idle_config_rejects_invalid_idle_threshold_pct(session_factory):
     async with session_factory() as session:
         session.add(
             Device(
                 device_id="GAP-DEVICE",
                 tenant_id="TENANT-A",
+                plant_id="PLANT-1",
                 device_name="Gap Device",
                 device_type="compressor",
-                idle_current_threshold=1.0,
+                full_load_current_a=4.0,
             )
         )
         await session.commit()
@@ -202,14 +213,11 @@ async def test_threshold_gap_validation_rejects_overlapping_waste_threshold(sess
         service = IdleRunningService(session, _tenant_ctx("TENANT-A"))
 
         with pytest.raises(ThresholdConfigurationError):
-            await service.set_waste_config(
-                device_id="GAP-DEVICE",
-                tenant_id="TENANT-A",
-                overconsumption_current_threshold_a=0.5,
-                unoccupied_weekday_start_time=None,
-                unoccupied_weekday_end_time=None,
-                unoccupied_weekend_start_time=None,
-                unoccupied_weekend_end_time=None,
+            await service.set_idle_config(
+                "GAP-DEVICE",
+                "TENANT-A",
+                full_load_current_a=None,
+                idle_threshold_pct_of_fla=1.0,
             )
 
 
@@ -223,10 +231,11 @@ async def test_idle_stats_today_energy_prefers_live_state_for_current_day(sessio
                 Device(
                     device_id="IDLE-LIVE",
                     tenant_id="TENANT-A",
+                    plant_id="PLANT-1",
                     device_name="Idle Live",
                     device_type="compressor",
                     data_source_type="metered",
-                    idle_current_threshold=1.0,
+                    full_load_current_a=4.0,
                 ),
                 DeviceLiveState(
                     device_id="IDLE-LIVE",
@@ -244,7 +253,7 @@ async def test_idle_stats_today_energy_prefers_live_state_for_current_day(sessio
         async def fake_tariff_get(cls, tenant_id):
             return {"configured": True, "rate": 2.5, "currency": "INR", "stale": False, "cache": "miss"}
 
-        monkeypatch.setattr("app.services.idle_running.TariffCache.get", classmethod(fake_tariff_get))
+        monkeypatch.setattr(idle_running_module.TariffCache, "get", classmethod(fake_tariff_get))
         monkeypatch.setattr(IdleRunningService, "aggregate_device_idle", AsyncMock(return_value=None))
 
         service = IdleRunningService(session, _tenant_ctx("TENANT-A"))

@@ -13,10 +13,10 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260411_0001_sh_tenant_id_hard_cut"
-down_revision: Union[str, tuple[str, str], None] = "20260409_0001_signed_telemetry_device_config"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "20260411_0001_sh_tenant_id_hard_cut"
+down_revision = "20260409_0001_signed_telemetry_device_config"
+branch_labels = None
+depends_on = None
 
 TENANT_ID_LENGTH = 10
 TENANT_ID_PREFIX = "SH"

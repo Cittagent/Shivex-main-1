@@ -49,6 +49,7 @@ async def _seed_device_with_health_config(session, *, device_id: str = "DEVICE-1
         Device(
             device_id=device_id,
             tenant_id=tenant_id,
+            plant_id="PLANT-1",
             device_name="Compressor",
             device_type="compressor",
             data_source_type="metered",
@@ -86,6 +87,7 @@ async def _seed_device_with_configs(session, configs, *, device_id: str = "DEVIC
         Device(
             device_id=device_id,
             tenant_id=tenant_id,
+            plant_id="PLANT-1",
             device_name="Compressor",
             device_type="compressor",
             data_source_type="metered",
@@ -1247,6 +1249,7 @@ async def test_calculate_uptime_for_window_uses_recent_shift_overlap_even_after_
             Device(
                 device_id="DEVICE-11",
                 tenant_id="TENANT-1",
+                plant_id="PLANT-1",
                 device_name="Compressor",
                 device_type="compressor",
                 data_source_type="metered",

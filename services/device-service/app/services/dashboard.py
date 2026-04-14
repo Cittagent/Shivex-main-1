@@ -37,6 +37,7 @@ from services.shared.energy_accounting import aggregate_window, build_samples as
 from services.shared.telemetry_normalization import normalize_telemetry_sample
 from services.shared.tariff_client import fetch_tenant_tariff
 from services.shared.tenant_context import TenantContext, build_internal_headers
+from app.services.load_thresholds import classify_current_band, resolve_device_thresholds
 from app.services.runtime_state import resolve_load_state, resolve_runtime_status
 
 try:  # pragma: no cover - optional during local unit tests
@@ -688,8 +689,8 @@ class DashboardService:
                 rows,
                 platform_tz=_get_platform_tz(),
                 shifts=[s for s in (device.shifts or []) if s.is_active],
-                idle_threshold=self._safe_float(device.idle_current_threshold),
-                over_threshold=self._safe_float(device.overconsumption_current_threshold_a),
+                idle_threshold=resolve_device_thresholds(device).derived_idle_threshold_a,
+                over_threshold=resolve_device_thresholds(device).derived_overconsumption_threshold_a,
             )
             if accounting.samples == 0:
                 by_device.append(
@@ -841,11 +842,15 @@ class DashboardService:
                 Device.device_name,
                 Device.device_type,
                 Device.location,
+                Device.full_load_current_a,
+                Device.idle_threshold_pct_of_fla,
                 Device.first_telemetry_timestamp,
                 Device.last_seen_timestamp,
                 DeviceLiveState.runtime_status.label("live_runtime_status"),
                 DeviceLiveState.load_state.label("live_load_state"),
                 DeviceLiveState.last_telemetry_ts.label("live_last_seen_timestamp"),
+                DeviceLiveState.last_current_a.label("live_last_current_a"),
+                DeviceLiveState.last_voltage_v.label("live_last_voltage_v"),
                 latest_trend_subq.c.health_score,
                 latest_trend_subq.c.uptime_percentage,
                 active_shift_subq.c.active_shift_count,
@@ -872,6 +877,16 @@ class DashboardService:
             last_seen_timestamp = row.live_last_seen_timestamp or row.last_seen_timestamp
             runtime_status = resolve_runtime_status(last_seen_timestamp)
             load_state = resolve_load_state(row.live_load_state, last_seen_timestamp)
+            thresholds = resolve_device_thresholds(row)
+            current_band = (
+                classify_current_band(
+                    self._safe_float(row.live_last_current_a),
+                    self._safe_float(row.live_last_voltage_v),
+                    thresholds,
+                )
+                if runtime_status == RuntimeStatus.RUNNING.value
+                else "unknown"
+            )
 
             devices.append(
                 {
@@ -880,6 +895,7 @@ class DashboardService:
                     "device_type": row.device_type,
                     "runtime_status": runtime_status,
                     "load_state": load_state,
+                    "current_band": current_band,
                     "location": row.location,
                     "first_telemetry_timestamp": _iso_utc(row.first_telemetry_timestamp),
                     "last_seen_timestamp": last_seen_timestamp.isoformat() if last_seen_timestamp else None,
@@ -1127,6 +1143,7 @@ class DashboardService:
         device_row = device.scalar_one_or_none()
         if device_row is None:
             raise DashboardDeviceNotFoundError(device_id)
+        thresholds = resolve_device_thresholds(device_row)
 
         state = await self._session.get(DeviceLiveState, {"device_id": device_id, "tenant_id": tenant_id})
         tariff_rate, currency = await self._get_tariff()
@@ -1148,6 +1165,10 @@ class DashboardService:
             "day_bucket": local_day.isoformat(),
             "last_telemetry_ts": state.last_telemetry_ts.isoformat() if state and state.last_telemetry_ts else None,
             "updated_at": state.updated_at.isoformat() if state and state.updated_at else None,
+            "full_load_current_a": thresholds.full_load_current_a,
+            "idle_threshold_pct_of_fla": thresholds.idle_threshold_pct_of_fla,
+            "derived_idle_threshold_a": thresholds.derived_idle_threshold_a,
+            "derived_overconsumption_threshold_a": thresholds.derived_overconsumption_threshold_a,
             "tariff_configured": tariff_configured,
             "currency": currency,
             "today": {

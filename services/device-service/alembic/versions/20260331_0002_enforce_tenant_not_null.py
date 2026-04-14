@@ -11,10 +11,10 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "20260331_0002_enforce_tenant_not_null"
-down_revision: Union[str, tuple[str, str], None] = "20260331_0001_add_tenant_id_to_scoped_tables"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision = "20260331_0002_enforce_tenant_not_null"
+down_revision = "20260331_0001_add_tenant_id_to_scoped_tables"
+branch_labels = None
+depends_on = None
 
 
 _TABLES = (
@@ -121,4 +121,3 @@ def downgrade() -> None:
                 """
             )
         )
-

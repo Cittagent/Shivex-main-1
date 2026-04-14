@@ -259,6 +259,63 @@ async def test_create_device_rejects_missing_plant(monkeypatch, delete_app):
 
 
 @pytest.mark.asyncio
+async def test_update_device_rejects_clearing_plant_assignment(monkeypatch, delete_app):
+    app, session_factory = delete_app
+
+    monkeypatch.setattr(
+        devices_api,
+        "get_auth_state",
+        lambda request: {
+            "user_id": "user-1",
+            "tenant_id": "ORG-1",
+            "role": "org_admin",
+            "plant_ids": [],
+            "is_authenticated": True,
+        },
+    )
+    monkeypatch.setattr(
+        devices_api.TenantContext,
+        "from_request",
+        classmethod(
+            lambda cls, request: TenantContext(
+                tenant_id="ORG-1",
+                user_id="user-1",
+                role="org_admin",
+                plant_ids=[],
+                is_super_admin=False,
+            )
+        ),
+    )
+
+    async with session_factory() as session:
+        session.add(
+            Device(
+                device_id="COMPRESSOR-UPDATE-01",
+                tenant_id="ORG-1",
+                plant_id="PLANT-1",
+                device_name="Compressor Update",
+                device_type="compressor",
+            )
+        )
+        await session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.put(
+            "/api/v1/devices/COMPRESSOR-UPDATE-01",
+            headers={"X-Tenant-Id": "ORG-1"},
+            json={"plant_id": None},
+        )
+
+    assert response.status_code == 422
+
+    async with session_factory() as session:
+        device = await session.get(Device, {"device_id": "COMPRESSOR-UPDATE-01", "tenant_id": "ORG-1"})
+
+    assert device is not None
+    assert device.plant_id == "PLANT-1"
+
+
+@pytest.mark.asyncio
 async def test_create_device_rejects_unknown_plant(monkeypatch, delete_app):
     app, _session_factory = delete_app
 

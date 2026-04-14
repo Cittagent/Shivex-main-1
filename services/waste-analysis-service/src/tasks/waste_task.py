@@ -20,6 +20,13 @@ from src.utils.downloads import build_waste_download_path
 from src.utils import clean_for_json
 
 logger = logging.getLogger(__name__)
+INTERNAL_WARNING_MARKERS = {"canonical_energy_projection_applied"}
+SUPPRESSED_PUBLIC_WARNING_PREFIXES = {
+    "POWER_UNIT_ASSUMED_WATTS:",
+}
+SUPPRESSED_PUBLIC_WARNINGS = {
+    "OVERCONSUMPTION: No overconsumption detected in this period",
+}
 
 TELEMETRY_FIELDS = [
     "energy_kwh",
@@ -67,6 +74,116 @@ def _duration_label(seconds: int) -> str:
 
 def _is_low_or_insufficient(quality: str | None) -> bool:
     return (quality or "").lower() in {"low", "insufficient"}
+
+
+def _warning_is_internal_or_noise(warning: str) -> bool:
+    if not isinstance(warning, str):
+        return False
+    normalized = warning.strip()
+    if not normalized:
+        return False
+    if normalized in INTERNAL_WARNING_MARKERS:
+        return True
+    if normalized in SUPPRESSED_PUBLIC_WARNINGS:
+        return True
+    return any(normalized.startswith(prefix) for prefix in SUPPRESSED_PUBLIC_WARNING_PREFIXES)
+
+
+def _public_warnings(warnings: list[str]) -> list[str]:
+    return [warning for warning in warnings if not _warning_is_internal_or_noise(warning)]
+
+
+def _build_device_summary(result, tariff_rate: float | None) -> dict:
+    device_total_waste_cost = round(
+        (result.idle_cost or 0.0)
+        + (result.offhours_cost or 0.0)
+        + (result.overconsumption_cost or 0.0),
+        2,
+    ) if tariff_rate is not None else None
+    over_config = result.overconsumption_config_used or {}
+    return {
+        "device_id": result.device_id,
+        "device_name": result.device_name,
+        "data_source_type": result.data_source_type,
+        "idle_duration_sec": result.idle_duration_sec,
+        "idle_duration_label": _duration_label(result.idle_duration_sec),
+        "idle_energy_kwh": result.idle_energy_kwh,
+        "idle_cost": result.idle_cost,
+        "standby_power_kw": result.standby_power_kw,
+        "standby_energy_kwh": result.standby_energy_kwh,
+        "standby_cost": result.standby_cost,
+        "total_energy_kwh": result.total_energy_kwh,
+        "total_cost": result.total_cost,
+        "total_energy_cost": result.total_cost,
+        "total_energy_cost_inr": result.total_cost,
+        "total_waste_cost": device_total_waste_cost,
+        "total_waste_cost_inr": device_total_waste_cost,
+        "full_load_current_a": over_config.get("full_load_current_a"),
+        "idle_threshold_pct_of_fla": over_config.get("idle_threshold_pct_of_fla"),
+        "derived_idle_threshold_a": over_config.get("derived_idle_threshold_a"),
+        "derived_overconsumption_threshold_a": over_config.get("derived_overconsumption_threshold_a"),
+        "offhours_energy_kwh": result.offhours_energy_kwh,
+        "offhours_cost": result.offhours_cost,
+        "offhours_duration_sec": result.offhours_duration_sec,
+        "offhours_skipped_reason": result.offhours_skipped_reason,
+        "offhours_pf_estimated": result.offhours_pf_estimated,
+        "overconsumption_duration_sec": result.overconsumption_duration_sec,
+        "overconsumption_kwh": result.overconsumption_energy_kwh,
+        "overconsumption_energy_kwh": result.overconsumption_energy_kwh,
+        "overconsumption_cost": result.overconsumption_cost,
+        "overconsumption_skipped_reason": result.overconsumption_skipped_reason,
+        "overconsumption_pf_estimated": result.overconsumption_pf_estimated,
+        "unoccupied_duration_sec": result.unoccupied_duration_sec,
+        "unoccupied_energy_kwh": result.unoccupied_energy_kwh,
+        "unoccupied_cost": result.unoccupied_cost,
+        "unoccupied_skipped_reason": result.unoccupied_skipped_reason,
+        "unoccupied_pf_estimated": result.unoccupied_pf_estimated,
+        "off_hours": {
+            "duration_sec": result.offhours_duration_sec,
+            "energy_kwh": result.offhours_energy_kwh,
+            "cost": result.offhours_cost,
+            "skipped_reason": result.offhours_skipped_reason,
+            "pf_estimated": result.offhours_pf_estimated,
+            "config_source": "shift_config",
+        },
+        "overconsumption": {
+            "duration_sec": result.overconsumption_duration_sec,
+            "energy_kwh": result.overconsumption_energy_kwh,
+            "cost": result.overconsumption_cost,
+            "skipped_reason": result.overconsumption_skipped_reason,
+            "pf_estimated": result.overconsumption_pf_estimated,
+            "config_source": result.overconsumption_config_source,
+            "config_used": result.overconsumption_config_used,
+        },
+        "unoccupied_running": {
+            "duration_sec": result.unoccupied_duration_sec,
+            "energy_kwh": result.unoccupied_energy_kwh,
+            "cost": result.unoccupied_cost,
+            "skipped_reason": result.unoccupied_skipped_reason,
+            "pf_estimated": result.unoccupied_pf_estimated,
+            "config_source": result.unoccupied_config_source,
+            "config_used": result.unoccupied_config_used,
+        },
+        "data_quality": result.data_quality,
+        "energy_quality": result.energy_quality,
+        "idle_quality": result.idle_quality,
+        "standby_quality": result.standby_quality,
+        "overall_quality": result.overall_quality,
+        "idle_status": result.idle_status,
+        "power_unit_input": result.power_unit_input,
+        "power_unit_normalized_to": result.power_unit_normalized_to,
+        "normalization_applied": result.normalization_applied,
+        "pf_estimated": result.pf_estimated,
+        "warnings": _public_warnings(list(result.warnings or [])),
+        "calculation_method": result.calculation_method,
+    }
+
+
+def _sync_canonical_overlay_warnings(result) -> None:
+    if (result.offhours_energy_kwh or 0.0) > 0:
+        result.warnings = [w for w in result.warnings if w != "OFF_HOURS: No off-hours consumption detected"]
+    if (result.overconsumption_energy_kwh or 0.0) > 0:
+        result.warnings = [w for w in result.warnings if w != "OVERCONSUMPTION: No overconsumption detected in this period"]
 
 
 def _to_db_summary(x: dict) -> dict:
@@ -189,6 +306,7 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
 
             quality_failures: list[dict] = []
             threshold_by_device: dict[str, float | None] = {}
+            threshold_config_by_device: dict[str, dict] = {}
             shifts_by_device: dict[str, list[dict]] = {}
             overconsumption_threshold_by_device: dict[str, float | None] = {}
             config_warnings: list[str] = []
@@ -207,30 +325,25 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
                 d: dict,
             ) -> tuple[
                 str,
-                float | None,
+                dict,
                 list[dict],
                 float | None,
             ]:
                 device_id = d.get("device_id")
                 if not device_id:
-                    return "", None, [], None
+                    return "", {}, [], None
                 async with cfg_sem:
-                    threshold, shifts, waste_cfg = await asyncio.gather(
+                    idle_cfg, shifts, waste_cfg = await asyncio.gather(
                         device_client.get_idle_config(device_id, tenant_id),
                         device_client.get_shift_config(device_id, tenant_id),
                         device_client.get_waste_config(device_id, tenant_id),
                     )
 
-                overconsumption_threshold = waste_cfg.get("overconsumption_current_threshold_a")
-                overconsumption_threshold = (
-                    float(overconsumption_threshold)
-                    if overconsumption_threshold is not None
-                    else None
-                )
+                overconsumption_threshold = waste_cfg.get("derived_overconsumption_threshold_a")
 
                 return (
                     str(device_id),
-                    threshold,
+                    idle_cfg,
                     shifts,
                     overconsumption_threshold,
                 )
@@ -239,19 +352,27 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
             for fut in asyncio.as_completed(cfg_tasks):
                 (
                     device_id,
-                    threshold,
+                    idle_cfg,
                     shifts,
                     overconsumption_threshold,
                 ) = await fut
                 if not device_id:
                     continue
+                threshold_config_by_device[device_id] = idle_cfg
+                threshold = idle_cfg.get("derived_idle_threshold_a")
                 threshold_by_device[device_id] = threshold
                 shifts_by_device[device_id] = shifts
                 overconsumption_threshold_by_device[device_id] = overconsumption_threshold
+                if idle_cfg.get("full_load_current_a") is None:
+                    config_warnings.append(
+                        f"{device_id}: full load current (FLA) not configured (idle and overconsumption categories reduced)"
+                    )
                 if threshold is None:
-                    config_warnings.append(f"{device_id}: idle threshold not configured (idle category reduced)")
+                    config_warnings.append(f"{device_id}: derived idle threshold unavailable (idle category reduced)")
                 if overconsumption_threshold is None:
-                    config_warnings.append(f"{device_id}: overconsumption threshold not configured (category skipped)")
+                    config_warnings.append(
+                        f"{device_id}: derived overconsumption threshold unavailable (category skipped)"
+                    )
 
             tariff = await tariff_cache.get(tenant_id)
             await repo.update_job(job_id, progress_pct=10, stage="Fetching tariff configuration...")
@@ -278,6 +399,7 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
                         fields=TELEMETRY_FIELDS,
                     )
                 threshold = threshold_by_device.get(device_id)
+                threshold_config = threshold_config_by_device.get(device_id, {})
                 shifts = shifts_by_device.get(device_id, [])
                 overconsumption_threshold = overconsumption_threshold_by_device.get(device_id)
                 res = compute_device_waste(
@@ -289,6 +411,7 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
                     overconsumption_threshold=overconsumption_threshold,
                     tariff_rate=tariff.rate,
                     shifts=shifts,
+                    threshold_config=threshold_config,
                 )
                 canonical = await energy_client.get_device_range(
                     device_id=device_id,
@@ -320,6 +443,7 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
                         )
                     if "canonical_energy_projection_applied" not in res.warnings:
                         res.warnings.append("canonical_energy_projection_applied")
+                    _sync_canonical_overlay_warnings(res)
                 return device_name, device_id, res
 
             proc_tasks = [asyncio.create_task(_process_device(d)) for d in devices]
@@ -330,7 +454,7 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
                     continue
                 device_name, device_id, res = out
                 results.append(res)
-                warnings.extend([f"{device_name}: {w}" for w in res.warnings])
+                warnings.extend([f"{device_name}: {w}" for w in _public_warnings(list(res.warnings or []))])
                 if _is_low_or_insufficient(res.overall_quality):
                     quality_failures.append(
                         {
@@ -375,85 +499,7 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
 
             device_summaries = []
             for r in results:
-                device_total_waste_cost = round(
-                    (r.idle_cost or 0.0)
-                    + (r.offhours_cost or 0.0)
-                    + (r.overconsumption_cost or 0.0),
-                    2,
-                ) if tariff.rate is not None else None
-                device_summaries.append(
-                    {
-                        "device_id": r.device_id,
-                        "device_name": r.device_name,
-                        "data_source_type": r.data_source_type,
-                        "idle_duration_sec": r.idle_duration_sec,
-                        "idle_duration_label": _duration_label(r.idle_duration_sec),
-                        "idle_energy_kwh": r.idle_energy_kwh,
-                        "idle_cost": r.idle_cost,
-                        "standby_power_kw": r.standby_power_kw,
-                        "standby_energy_kwh": r.standby_energy_kwh,
-                        "standby_cost": r.standby_cost,
-                        "total_energy_kwh": r.total_energy_kwh,
-                        "total_cost": r.total_cost,
-                        "total_energy_cost": r.total_cost,
-                        "total_energy_cost_inr": r.total_cost,
-                        "total_waste_cost": device_total_waste_cost,
-                        "total_waste_cost_inr": device_total_waste_cost,
-                        "offhours_energy_kwh": r.offhours_energy_kwh,
-                        "offhours_cost": r.offhours_cost,
-                        "offhours_duration_sec": r.offhours_duration_sec,
-                        "offhours_skipped_reason": r.offhours_skipped_reason,
-                        "offhours_pf_estimated": r.offhours_pf_estimated,
-                        "overconsumption_duration_sec": r.overconsumption_duration_sec,
-                        "overconsumption_kwh": r.overconsumption_energy_kwh,
-                        "overconsumption_cost": r.overconsumption_cost,
-                        "overconsumption_skipped_reason": r.overconsumption_skipped_reason,
-                        "overconsumption_pf_estimated": r.overconsumption_pf_estimated,
-                        "unoccupied_duration_sec": r.unoccupied_duration_sec,
-                        "unoccupied_energy_kwh": r.unoccupied_energy_kwh,
-                        "unoccupied_cost": r.unoccupied_cost,
-                        "unoccupied_skipped_reason": r.unoccupied_skipped_reason,
-                        "unoccupied_pf_estimated": r.unoccupied_pf_estimated,
-                        "off_hours": {
-                            "duration_sec": r.offhours_duration_sec,
-                            "energy_kwh": r.offhours_energy_kwh,
-                            "cost": r.offhours_cost,
-                            "skipped_reason": r.offhours_skipped_reason,
-                            "pf_estimated": r.offhours_pf_estimated,
-                            "config_source": "shift_config",
-                        },
-                        "overconsumption": {
-                            "duration_sec": r.overconsumption_duration_sec,
-                            "energy_kwh": r.overconsumption_energy_kwh,
-                            "cost": r.overconsumption_cost,
-                            "skipped_reason": r.overconsumption_skipped_reason,
-                            "pf_estimated": r.overconsumption_pf_estimated,
-                            "config_source": r.overconsumption_config_source,
-                            "config_used": r.overconsumption_config_used,
-                        },
-                        "unoccupied_running": {
-                            "duration_sec": r.unoccupied_duration_sec,
-                            "energy_kwh": r.unoccupied_energy_kwh,
-                            "cost": r.unoccupied_cost,
-                            "skipped_reason": r.unoccupied_skipped_reason,
-                            "pf_estimated": r.unoccupied_pf_estimated,
-                            "config_source": r.unoccupied_config_source,
-                            "config_used": r.unoccupied_config_used,
-                        },
-                        "data_quality": r.data_quality,
-                        "energy_quality": r.energy_quality,
-                        "idle_quality": r.idle_quality,
-                        "standby_quality": r.standby_quality,
-                        "overall_quality": r.overall_quality,
-                        "idle_status": r.idle_status,
-                        "power_unit_input": r.power_unit_input,
-                        "power_unit_normalized_to": r.power_unit_normalized_to,
-                        "normalization_applied": r.normalization_applied,
-                        "pf_estimated": r.pf_estimated,
-                        "warnings": r.warnings,
-                        "calculation_method": r.calculation_method,
-                    }
-                )
+                device_summaries.append(_build_device_summary(r, tariff.rate))
 
             quality_gate_passed = len(quality_failures) == 0
 
@@ -480,7 +526,7 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
                 "overconsumption_total_cost_inr": None if tariff.rate is None else round(sum((r.overconsumption_cost or 0.0) for r in results), 2),
                 "worst_device": worst_device,
                 "device_summaries": device_summaries,
-                "warnings": sorted(set(warnings)),
+                "warnings": sorted(set(_public_warnings(warnings))),
                 "insights": insights,
                 "quality_gate_passed": quality_gate_passed,
                 "quality_failures": quality_failures,

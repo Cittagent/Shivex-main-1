@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import Device
 from app.repositories.device import DeviceRepository
-from app.services.device_errors import DeviceAlreadyExistsError, DeviceIdAllocationError
+from app.services.device_errors import DeviceAlreadyExistsError, DeviceIdAllocationError, DevicePlantRequiredError
 from app.schemas.device import DeviceCreate, DeviceUpdate
 from app.services.device_identity import DeviceIdAllocator
 from services.shared.tenant_context import TenantContext
@@ -56,6 +56,7 @@ class DeviceService:
         Raises:
             DeviceIdAllocationError: If a unique device ID cannot be allocated
         """
+        device_data.plant_id = self._normalize_required_plant_id(device_data.plant_id)
         if device_data.device_id:
             return await self._create_device_with_id(device_data, device_data.device_id, generated=False)
 
@@ -202,6 +203,8 @@ class DeviceService:
         
         # Update only provided fields
         update_data = device_data.model_dump(exclude_unset=True)
+        if "plant_id" in update_data:
+            update_data["plant_id"] = self._normalize_required_plant_id(update_data["plant_id"])
         
         # Handle status field (deprecated) - map to legacy_status
         if "status" in update_data:
@@ -220,6 +223,13 @@ class DeviceService:
         )
         
         return updated_device
+
+    @staticmethod
+    def _normalize_required_plant_id(plant_id: str | None) -> str:
+        normalized = (plant_id or "").strip()
+        if not normalized:
+            raise DevicePlantRequiredError("Plant ID is required for every device.")
+        return normalized
     
     async def delete_device(
         self,

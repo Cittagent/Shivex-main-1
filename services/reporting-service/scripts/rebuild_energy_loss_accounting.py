@@ -11,24 +11,131 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy import BigInteger, Date, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-REPORTING_ROOT = REPO_ROOT / "services" / "reporting-service"
-ENERGY_ROOT = REPO_ROOT / "services" / "energy-service"
+def _resolve_runtime_paths(script_path: Path | None = None) -> tuple[Path, Path]:
+    resolved = (script_path or Path(__file__)).resolve()
+    reporting_root = resolved.parents[1]
 
-for path in (REPORTING_ROOT, ENERGY_ROOT, REPO_ROOT):
+    for candidate in (reporting_root, *reporting_root.parents):
+        if (candidate / "services" / "shared" / "energy_accounting.py").exists():
+            return candidate, reporting_root
+
+    if reporting_root.name == "reporting-service" and reporting_root.parent.name == "services":
+        return reporting_root.parent.parent, reporting_root
+    if resolved.parent.name == "scripts":
+        return reporting_root, reporting_root
+
+    return reporting_root, reporting_root
+
+
+PROJECT_ROOT, REPORTING_ROOT = _resolve_runtime_paths()
+
+for path in (REPORTING_ROOT, PROJECT_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
 from src.config import settings as reporting_settings  # type: ignore  # noqa: E402
 from src.services.influx_reader import influx_reader  # type: ignore  # noqa: E402
-from app.models import EnergyDeviceDay, EnergyDeviceMonth, EnergyFleetDay, EnergyFleetMonth  # type: ignore  # noqa: E402
-from services.shared.energy_accounting import aggregate_window  # type: ignore  # noqa: E402
+try:  # pragma: no cover - exercised in container image
+    from shared.energy_accounting import aggregate_window  # type: ignore  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - repo runtime path
+    from services.shared.energy_accounting import aggregate_window  # type: ignore  # noqa: E402
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class EnergyDeviceDay(Base):
+    __tablename__ = "energy_device_day"
+    __table_args__ = (
+        UniqueConstraint("device_id", "day", name="uq_energy_device_day"),
+        Index("ix_energy_device_day_day", "day"),
+        Index("ix_energy_device_day_version", "version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    energy_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    energy_cost_inr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    idle_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    offhours_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    overconsumption_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    loss_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    loss_cost_inr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    quality_flags: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnergyDeviceMonth(Base):
+    __tablename__ = "energy_device_month"
+    __table_args__ = (
+        UniqueConstraint("device_id", "month", name="uq_energy_device_month"),
+        Index("ix_energy_device_month_month", "month"),
+        Index("ix_energy_device_month_version", "version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    month: Mapped[date] = mapped_column(Date, nullable=False)
+    energy_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    energy_cost_inr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    idle_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    offhours_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    overconsumption_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    loss_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    loss_cost_inr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    quality_flags: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnergyFleetDay(Base):
+    __tablename__ = "energy_fleet_day"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    energy_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    energy_cost_inr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    idle_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    offhours_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    overconsumption_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    loss_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    loss_cost_inr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EnergyFleetMonth(Base):
+    __tablename__ = "energy_fleet_month"
+
+    month: Mapped[date] = mapped_column(Date, primary_key=True)
+    energy_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    energy_cost_inr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    idle_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    offhours_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    overconsumption_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    loss_kwh: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    loss_cost_inr: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
 
 TELEMETRY_FIELDS = [
+    "energy_kwh",
     "power",
     "power_w",
     "active_power",
@@ -82,11 +189,43 @@ async def _device_meta(client: httpx.AsyncClient, device_id: str, tenant_id: str
     waste_data = waste_payload.get("data", waste_payload) if isinstance(waste_payload, dict) else {}
     shift_data = shift_payload.get("data", shift_payload) if isinstance(shift_payload, dict) else shift_payload
 
+    idle_threshold = None
+    over_threshold = None
+    full_load_current_a = None
+    idle_threshold_pct_of_fla = None
+    if isinstance(idle_data, dict):
+        idle_threshold = idle_data.get("derived_idle_threshold_a", idle_data.get("idle_current_threshold"))
+        full_load_current_a = idle_data.get("full_load_current_a")
+        idle_threshold_pct_of_fla = idle_data.get("idle_threshold_pct_of_fla")
+    if isinstance(waste_data, dict):
+        over_threshold = waste_data.get(
+            "derived_overconsumption_threshold_a",
+            waste_data.get("overconsumption_current_threshold_a"),
+        )
+        full_load_current_a = waste_data.get("full_load_current_a", full_load_current_a)
+        idle_threshold_pct_of_fla = waste_data.get("idle_threshold_pct_of_fla", idle_threshold_pct_of_fla)
+
     return {
-        "idle_threshold": idle_data.get("idle_current_threshold") if isinstance(idle_data, dict) else None,
-        "over_threshold": waste_data.get("overconsumption_current_threshold_a") if isinstance(waste_data, dict) else None,
+        "full_load_current_a": full_load_current_a,
+        "idle_threshold_pct_of_fla": idle_threshold_pct_of_fla,
+        "idle_threshold": idle_threshold,
+        "over_threshold": over_threshold,
         "shifts": shift_data if isinstance(shift_data, list) else [],
     }
+
+
+async def _query_rebuild_rows(device_id: str, start_dt: datetime, end_dt: datetime) -> list[dict[str, Any]]:
+    previous_window = getattr(reporting_settings, "INFLUX_AGGREGATION_WINDOW", "5m")
+    try:
+        reporting_settings.INFLUX_AGGREGATION_WINDOW = "1m"
+        return await influx_reader.query_telemetry(
+            device_id=device_id,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            fields=TELEMETRY_FIELDS,
+        )
+    finally:
+        reporting_settings.INFLUX_AGGREGATION_WINDOW = previous_window
 
 
 async def _recompute_device_day(
@@ -99,12 +238,7 @@ async def _recompute_device_day(
 ) -> None:
     start_dt = datetime.combine(day, time.min)
     end_dt = datetime.combine(day, time.max)
-    rows = await influx_reader.query_telemetry(
-        device_id=device_id,
-        start_dt=start_dt,
-        end_dt=end_dt,
-        fields=TELEMETRY_FIELDS,
-    )
+    rows = await _query_rebuild_rows(device_id, start_dt, end_dt)
     accounting = aggregate_window(
         rows,
         platform_tz=platform_tz,

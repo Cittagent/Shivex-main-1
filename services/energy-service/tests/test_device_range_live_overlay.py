@@ -14,6 +14,7 @@ sys.path.insert(0, str(SERVICES_ROOT))
 sys.path.insert(0, str(ROOT))
 
 from app.services.energy_engine import EnergyEngine
+from services.shared.telemetry_normalization import NormalizedTelemetrySample
 
 
 class _ScalarResult:
@@ -33,6 +34,54 @@ class _SessionStub:
 
     async def execute(self, _query):
         return _ScalarResult(self.rows)
+
+
+def _normalized_sample(*, ts: str, current: float, voltage: float, energy_kwh: float) -> NormalizedTelemetrySample:
+    from datetime import datetime, timezone
+
+    return NormalizedTelemetrySample(
+        timestamp=datetime.fromisoformat(ts).replace(tzinfo=timezone.utc),
+        raw_power_w=None,
+        raw_active_power_w=None,
+        raw_power_factor=None,
+        raw_current_a=current,
+        raw_voltage_v=voltage,
+        raw_energy_kwh=energy_kwh,
+        raw_source_power_field=None,
+        raw_source_pf_field=None,
+        raw_source_energy_field="energy_kwh",
+        net_power_w=None,
+        import_power_w=0.0,
+        export_power_w=0.0,
+        business_power_w=0.0,
+        pf_signed=None,
+        pf_business=None,
+        current_a=current,
+        voltage_v=voltage,
+        energy_counter_kwh=energy_kwh,
+        power_direction="unknown",
+        quality_flags=(),
+    )
+
+
+def test_compute_delta_uses_measured_interval_ratio_for_overconsumption():
+    engine = EnergyEngine(_SessionStub([]))
+
+    delta = engine._compute_delta(
+        state=SimpleNamespace(),
+        ts=_normalized_sample(ts="2026-04-14T00:01:00", current=25.0, voltage=230.0, energy_kwh=100.2).timestamp,
+        previous_sample=_normalized_sample(ts="2026-04-14T00:00:00", current=25.0, voltage=230.0, energy_kwh=100.0),
+        current_sample=_normalized_sample(ts="2026-04-14T00:01:00", current=25.0, voltage=230.0, energy_kwh=100.2),
+        idle_threshold=5.0,
+        over_threshold=20.0,
+        shifts=[{"shift_start": "00:00", "shift_end": "23:59", "is_active": True}],
+    )
+
+    assert delta.energy_kwh == pytest.approx(0.2)
+    assert delta.idle_kwh == 0.0
+    assert delta.offhours_kwh == 0.0
+    assert delta.overconsumption_kwh == pytest.approx(0.04)
+    assert delta.loss_kwh == pytest.approx(0.04)
 
 
 @pytest.mark.asyncio

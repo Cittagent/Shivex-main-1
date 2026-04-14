@@ -64,6 +64,7 @@ async def test_idle_stats_persists_tenant_scoped_log(session_factory, monkeypatc
             Device(
                 device_id="DASH-DEVICE",
                 tenant_id="TENANT-1",
+                plant_id="PLANT-1",
                 device_name="Dashboard Device",
                 device_type="compressor",
                 data_source_type="metered",
