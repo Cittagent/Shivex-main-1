@@ -1,0 +1,20 @@
+{
+  "started_at_epoch": 1775639897.489401,
+  "mode": "thorough",
+  "summary": {
+    "passed": 0,
+    "failed": 1,
+    "blocked": 0
+  },
+  "results": [
+    {
+      "name": "Strict release gate prerequisites",
+      "status": "FAIL",
+      "command": "strict-release-gate",
+      "duration_seconds": 0.0,
+      "detail": "Missing live-browser env vars: CERTIFY_SUPER_ADMIN_EMAIL, CERTIFY_SUPER_ADMIN_PASSWORD",
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

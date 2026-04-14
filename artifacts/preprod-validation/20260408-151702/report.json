@@ -1,0 +1,640 @@
+{
+  "validation_setup": {
+    "mode": "quick-gate",
+    "environment": {
+      "repo_root": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main",
+      "cert_python": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11",
+      "auth_url": "http://localhost:8090",
+      "device_url": "http://localhost:8000",
+      "data_url": "http://localhost:8081",
+      "rule_url": "http://localhost:8002",
+      "reporting_url": "http://localhost:8085",
+      "analytics_url": "http://localhost:8003",
+      "started_at": "2026-04-08T15:17:02.390731+00:00"
+    },
+    "reset_steps_performed": [],
+    "orgs": [
+      {
+        "id": "3052b75a-54da-4d8f-9738-4690991c3a61",
+        "name": "Test-01",
+        "slug": "test-01",
+        "plants": [
+          {
+            "id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+            "name": "Test-01 Certification Plant A"
+          },
+          {
+            "id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+            "name": "Test-01 Certification Plant B"
+          },
+          {
+            "id": "2af2992b-184d-4be5-8990-4b6645ee5f36",
+            "name": "Test-01 Certification Plant C"
+          }
+        ],
+        "org_admin": {
+          "email": "certify+test-01-admin@factoryops.local",
+          "password": "Validate123!",
+          "role": "org_admin"
+        },
+        "plant_manager": {
+          "email": "certify+test-01-pm@factoryops.local",
+          "password": "Validate123!",
+          "role": "plant_manager"
+        },
+        "devices": [
+          {
+            "device_id": "AD00000001",
+            "device_name": "Certification Duplicate Machine",
+            "plant_id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+            "plant_name": "Test-01 Certification Plant A",
+            "metadata_key": "test-01:duplicate:a"
+          },
+          {
+            "device_id": "AD00000002",
+            "device_name": "Certification Duplicate Machine",
+            "plant_id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+            "plant_name": "Test-01 Certification Plant B",
+            "metadata_key": "test-01:duplicate:b"
+          }
+        ],
+        "operator": {
+          "email": "certify+test-01-operator@factoryops.local",
+          "password": "Validate123!",
+          "role": "operator"
+        },
+        "viewer": {
+          "email": "certify+test-01-viewer@factoryops.local",
+          "password": "Validate123!",
+          "role": "viewer"
+        },
+        "smoke_devices": [
+          {
+            "device_id": "AD00000023",
+            "device_name": "Smoke Device A",
+            "plant_id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+            "plant_name": "Test-01 Certification Plant A"
+          },
+          {
+            "device_id": "AD00000024",
+            "device_name": "Smoke Device B",
+            "plant_id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+            "plant_name": "Test-01 Certification Plant B"
+          },
+          {
+            "device_id": "AD00000025",
+            "device_name": "Smoke Device C",
+            "plant_id": "2af2992b-184d-4be5-8990-4b6645ee5f36",
+            "plant_name": "Test-01 Certification Plant C"
+          }
+        ]
+      },
+      {
+        "id": "72da8caa-56b8-42ed-addb-349ad0821eb2",
+        "name": "Certification Validation Secondary",
+        "slug": "certification-validation-secondary",
+        "plants": [
+          {
+            "id": "e46d8a93-31ea-46ca-9a3b-060f2566b0f9",
+            "name": "Certification Validation Secondary Certification Plant A"
+          },
+          {
+            "id": "9f70b363-a15b-4b05-948c-89531d501d11",
+            "name": "Certification Validation Secondary Certification Plant B"
+          }
+        ],
+        "org_admin": {
+          "email": "certify+certification-validation-secondary-admin@factoryops.local",
+          "password": "Validate123!",
+          "role": "org_admin"
+        },
+        "plant_manager": {
+          "email": "certify+certification-validation-secondary-pm@factoryops.local",
+          "password": "Validate123!",
+          "role": "plant_manager"
+        },
+        "devices": [
+          {
+            "device_id": "AD00000003",
+            "device_name": "Certification Duplicate Machine",
+            "plant_id": "e46d8a93-31ea-46ca-9a3b-060f2566b0f9",
+            "plant_name": "Certification Validation Secondary Certification Plant A",
+            "metadata_key": "certification-validation-secondary:duplicate:a"
+          },
+          {
+            "device_id": "AD00000004",
+            "device_name": "Certification Duplicate Machine",
+            "plant_id": "9f70b363-a15b-4b05-948c-89531d501d11",
+            "plant_name": "Certification Validation Secondary Certification Plant B",
+            "metadata_key": "certification-validation-secondary:duplicate:b"
+          }
+        ]
+      }
+    ],
+    "users": [
+      {
+        "email": "certify+test-01-admin@factoryops.local",
+        "password": "Validate123!",
+        "role": "org_admin"
+      },
+      {
+        "email": "certify+test-01-pm@factoryops.local",
+        "password": "Validate123!",
+        "role": "plant_manager"
+      },
+      {
+        "email": "certify+certification-validation-secondary-admin@factoryops.local",
+        "password": "Validate123!",
+        "role": "org_admin"
+      },
+      {
+        "email": "certify+certification-validation-secondary-pm@factoryops.local",
+        "password": "Validate123!",
+        "role": "plant_manager"
+      },
+      {
+        "email": "certify+test-01-operator@factoryops.local",
+        "password": "Validate123!",
+        "role": "operator"
+      },
+      {
+        "email": "certify+test-01-viewer@factoryops.local",
+        "password": "Validate123!",
+        "role": "viewer"
+      },
+      {
+        "email": "manash.ray@cittagent.com",
+        "password": "Shivex@2706",
+        "role": "super_admin"
+      }
+    ],
+    "plants": [
+      {
+        "id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+        "name": "Test-01 Certification Plant A"
+      },
+      {
+        "id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+        "name": "Test-01 Certification Plant B"
+      },
+      {
+        "id": "e46d8a93-31ea-46ca-9a3b-060f2566b0f9",
+        "name": "Certification Validation Secondary Certification Plant A"
+      },
+      {
+        "id": "9f70b363-a15b-4b05-948c-89531d501d11",
+        "name": "Certification Validation Secondary Certification Plant B"
+      },
+      {
+        "id": "2af2992b-184d-4be5-8990-4b6645ee5f36",
+        "name": "Test-01 Certification Plant C"
+      }
+    ],
+    "devices": [
+      {
+        "device_id": "AD00000001",
+        "device_name": "Certification Duplicate Machine",
+        "plant_id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+        "plant_name": "Test-01 Certification Plant A",
+        "metadata_key": "test-01:duplicate:a"
+      },
+      {
+        "device_id": "AD00000002",
+        "device_name": "Certification Duplicate Machine",
+        "plant_id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+        "plant_name": "Test-01 Certification Plant B",
+        "metadata_key": "test-01:duplicate:b"
+      },
+      {
+        "device_id": "AD00000003",
+        "device_name": "Certification Duplicate Machine",
+        "plant_id": "e46d8a93-31ea-46ca-9a3b-060f2566b0f9",
+        "plant_name": "Certification Validation Secondary Certification Plant A",
+        "metadata_key": "certification-validation-secondary:duplicate:a"
+      },
+      {
+        "device_id": "AD00000004",
+        "device_name": "Certification Duplicate Machine",
+        "plant_id": "9f70b363-a15b-4b05-948c-89531d501d11",
+        "plant_name": "Certification Validation Secondary Certification Plant B",
+        "metadata_key": "certification-validation-secondary:duplicate:b"
+      },
+      {
+        "device_id": "AD00000023",
+        "device_name": "Smoke Device A",
+        "plant_id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+        "plant_name": "Test-01 Certification Plant A"
+      },
+      {
+        "device_id": "AD00000024",
+        "device_name": "Smoke Device B",
+        "plant_id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+        "plant_name": "Test-01 Certification Plant B"
+      },
+      {
+        "device_id": "AD00000025",
+        "device_name": "Smoke Device C",
+        "plant_id": "2af2992b-184d-4be5-8990-4b6645ee5f36",
+        "plant_name": "Test-01 Certification Plant C"
+      }
+    ]
+  },
+  "findings": [],
+  "fixes_applied": [],
+  "validation_results": [
+    {
+      "item_id": "fresh_reset_sanity",
+      "title": "Fresh reset sanity",
+      "status": "PASS",
+      "evidence_summary": "Bootstrap and validation logins succeeded for the full role matrix.",
+      "evidence": [
+        {
+          "label": "auth-service",
+          "path": null,
+          "detail": "http://localhost:8090/health | running healthy"
+        },
+        {
+          "label": "device-service",
+          "path": null,
+          "detail": "http://localhost:8000/health | running healthy"
+        },
+        {
+          "label": "data-service",
+          "path": null,
+          "detail": "http://localhost:8081/api/v1/data/health | running healthy"
+        },
+        {
+          "label": "rule-engine-service",
+          "path": null,
+          "detail": "http://localhost:8002/health | running healthy"
+        },
+        {
+          "label": "reporting-service",
+          "path": null,
+          "detail": "http://localhost:8085/health | running healthy"
+        },
+        {
+          "label": "analytics-service",
+          "path": null,
+          "detail": "http://localhost:8003/health/live | running healthy"
+        },
+        {
+          "label": "analytics-worker",
+          "path": null,
+          "detail": "http://localhost:8003/health/ready | running"
+        },
+        {
+          "label": "waste-analysis-service",
+          "path": null,
+          "detail": "http://localhost:8087/health | running healthy"
+        },
+        {
+          "label": "energy-service",
+          "path": null,
+          "detail": "http://localhost:8010/health | running healthy"
+        },
+        {
+          "label": "ui-web",
+          "path": null,
+          "detail": "http://localhost:3000/login | running"
+        },
+        {
+          "label": "super admin",
+          "path": null,
+          "detail": "manash.ray@cittagent.com | role=super_admin"
+        },
+        {
+          "label": "org admin",
+          "path": null,
+          "detail": "certify+test-01-admin@factoryops.local | role=org_admin"
+        },
+        {
+          "label": "plant manager",
+          "path": null,
+          "detail": "certify+test-01-pm@factoryops.local | role=plant_manager"
+        },
+        {
+          "label": "operator",
+          "path": null,
+          "detail": "certify+test-01-operator@factoryops.local | role=operator"
+        },
+        {
+          "label": "viewer",
+          "path": null,
+          "detail": "certify+test-01-viewer@factoryops.local | role=viewer"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "multi_org_isolation",
+      "title": "Multi-org isolation",
+      "status": "PASS",
+      "evidence_summary": "Certification org bundles were seeded successfully.",
+      "evidence": [
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151702/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151702/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "org_plant_setup",
+      "title": "Org / plant setup",
+      "status": "PASS",
+      "evidence_summary": "Validation roles, plants, and smoke devices were provisioned.",
+      "evidence": [
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151702/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151702/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        },
+        {
+          "label": "smoke context",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151702/smoke_context.json",
+          "detail": null
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "device_onboarding",
+      "title": "Device onboarding",
+      "status": "PASS",
+      "evidence_summary": "Device onboarding contract rejected missing plant and maintained one device per plant.",
+      "evidence": [
+        {
+          "label": "Smoke Device A",
+          "path": null,
+          "detail": "AD00000023 -> Test-01 Certification Plant A"
+        },
+        {
+          "label": "Smoke Device B",
+          "path": null,
+          "detail": "AD00000024 -> Test-01 Certification Plant B"
+        },
+        {
+          "label": "Smoke Device C",
+          "path": null,
+          "detail": "AD00000025 -> Test-01 Certification Plant C"
+        },
+        {
+          "label": "missing plant rejection",
+          "path": null,
+          "detail": "HTTP 422"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "real_telemetry_ingestion",
+      "title": "Real telemetry ingestion",
+      "status": "PASS",
+      "evidence_summary": "Real MQTT telemetry was ingested and surfaced through the live telemetry API.",
+      "evidence": [
+        {
+          "label": "device",
+          "path": null,
+          "detail": "AD00000023"
+        },
+        {
+          "label": "latest telemetry",
+          "path": null,
+          "detail": "{\"current\": 12.5, \"device_id\": \"AD00000023\", \"energy_kwh\": 1200.0, \"enrichment_status\": \"pending\", \"power\": 2875.0, \"power_factor\": 0.97, \"schema_version\": \"v1\", \"timestamp\": \"2026-04-08T15:17:08.138947Z\", \"voltage\": 231.0}"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "telemetry_influx_contract",
+      "title": "Telemetry / Influx contract",
+      "status": "PASS",
+      "evidence_summary": "Influx contained fresh points for the device and did not expose forbidden duplicated metadata fields.",
+      "evidence": [
+        {
+          "label": "influx csv sample",
+          "path": null,
+          "detail": ",result,table,_start,_stop,_time,_value,_field,_measurement,device_id,tenant_id\r\n,_result,0,2026-04-08T14:47:13.782746177Z,2026-04-08T15:17:13.782746177Z,2026-04-08T15:17:08.138947Z,12.5,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:47:13.782746177Z,2026-04-08T15:17:13.782746177Z,2026-04-08T15:17:08.34417Z,12.8,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:47:13.782746177Z,2026-04-08T15:17:13.782746177Z,2026-04-08T15:17:08.549386Z,12.5,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:47:13.782746177Z,2026-04-08T15:17:13.782746177Z,2026-04-08T15:17:08.75467Z,12.8,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:47:13.782746177Z,2026-04-08T15:17:13.782746177Z,2026-04-08T15:17:08.956663Z,12.5,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:47:13.782746177Z,2026-04-08T15:17:13.782746177Z,2026-04-08T15:17:09.161194Z,35,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:47:13.782746177Z,2"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "role_scoping",
+      "title": "Role scoping",
+      "status": "PASS",
+      "evidence_summary": "Bootstrap and validation logins succeeded for the full role matrix.",
+      "evidence": [
+        {
+          "label": "smoke context",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151702/smoke_context.json",
+          "detail": null
+        },
+        {
+          "label": "super admin",
+          "path": null,
+          "detail": "manash.ray@cittagent.com | role=super_admin"
+        },
+        {
+          "label": "org admin",
+          "path": null,
+          "detail": "certify+test-01-admin@factoryops.local | role=org_admin"
+        },
+        {
+          "label": "plant manager",
+          "path": null,
+          "detail": "certify+test-01-pm@factoryops.local | role=plant_manager"
+        },
+        {
+          "label": "operator",
+          "path": null,
+          "detail": "certify+test-01-operator@factoryops.local | role=operator"
+        },
+        {
+          "label": "viewer",
+          "path": null,
+          "detail": "certify+test-01-viewer@factoryops.local | role=viewer"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "machines_page",
+      "title": "Machines page",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "machine_detail_page",
+      "title": "Machine detail page",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "rules",
+      "title": "Rules",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "real_rule_trigger_execution",
+      "title": "Real rule trigger execution",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "per_rule_notification_recipients",
+      "title": "Per-rule notification recipients",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "notification_delivery_intent",
+      "title": "Notification delivery intent",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "settings",
+      "title": "Settings",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "legacy_notification_migration_behavior",
+      "title": "Legacy notification migration behavior",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "reports",
+      "title": "Reports",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "scheduled_reports",
+      "title": "Scheduled reports",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "analytics",
+      "title": "Analytics",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "financial_consistency",
+      "title": "Financial consistency",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "error_handling",
+      "title": "Error handling",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "hardware_lifecycle",
+      "title": "Hardware lifecycle",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "hardware_integrity",
+      "title": "Hardware integrity",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "logs_runtime_stability",
+      "title": "Logs / runtime stability",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "final_go_no_go",
+      "title": "Final GO / NO-GO",
+      "status": "FAIL",
+      "evidence_summary": "Quick gate does not execute the full release checklist.",
+      "evidence": [],
+      "failure": {
+        "classification": "environment/data issue",
+        "production_blocking": true,
+        "command": "final-decision",
+        "error_output": "Quick gate does not execute the full release checklist."
+      }
+    }
+  ],
+  "logs_review": [],
+  "production_recommendation": {
+    "decision": "NO-GO",
+    "reason": "Quick gate does not execute the full release checklist."
+  },
+  "follow_ups": [
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run."
+  ],
+  "commands": [],
+  "generated_at": "2026-04-08T15:17:14.077750+00:00"
+}

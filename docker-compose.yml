@@ -1,0 +1,825 @@
+# Local development stack only. Do not promote this compose file directly to
+# production: it publishes service ports, uses local credentials, and depends
+# on local containers for stateful services.
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: energy_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_USER: energy
+      MYSQL_PASSWORD: energy
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init-scripts/mysql:/docker-entrypoint-initdb.d
+    networks:
+      - energy-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "energy", "-penergy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: influxdb
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_CLI_CONFIG_NAME: energy-platform
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: admin123
+      DOCKER_INFLUXDB_INIT_ORG: energy-org
+      DOCKER_INFLUXDB_INIT_BUCKET: telemetry
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: energy-token
+      INFLUXD_HTTP_BIND_ADDRESS: :8086
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - energy-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - energy-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: analytics_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - energy-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set local http://minio:9000 minio minio123;
+      /usr/bin/mc mb -p local/energy-platform-datasets;
+      /usr/bin/mc mb -p local/factoryops-waste-reports;
+      exit 0;
+      "
+    networks:
+      - energy-net
+
+  emqx:
+    image: emqx/emqx:5.3.0
+    container_name: emqx
+    hostname: emqx.local
+    ports:
+      - "1883:1883"
+      - "8083:8083"
+      - "8084:8084"
+      - "8883:8883"
+      - "18083:18083"
+    networks:
+      energy-net:
+        aliases:
+          - emqx.local
+    environment:
+      # EMQX health checks rely on the Erlang node name matching a resolvable hostname.
+      EMQX_NODE__NAME: emqx@emqx.local
+      EMQX_HOST: emqx.local
+      EMQX_ALLOW_ANONYMOUS: "${EMQX_ALLOW_ANONYMOUS:?Set EMQX_ALLOW_ANONYMOUS explicitly; use true only for local/dev compose.}"
+      EMQX_LOADED_PLUGINS: "emqx_retained,emqx_rule_engine,emqx_dashboard"
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx_ctl", "status"]
+      interval: 10s
+      timeout: 15s
+      retries: 12
+      start_period: 30s
+
+  device-service:
+    build:
+      context: .
+      dockerfile: services/device-service/Dockerfile
+    container_name: device-service
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=development
+      - DATA_SERVICE_BASE_URL=http://data-service:8081
+      - RULE_ENGINE_SERVICE_BASE_URL=http://rule-engine-service:8002
+      - REPORTING_SERVICE_BASE_URL=http://reporting-service:8085
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+      - DASHBOARD_STREAM_HEARTBEAT_SECONDS=5
+      - DASHBOARD_STREAM_QUEUE_SIZE=64
+      - DASHBOARD_STREAM_SEND_TIMEOUT_SECONDS=10
+      - DASHBOARD_SNAPSHOT_STALE_AFTER_SECONDS=15
+      - DASHBOARD_SCHEDULER_MAX_DRIFT_SECONDS=10
+      - REDIS_URL=redis://redis:6379/0
+      - FLEET_STREAM_REDIS_CHANNEL=factoryops:fleet_stream:v1
+      - ENERGY_SERVICE_BASE_URL=http://energy-service:8010
+    ports:
+      - "8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - energy-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  energy-service:
+    build:
+      context: .
+      dockerfile: services/energy-service/Dockerfile
+    container_name: energy-service
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - ENVIRONMENT=development
+      - REDIS_URL=redis://redis:6379/0
+      - ENERGY_STREAM_REDIS_CHANNEL=factoryops:energy_stream:v1
+      - REPORTING_SERVICE_BASE_URL=http://reporting-service:8085
+      - DEVICE_SERVICE_BASE_URL=http://device-service:8000
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+    ports:
+      - "8010:8010"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      device-service:
+        condition: service_healthy
+    networks:
+      - energy-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  data-service:
+    build:
+      context: .
+      dockerfile: services/data-service/Dockerfile
+    container_name: data-service
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - PORT=8081
+      - HOST=0.0.0.0
+      - MQTT_BROKER_HOST=emqx
+      - MQTT_BROKER_PORT=1883
+      - MQTT_TOPIC=devices/+/telemetry
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=energy-token
+      - INFLUXDB_ORG=energy-org
+      - INFLUXDB_BUCKET=telemetry
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - ENERGY_SERVICE_URL=http://energy-service:8010
+      - ENERGY_SYNC_ENABLED=true
+      - RULE_ENGINE_URL=http://rule-engine-service:8002
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=ai_factoryops
+      - MYSQL_USER=energy
+      - MYSQL_PASSWORD=energy
+      - DLQ_BACKEND=mysql
+      - DEVICE_SYNC_ENABLED=true
+      - DEVICE_SYNC_WORKERS=2
+      - DEVICE_SYNC_QUEUE_MAXSIZE=5000
+      - DEVICE_SYNC_MAX_RETRIES=3
+      - DEVICE_SYNC_RETRY_BACKOFF_SEC=0.5
+      - DEVICE_SYNC_RETRY_BACKOFF_MAX_SEC=5
+      - OUTBOX_POLL_INTERVAL_SEC=2
+      - OUTBOX_BATCH_SIZE=50
+      - OUTBOX_MAX_RETRIES=5
+      - RECONCILIATION_INTERVAL_SEC=300
+      - RECONCILIATION_DRIFT_WARN_MINUTES=10
+      - RECONCILIATION_DRIFT_RESYNC_MINUTES=30
+    ports:
+      - "8081:8081"
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      emqx:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      device-service:
+        condition: service_healthy
+      energy-service:
+        condition: service_healthy
+    networks:
+      - energy-net
+
+  rule-engine-service:
+    build:
+      context: .
+      dockerfile: services/rule-engine-service/Dockerfile
+    container_name: rule-engine-service
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=development
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - EMAIL_ENABLED=${EMAIL_ENABLED:-true}
+      - EMAIL_SMTP_HOST=${EMAIL_SMTP_HOST:-${SMTP_SERVER:-smtp.gmail.com}}
+      - EMAIL_SMTP_PORT=${EMAIL_SMTP_PORT:-587}
+      - EMAIL_SMTP_USERNAME=${EMAIL_SMTP_USERNAME:-${EMAIL_SENDER:-}}
+      - EMAIL_SMTP_PASSWORD=${EMAIL_SMTP_PASSWORD:-${EMAIL_PASSWORD:-}}
+      - EMAIL_FROM_ADDRESS=${EMAIL_FROM_ADDRESS:-${EMAIL_SENDER:-alerts@energy-platform.com}}
+      - SMS_ENABLED=${SMS_ENABLED:-false}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_SMS_FROM_NUMBER=${TWILIO_SMS_FROM_NUMBER:-}
+      - WHATSAPP_ENABLED=${WHATSAPP_ENABLED:-false}
+      - TWILIO_WHATSAPP_FROM_NUMBER=${TWILIO_WHATSAPP_FROM_NUMBER:-}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - REDIS_URL=redis://redis:6379/0
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+    ports:
+      - "8002:8002"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - energy-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  analytics-service:
+    build:
+      context: .
+      dockerfile: services/analytics-service/Dockerfile
+      target: api
+    container_name: analytics-service
+    restart: unless-stopped
+    environment:
+      - APP_ROLE=api
+      - APP_ENV=development
+      - LOG_LEVEL=INFO
+      - API_PORT=8003
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=ai_factoryops
+      - MYSQL_USER=energy
+      - MYSQL_PASSWORD=energy
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY_ID=minio
+      - S3_SECRET_ACCESS_KEY=minio123
+      - S3_BUCKET_NAME=energy-platform-datasets
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - QUEUE_BACKEND=redis
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM_NAME=analytics_jobs_stream
+      - REDIS_DEAD_LETTER_STREAM=analytics_jobs_dead_letter
+      - REDIS_CONSUMER_GROUP=analytics_workers
+      - REDIS_CONSUMER_NAME=analytics-api
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+    ports:
+      - "8003:8003"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    networks:
+      - energy-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  analytics-worker:
+    build:
+      context: .
+      dockerfile: services/analytics-service/Dockerfile
+      target: worker
+    container_name: analytics-worker
+    restart: unless-stopped
+    environment:
+      - APP_ROLE=worker
+      - APP_ENV=development
+      - LOG_LEVEL=INFO
+      - API_PORT=8003
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=ai_factoryops
+      - MYSQL_USER=energy
+      - MYSQL_PASSWORD=energy
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY_ID=minio
+      - S3_SECRET_ACCESS_KEY=minio123
+      - S3_BUCKET_NAME=energy-platform-datasets
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - QUEUE_BACKEND=redis
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM_NAME=analytics_jobs_stream
+      - REDIS_DEAD_LETTER_STREAM=analytics_jobs_dead_letter
+      - REDIS_CONSUMER_GROUP=analytics_workers
+      - REDIS_CONSUMER_NAME=analytics-worker-1
+      - MAX_CONCURRENT_JOBS=3
+      - ML_WEEKLY_RETRAINER_ENABLED=true
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      analytics-service:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    networks:
+      - energy-net
+
+  analytics-worker-2:
+    build:
+      context: .
+      dockerfile: services/analytics-service/Dockerfile
+      target: worker
+    container_name: analytics-worker-2
+    restart: unless-stopped
+    environment:
+      - APP_ROLE=worker
+      - APP_ENV=development
+      - LOG_LEVEL=INFO
+      - API_PORT=8003
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=ai_factoryops
+      - MYSQL_USER=energy
+      - MYSQL_PASSWORD=energy
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY_ID=minio
+      - S3_SECRET_ACCESS_KEY=minio123
+      - S3_BUCKET_NAME=energy-platform-datasets
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - QUEUE_BACKEND=redis
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM_NAME=analytics_jobs_stream
+      - REDIS_DEAD_LETTER_STREAM=analytics_jobs_dead_letter
+      - REDIS_CONSUMER_GROUP=analytics_workers
+      - REDIS_CONSUMER_NAME=analytics-worker-2
+      - MAX_CONCURRENT_JOBS=3
+      - ML_WEEKLY_RETRAINER_ENABLED=false
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      analytics-service:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    networks:
+      - energy-net
+
+  data-export-service:
+    build:
+      context: .
+      dockerfile: services/data-export-service/Dockerfile
+    container_name: data-export-service
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - PORT=8080
+      - HOST=0.0.0.0
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - REDIS_URL=redis://redis:6379/0
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=energy-token
+      - INFLUXDB_ORG=energy-org
+      - INFLUXDB_BUCKET=telemetry
+      - S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minio
+      - AWS_SECRET_ACCESS_KEY=minio123
+      - S3_BUCKET=energy-platform-datasets
+      - CHECKPOINT_DB_HOST=mysql
+      - CHECKPOINT_DB_PORT=3306
+      - CHECKPOINT_DB_NAME=ai_factoryops
+      - CHECKPOINT_DB_USER=energy
+      - CHECKPOINT_DB_PASSWORD=energy
+      - DATA_SERVICE_URL=http://data-service:8081
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+    ports:
+      - "8080:8080"
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - energy-net
+
+  reporting-service:
+    build:
+      context: .
+      dockerfile: services/reporting-service/Dockerfile
+    container_name: reporting-service
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - PORT=8085
+      - HOST=0.0.0.0
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - REDIS_URL=redis://redis:6379/0
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=energy
+      - MYSQL_PASSWORD=energy
+      - MYSQL_DATABASE=ai_factoryops
+      - MINIO_ACCESS_KEY=minio
+      - MINIO_SECRET_KEY=minio123
+      - MINIO_BUCKET=energy-platform-datasets
+      - MINIO_EXTERNAL_URL=${MINIO_EXTERNAL_URL:-http://localhost:9000}
+      - AWS_REGION=us-east-1
+      - S3_BUCKET_NAME=energy-platform-datasets
+      - AWS_ENDPOINT_URL=http://minio:9000
+      - AWS_ENDPOINT_URL_S3=http://minio:9000
+      - MINIO_ENDPOINT=minio:9000
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=energy-token
+      - INFLUXDB_ORG=energy-org
+      - INFLUXDB_BUCKET=telemetry
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - ENERGY_SERVICE_URL=http://energy-service:8010
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+    ports:
+      - "8085:8085"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      energy-service:
+        condition: service_healthy
+      device-service:
+        condition: service_healthy
+    networks:
+      - energy-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8085/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  waste-analysis-service:
+    build:
+      context: .
+      dockerfile: services/waste-analysis-service/Dockerfile
+    container_name: waste-analysis-service
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - PORT=8087
+      - HOST=0.0.0.0
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ACCESS_KEY=minio
+      - MINIO_SECRET_KEY=minio123
+      - MINIO_BUCKET=factoryops-waste-reports
+      - MINIO_EXTERNAL_URL=${MINIO_EXTERNAL_URL:-http://localhost:9000}
+      - MINIO_ENDPOINT=minio:9000
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=energy-token
+      - INFLUXDB_ORG=energy-org
+      - INFLUXDB_BUCKET=telemetry
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - REPORTING_SERVICE_URL=http://reporting-service:8085
+      - ENERGY_SERVICE_URL=http://energy-service:8010
+      - INFLUX_AGGREGATION_WINDOW=5m
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+    ports:
+      - "8087:8087"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      reporting-service:
+        condition: service_started
+      device-service:
+        condition: service_healthy
+      energy-service:
+        condition: service_healthy
+    networks:
+      - energy-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8087/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  copilot-service:
+    build:
+      context: .
+      dockerfile: services/copilot-service/Dockerfile
+    container_name: copilot-service
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - REDIS_URL=redis://redis:6379/0
+      - MYSQL_URL=mysql+aiomysql://copilot_reader:${COPILOT_DB_PASSWORD:-copilot_readonly_pass}@mysql:3306/ai_factoryops
+      - DATA_SERVICE_URL=http://data-service:8081
+      - REPORTING_SERVICE_URL=http://reporting-service:8085
+      - ENERGY_SERVICE_URL=http://energy-service:8010
+      - MAX_QUERY_ROWS=200
+      - QUERY_TIMEOUT_SEC=10
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+    ports:
+      - "8007:8007"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      data-service:
+        condition: service_started
+      reporting-service:
+        condition: service_started
+      device-service:
+        condition: service_healthy
+    networks:
+      - energy-net
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    container_name: auth-service
+    restart: unless-stopped
+    volumes:
+      - ./tools:/app/tools
+    ports:
+      - "8090:8090"
+    environment:
+      DATABASE_URL: "mysql+aiomysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-ai_factoryops}"
+      REDIS_URL: "redis://redis:6379/0"
+      MYSQL_HOST: "mysql"
+      MYSQL_PORT: "3306"
+      MYSQL_USER: "${MYSQL_USER}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-ai_factoryops}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      JWT_ALGORITHM: "HS256"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+      REFRESH_TOKEN_EXPIRE_DAYS: "7"
+      EMAIL_ENABLED: "${EMAIL_ENABLED:-true}"
+      EMAIL_SMTP_HOST: "${EMAIL_SMTP_HOST:-${SMTP_SERVER:-smtp.gmail.com}}"
+      EMAIL_SMTP_PORT: "${EMAIL_SMTP_PORT:-587}"
+      EMAIL_SMTP_USERNAME: "${EMAIL_SMTP_USERNAME:-${EMAIL_SENDER:-}}"
+      EMAIL_SMTP_PASSWORD: "${EMAIL_SMTP_PASSWORD:-${EMAIL_PASSWORD:-}}"
+      EMAIL_FROM_ADDRESS: "${EMAIL_FROM_ADDRESS:-${EMAIL_SENDER:-alerts@energy-platform.com}}"
+      FRONTEND_BASE_URL: "${FRONTEND_BASE_URL:-http://localhost:3000}"
+      INVITE_TOKEN_EXPIRE_MINUTES: "30"
+      PASSWORD_RESET_EXPIRE_MINUTES: "30"
+      LOGIN_RATE_LIMIT: "${LOGIN_RATE_LIMIT:-120/minute}"
+      PASSWORD_FORGOT_RATE_LIMIT: "${PASSWORD_FORGOT_RATE_LIMIT:-30/minute}"
+      INVITATION_ACCEPT_RATE_LIMIT: "${INVITATION_ACCEPT_RATE_LIMIT:-30/minute}"
+      SERVICE_HOST: "0.0.0.0"
+      SERVICE_PORT: "8090"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      ENVIRONMENT: "${ENVIRONMENT:-development}"
+      SQLALCHEMY_ECHO: "${SQLALCHEMY_ECHO:-false}"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - energy-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  mailpit:
+    image: axllent/mailpit:v1.21.5
+    container_name: mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - energy-net
+
+  ui-web:
+    build: ./ui-web
+    container_name: ui-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - device-service
+      - data-service
+      - rule-engine-service
+      - analytics-service
+      - data-export-service
+      - waste-analysis-service
+      - copilot-service
+    networks:
+      - energy-net
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://shivex.ai}
+
+  telemetry-simulator:
+    build: ./tools/device-simulator
+    container_name: telemetry-simulator
+    environment:
+      - DEVICE_ID=${DEVICE_ID:-COMPRESSOR-001}
+      - MQTT_BROKER_HOST=emqx
+      - MQTT_BROKER_PORT=1883
+    depends_on:
+      emqx:
+        condition: service_healthy
+      device-service:
+        condition: service_healthy
+    networks:
+      - energy-net
+    profiles:
+      - demo
+
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - device-service
+    networks:
+      - energy-net
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "9093:9093"
+    networks:
+      - energy-net
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - energy-net
+
+networks:
+  energy-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  influxdb_data:
+  minio_data:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:

@@ -1,0 +1,31 @@
+{
+  "super_admin_email": "manash.ray@cittagent.com",
+  "org_admin_email": "certify+test-01-admin@factoryops.local",
+  "plant_manager_email": "certify+test-01-pm@factoryops.local",
+  "operator_email": "certify+test-01-operator@factoryops.local",
+  "viewer_email": "certify+test-01-viewer@factoryops.local",
+  "passwords": {
+    "super_admin": "Shivex@2706",
+    "org_admin": "Validate123!",
+    "plant_manager": "Validate123!",
+    "operator": "Validate123!",
+    "viewer": "Validate123!"
+  },
+  "plants": {
+    "A": "Test-01 Certification Plant A",
+    "B": "Test-01 Certification Plant B",
+    "C": "Test-01 Certification Plant C"
+  },
+  "devices": {
+    "A": "Smoke Device A",
+    "B": "Smoke Device B",
+    "C": "Smoke Device C"
+  },
+  "device_ids": {
+    "A": "AD00000023",
+    "B": "AD00000024",
+    "C": "AD00000025"
+  },
+  "tenant_id": "3052b75a-54da-4d8f-9738-4690991c3a61",
+  "secondary_tenant_id": "72da8caa-56b8-42ed-addb-349ad0821eb2"
+}

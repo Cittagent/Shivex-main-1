@@ -1,0 +1,111 @@
+SHIVEX ENERGY INTELLIGENCE
+Consumption Report GENERATED
+09 Apr 2026, 11:42 PM Asia/
+Kolkata
+Energy Consumption Report
+A polished operational summary of energy use, cost drivers, load behaviour, and
+overtime exposure for the selected reporting window. 
+SCOPE: SIMULATOR | PERIOD: 2026-04-08 TO 2026-04-09
+REPORT ID
+ad8f5422-5c97-4a98-
+a4bb-913cc2a41893
+DATA QUALITY
+High
+TARIFF
+INR 6.5 / kWh
+PEAK TIMESTAMP
+09 Apr 2026, 10:50 PM
+Asia/Kolkata
+EXECUTIVE OVERVIEW
+Executive Summary High-confidence telemetry 
+This page highlights total consumption, demand pressure, financial exposure, and the quality of the telemetry used to build the
+report.
+TOTAL ENERGY
+0.492 kWhAcross selected devices
+PEAK DEMAND
+0.2506 kW09 Apr 2026, 10:50 PM Asia/
+Kolkata
+LOAD FACTOR
+4.11%Avg load 0.0103 kW
+TOTAL COST
+INR 3.2INR 6.5 / kWh
+Average Load
+0.0103 kW
+Devices
+1 device
+Quality Band
+High
+Tariff Snapshot
+09 Apr 2026, 10:19 PM Asia/
+Kolkata
+PRIMARY COST DRIVER
+INR 3.2Cost estimate based on INR 6.5 per kWh for the selected period. 
+Reading This Report
+Use the KPI band for quick executive review, the chart section
+for trend context, and the breakdown tables for device-level
+validation and operational follow-up.
+Peak demand timestamp: 09 Apr 2026, 10:50 PM Asia/Kolkata
+PERFORMANCE SHAPE
+Trend and Energy Share Daily pattern and device distribution
+These charts show how energy moved across the reporting period and how the selected devices contributed to the total load.
+Daily Energy Pattern Device Consumption Share
+OPERATIONAL DETAIL
+Device Breakdown Per-device confidence and calculation
+method
+Review device totals, peak demand, quality grading, and computation method to validate the result set before acting on anomalies.
+DAY-LEVEL VIEW
+Daily Energy Breakdown Aggregated by day across all devices
+Daily totals help isolate abnormal demand days, energy spikes, and operational drift across the selected range.
+DEVICE TOTAL KWH PEAK KW LOAD FACTOR QUALITY METHOD
+SIMULATOR 0.492 0.2506 4.11 HIGH normalized_business_power
+DATE ENERGY (KWH)
+2026-04-09 0.492
+SCHEDULE EXPOSURE
+Overtime Breakdown Same as off-hours running: all running
+outside configured shift hours
+Overtime is the same operational metric as off-hours running in waste analysis: all running energy outside approved shift windows for
+the selected period.
+TOTAL OVERTIME
+45.0 min0.75 hours
+OVERTIME ENERGY
+0.2005 kWhEnergy consumed outside shift
+hours
+OVERTIME COST
+INR 1.3INR 6.5 / kWh
+CONFIGURED DEVICES
+1 / 1All devices had active shifts
+Shift Coverage
+1 device configured
+Charge Basis
+Outside configured shift hours
+Tariff Snapshot
+INR 6.5 / kWh
+Overtime Cost
+INR 1.3
+Each overtime proof row below shows the exact outside-shift window in platform local time so teams can audit when running happened,
+not just how much was counted.
+COMMERCIAL CONTEXT
+Cost and Data Notes Tariff snapshot and calculation context
+These notes capture tariff assumptions, telemetry gaps, and any warning signals that materially affect interpretation of the report.
+T ariff fetched at 09 Apr 2026, 10:19 PM Asia/Kolkata using INR 6.5 per kWh. Estimated total cost: INR 3.2.
+SIMULATOR: POWER_FACTOR_ASSUMED_0.85: overtime energy was estimated for some intervals
+DEVICE SHIFT STATUS MINUTES HOURS KWH COST
+SIMULATOR CONFIGURED 45.0 0.75 0.2005 INR 1.3
+DATE DEVICE SHIFT
+STATUS
+FROM TO MINUTES HOURS KWH COST
+2026-04-09 SIMULATOR OVERTIME 09 Apr 2026,
+11:00 PM
+09 Apr 2026,
+11:45 PM
+45.0 0.7498 0.2005 INR 1.3
+DECISION SUPPORT
+Key Insights Highlights for quick review
+Use these prioritized observations to guide investigations, follow-up reviews, and operational actions.
+1. SIMULATOR consumed 100.0% of total energy (0.49 kWh).
+2. Peak demand of 0.25 kW occurred on 09 Apr 2026, 10:50 PM Asia/Kolkata.
+3. Average load factor is 4.1% — poor utilization.
+4. Highest cost day: 2026-04-09 at 3.20 INR.
+5. Highest overtime occurred on 2026-04-09 for SIMULATOR with 45.0 minutes, costing 1.30 INR.
+6. SIMULATOR: canonical_energy_projection_applied
+Shivex professional energy report generated for SIMULATOR. 

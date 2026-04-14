@@ -1,0 +1,152 @@
+"""Unit tests for job runner."""
+
+import pytest
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import patch
+
+import pandas as pd
+
+from src.models.schemas import AnalyticsRequest, AnalyticsType, JobStatus
+from src.services.job_runner import JobRunner
+from src.utils.exceptions import DatasetNotFoundError
+
+
+class TestJobRunner:
+    """Tests for JobRunner."""
+    
+    @pytest.fixture
+    def job_runner(self, mock_s3_client, mock_result_repository):
+        """Create JobRunner instance with mocks."""
+        from src.services.dataset_service import DatasetService
+        
+        dataset_service = DatasetService(mock_s3_client)
+        return JobRunner(dataset_service, mock_result_repository)
+    
+    @pytest.mark.asyncio
+    async def test_run_job_success(self, job_runner, mock_result_repository, sample_telemetry_data):
+        """Test successful job execution."""
+        # Mock dataset loading
+        job_runner._dataset_service.load_dataset = AsyncMock(return_value=sample_telemetry_data)
+        
+        request = AnalyticsRequest(
+            device_id="D1",
+            start_time=datetime.now() - timedelta(days=7),
+            end_time=datetime.now(),
+            analysis_type=AnalyticsType.ANOMALY,
+            model_name="isolation_forest",
+        )
+        
+        await job_runner.run_job("test-job-123", request)
+        
+        # Verify status updates
+        assert mock_result_repository.update_job_status.called
+        assert mock_result_repository.save_results.called
+        
+        # Verify job was marked completed
+        final_call = mock_result_repository.update_job_status.call_args_list[-1]
+        assert final_call.kwargs["status"] == JobStatus.COMPLETED
+    
+    @pytest.mark.asyncio
+    async def test_run_job_dataset_not_found(self, job_runner, mock_result_repository):
+        """Test job failure when dataset not found."""
+        job_runner._dataset_service.load_dataset = AsyncMock(
+            side_effect=DatasetNotFoundError("Dataset not found")
+        )
+        
+        request = AnalyticsRequest(
+            device_id="D1",
+            start_time=datetime.now() - timedelta(days=7),
+            end_time=datetime.now(),
+            analysis_type=AnalyticsType.ANOMALY,
+            model_name="isolation_forest",
+        )
+        
+        with pytest.raises(Exception):
+            await job_runner.run_job("test-job-123", request)
+    
+    @pytest.mark.asyncio
+    async def test_run_job_updates_progress(self, job_runner, mock_result_repository, sample_telemetry_data):
+        """Test that job progress is updated during execution."""
+        job_runner._dataset_service.load_dataset = AsyncMock(return_value=sample_telemetry_data)
+        
+        request = AnalyticsRequest(
+            device_id="D1",
+            start_time=datetime.now() - timedelta(days=7),
+            end_time=datetime.now(),
+            analysis_type=AnalyticsType.ANOMALY,
+            model_name="isolation_forest",
+        )
+        
+        await job_runner.run_job("test-job-123", request)
+        
+        # Verify progress updates were called
+        assert mock_result_repository.update_job_progress.called
+        
+        # Check that progress increases
+        progress_calls = [
+            call for call in mock_result_repository.update_job_progress.call_args_list
+        ]
+        assert len(progress_calls) > 0
+
+    @pytest.mark.asyncio
+    async def test_run_job_falls_back_to_direct_data_when_readiness_unavailable(
+        self, job_runner, mock_result_repository, sample_telemetry_data
+    ):
+        """If export/S3 readiness path times out, job should still run via direct exact-range load."""
+        job_runner._dataset_service.load_dataset = AsyncMock(return_value=sample_telemetry_data)
+        request = AnalyticsRequest(
+            device_id="D1",
+            start_time=datetime.now() - timedelta(days=1),
+            end_time=datetime.now(),
+            analysis_type=AnalyticsType.ANOMALY,
+            model_name="isolation_forest",
+        )
+
+        with patch(
+            "src.services.job_runner.ensure_device_ready",
+            AsyncMock(return_value=("D1", None, {"reason": "export_timeout", "export_attempted": True, "wait_seconds": 60.0})),
+        ) as readiness_mock, patch(
+            "src.services.job_runner.get_settings",
+            return_value=MagicMock(
+                app_env="development",
+                ml_require_exact_dataset_range=True,
+                ml_data_readiness_gate_enabled=True,
+                ml_formatted_results_enabled=True,
+            ),
+        ):
+            await job_runner.run_job("test-job-fallback-123", request)
+
+        assert readiness_mock.await_args.kwargs["tenant_id"] is None
+        final_call = mock_result_repository.update_job_status.call_args_list[-1]
+        assert final_call.kwargs["status"] == JobStatus.COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_run_job_passes_tenant_scope_to_exact_range_readiness(
+        self, job_runner, mock_result_repository, sample_telemetry_data
+    ):
+        job_runner._dataset_service.load_dataset = AsyncMock(return_value=sample_telemetry_data)
+        request = AnalyticsRequest(
+            device_id="D1",
+            start_time=datetime.now() - timedelta(days=1),
+            end_time=datetime.now(),
+            analysis_type=AnalyticsType.ANOMALY,
+            model_name="isolation_forest",
+            parameters={"tenant_id": "ORG-A"},
+        )
+
+        with patch(
+            "src.services.job_runner.ensure_device_ready",
+            AsyncMock(return_value=("D1", "datasets/D1/20260401_20260401.parquet", {"reason": "ready_exact"})),
+        ) as readiness_mock, patch(
+            "src.services.job_runner.get_settings",
+            return_value=MagicMock(
+                app_env="development",
+                ml_require_exact_dataset_range=True,
+                ml_data_readiness_gate_enabled=True,
+                ml_formatted_results_enabled=True,
+            ),
+        ):
+            await job_runner.run_job("test-job-tenant-readiness", request)
+
+        assert readiness_mock.await_args.kwargs["tenant_id"] == "ORG-A"

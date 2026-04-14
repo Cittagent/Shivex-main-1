@@ -1,0 +1,422 @@
+{
+  "validation_setup": {
+    "mode": "quick-gate",
+    "environment": {
+      "repo_root": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main",
+      "cert_python": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11",
+      "auth_url": "http://localhost:8090",
+      "device_url": "http://localhost:8000",
+      "data_url": "http://localhost:8081",
+      "rule_url": "http://localhost:8002",
+      "reporting_url": "http://localhost:8085",
+      "analytics_url": "http://localhost:8003",
+      "started_at": "2026-04-08T15:07:13.911018+00:00"
+    },
+    "reset_steps_performed": [],
+    "orgs": [],
+    "users": [],
+    "plants": [],
+    "devices": []
+  },
+  "findings": [
+    {
+      "title": "Fresh reset sanity",
+      "severity": "critical",
+      "affected_module": "seeding",
+      "affected_role": "system",
+      "root_cause": "Certification org seeding failed.",
+      "classification": "confirmed product defect",
+      "production_blocking": true,
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/ensure_certification_orgs.py",
+      "error_output": "\nTraceback (most recent call last):\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 422, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 414, in main\n    payload = seeder.run()\n              ^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 385, in run\n    super_admin_token = self.login(SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 82, in login\n    response.raise_for_status()\n  File \"/Users/vedanthshetty/.pyenv/versions/3.11.9/lib/python3.11/site-packages/httpx/_models.py\", line 761, in raise_for_status\n    raise HTTPStatusError(message, request=request, response=self)\nhttpx.HTTPStatusError: Client error '401 Unauthorized' for url 'http://localhost:8090/api/v1/auth/login'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401\n",
+      "evidence": [
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "title": "Multi-org isolation",
+      "severity": "critical",
+      "affected_module": "seeding",
+      "affected_role": "system",
+      "root_cause": "Certification org seeding failed.",
+      "classification": "confirmed product defect",
+      "production_blocking": true,
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/ensure_certification_orgs.py",
+      "error_output": "\nTraceback (most recent call last):\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 422, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 414, in main\n    payload = seeder.run()\n              ^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 385, in run\n    super_admin_token = self.login(SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 82, in login\n    response.raise_for_status()\n  File \"/Users/vedanthshetty/.pyenv/versions/3.11.9/lib/python3.11/site-packages/httpx/_models.py\", line 761, in raise_for_status\n    raise HTTPStatusError(message, request=request, response=self)\nhttpx.HTTPStatusError: Client error '401 Unauthorized' for url 'http://localhost:8090/api/v1/auth/login'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401\n",
+      "evidence": [
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "title": "Org / plant setup",
+      "severity": "critical",
+      "affected_module": "seeding",
+      "affected_role": "system",
+      "root_cause": "Certification org seeding failed.",
+      "classification": "confirmed product defect",
+      "production_blocking": true,
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/ensure_certification_orgs.py",
+      "error_output": "\nTraceback (most recent call last):\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 422, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 414, in main\n    payload = seeder.run()\n              ^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 385, in run\n    super_admin_token = self.login(SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 82, in login\n    response.raise_for_status()\n  File \"/Users/vedanthshetty/.pyenv/versions/3.11.9/lib/python3.11/site-packages/httpx/_models.py\", line 761, in raise_for_status\n    raise HTTPStatusError(message, request=request, response=self)\nhttpx.HTTPStatusError: Client error '401 Unauthorized' for url 'http://localhost:8090/api/v1/auth/login'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401\n",
+      "evidence": [
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        }
+      ]
+    }
+  ],
+  "fixes_applied": [],
+  "validation_results": [
+    {
+      "item_id": "fresh_reset_sanity",
+      "title": "Fresh reset sanity",
+      "status": "FAIL",
+      "evidence_summary": "Certification org seeding failed.",
+      "evidence": [
+        {
+          "label": "auth-service",
+          "path": null,
+          "detail": "http://localhost:8090/health | running healthy"
+        },
+        {
+          "label": "device-service",
+          "path": null,
+          "detail": "http://localhost:8000/health | running healthy"
+        },
+        {
+          "label": "data-service",
+          "path": null,
+          "detail": "http://localhost:8081/api/v1/data/health | running healthy"
+        },
+        {
+          "label": "rule-engine-service",
+          "path": null,
+          "detail": "http://localhost:8002/health | running healthy"
+        },
+        {
+          "label": "reporting-service",
+          "path": null,
+          "detail": "http://localhost:8085/health | running healthy"
+        },
+        {
+          "label": "analytics-service",
+          "path": null,
+          "detail": "http://localhost:8003/health/live | running healthy"
+        },
+        {
+          "label": "analytics-worker",
+          "path": null,
+          "detail": "http://localhost:8003/health/ready | running"
+        },
+        {
+          "label": "waste-analysis-service",
+          "path": null,
+          "detail": "http://localhost:8087/health | running healthy"
+        },
+        {
+          "label": "energy-service",
+          "path": null,
+          "detail": "http://localhost:8010/health | running healthy"
+        },
+        {
+          "label": "ui-web",
+          "path": null,
+          "detail": "http://localhost:3000/login | running"
+        },
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        }
+      ],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": true,
+        "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/ensure_certification_orgs.py",
+        "error_output": "\nTraceback (most recent call last):\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 422, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 414, in main\n    payload = seeder.run()\n              ^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 385, in run\n    super_admin_token = self.login(SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 82, in login\n    response.raise_for_status()\n  File \"/Users/vedanthshetty/.pyenv/versions/3.11.9/lib/python3.11/site-packages/httpx/_models.py\", line 761, in raise_for_status\n    raise HTTPStatusError(message, request=request, response=self)\nhttpx.HTTPStatusError: Client error '401 Unauthorized' for url 'http://localhost:8090/api/v1/auth/login'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401\n"
+      }
+    },
+    {
+      "item_id": "multi_org_isolation",
+      "title": "Multi-org isolation",
+      "status": "FAIL",
+      "evidence_summary": "Certification org seeding failed.",
+      "evidence": [
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        }
+      ],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": true,
+        "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/ensure_certification_orgs.py",
+        "error_output": "\nTraceback (most recent call last):\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 422, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 414, in main\n    payload = seeder.run()\n              ^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 385, in run\n    super_admin_token = self.login(SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 82, in login\n    response.raise_for_status()\n  File \"/Users/vedanthshetty/.pyenv/versions/3.11.9/lib/python3.11/site-packages/httpx/_models.py\", line 761, in raise_for_status\n    raise HTTPStatusError(message, request=request, response=self)\nhttpx.HTTPStatusError: Client error '401 Unauthorized' for url 'http://localhost:8090/api/v1/auth/login'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401\n"
+      }
+    },
+    {
+      "item_id": "org_plant_setup",
+      "title": "Org / plant setup",
+      "status": "FAIL",
+      "evidence_summary": "Certification org seeding failed.",
+      "evidence": [
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-150713/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        }
+      ],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": true,
+        "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/ensure_certification_orgs.py",
+        "error_output": "\nTraceback (most recent call last):\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 422, in <module>\n    raise SystemExit(main())\n                     ^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 414, in main\n    payload = seeder.run()\n              ^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 385, in run\n    super_admin_token = self.login(SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/scripts/ensure_certification_orgs.py\", line 82, in login\n    response.raise_for_status()\n  File \"/Users/vedanthshetty/.pyenv/versions/3.11.9/lib/python3.11/site-packages/httpx/_models.py\", line 761, in raise_for_status\n    raise HTTPStatusError(message, request=request, response=self)\nhttpx.HTTPStatusError: Client error '401 Unauthorized' for url 'http://localhost:8090/api/v1/auth/login'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401\n"
+      }
+    },
+    {
+      "item_id": "device_onboarding",
+      "title": "Device onboarding",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "real_telemetry_ingestion",
+      "title": "Real telemetry ingestion",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "telemetry_influx_contract",
+      "title": "Telemetry / Influx contract",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "role_scoping",
+      "title": "Role scoping",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "machines_page",
+      "title": "Machines page",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "machine_detail_page",
+      "title": "Machine detail page",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "rules",
+      "title": "Rules",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "real_rule_trigger_execution",
+      "title": "Real rule trigger execution",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "per_rule_notification_recipients",
+      "title": "Per-rule notification recipients",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "notification_delivery_intent",
+      "title": "Notification delivery intent",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "settings",
+      "title": "Settings",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "legacy_notification_migration_behavior",
+      "title": "Legacy notification migration behavior",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "reports",
+      "title": "Reports",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "scheduled_reports",
+      "title": "Scheduled reports",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "analytics",
+      "title": "Analytics",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "financial_consistency",
+      "title": "Financial consistency",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "error_handling",
+      "title": "Error handling",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "hardware_lifecycle",
+      "title": "Hardware lifecycle",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "hardware_integrity",
+      "title": "Hardware integrity",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "logs_runtime_stability",
+      "title": "Logs / runtime stability",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "final_go_no_go",
+      "title": "Final GO / NO-GO",
+      "status": "FAIL",
+      "evidence_summary": "3 checklist item(s) failed.",
+      "evidence": [],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": true,
+        "command": "final-decision",
+        "error_output": "3 checklist item(s) failed."
+      }
+    }
+  ],
+  "logs_review": [],
+  "production_recommendation": {
+    "decision": "NO-GO",
+    "reason": "3 checklist item(s) failed."
+  },
+  "follow_ups": [
+    "Certification org seeding failed.",
+    "Certification org seeding failed.",
+    "Certification org seeding failed.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Not executed by this run."
+  ],
+  "commands": [],
+  "generated_at": "2026-04-08T15:07:14.637251+00:00"
+}

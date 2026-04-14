@@ -1,0 +1,20 @@
+{
+  "started_at_epoch": 1775494190.7454238,
+  "mode": "quick",
+  "summary": {
+    "passed": 0,
+    "failed": 1,
+    "blocked": 0
+  },
+  "results": [
+    {
+      "name": "Strict release gate prerequisites",
+      "status": "FAIL",
+      "command": "strict-release-gate",
+      "duration_seconds": 0.0,
+      "detail": "Strict release gate requires --mode thorough. | Strict release gate cannot skip the live browser certification step. | Missing live-browser env vars: CERTIFY_SUPER_ADMIN_EMAIL, CERTIFY_SUPER_ADMIN_PASSWORD, CERTIFY_ORG_ID | Missing plant-manager live-check env vars: CERTIFY_PM_EMAIL, CERTIFY_PM_PASSWORD | Missing isolation-validator env vars: VALIDATE_SUPER_ADMIN_EMAIL, VALIDATE_SUPER_ADMIN_PASSWORD | Live-stack auth prerequisite failed: http://localhost:8090/api/v1/auth/login rejected the certification account with HTTP 401",
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

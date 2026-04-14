@@ -1,0 +1,100 @@
+SHIVEX ENERGY INTELLIGENCE
+Consumption Report GENERATED
+09 Apr 2026, 11:30 PM Asia/
+Kolkata
+Energy Consumption Report
+A polished operational summary of energy use, cost drivers, load behaviour, and
+overtime exposure for the selected reporting window. 
+SCOPE: CSV SEED TD00000001 FULL | PERIOD: 2026-04-08 TO 2026-04-09
+REPORT ID
+6a08cf1b-981c-43be-9590-
+e4b49e53aef8
+DATA QUALITY
+High
+TARIFF
+INR 6.5 / kWh
+PEAK TIMESTAMP
+N/A
+EXECUTIVE OVERVIEW
+Executive Summary High-confidence telemetry 
+This page highlights total consumption, demand pressure, financial exposure, and the quality of the telemetry used to build the
+report.
+TOTAL ENERGY
+8.6 kWhAcross selected devices
+PEAK DEMAND
+N/APeak timestamp unavailable
+LOAD FACTOR
+N/AAverage load unavailable
+TOTAL COST
+INR 55.9INR 6.5 / kWh
+Average Load
+N/A
+Devices
+1 device
+Quality Band
+High
+Tariff Snapshot
+09 Apr 2026, 10:19 PM Asia/
+Kolkata
+PRIMARY COST DRIVER
+INR 55.9Cost estimate based on INR 6.5 per kWh for the selected period. 
+Reading This Report
+Use the KPI band for quick executive review, the chart section
+for trend context, and the breakdown tables for device-level
+validation and operational follow-up.
+PERFORMANCE SHAPE
+Trend and Energy Share Daily pattern and device distribution
+These charts show how energy moved across the reporting period and how the selected devices contributed to the total load.
+Daily Energy Pattern Device Consumption Share
+OPERATIONAL DETAIL
+Device Breakdown Per-device confidence and calculation
+method
+Review device totals, peak demand, quality grading, and computation method to validate the result set before acting on anomalies.
+DAY-LEVEL VIEW
+Daily Energy Breakdown Aggregated by day across all devices
+Daily totals help isolate abnormal demand days, energy spikes, and operational drift across the selected range.
+DEVICE TOTAL KWH PEAK KW LOAD FACTOR QUALITY METHOD
+CSV Seed TD00000001 Full 8.6 N/A N/A HIGH normalized_business_power
+DATE ENERGY (KWH)
+2026-04-09 8.6
+SCHEDULE EXPOSURE
+Overtime Breakdown Same as off-hours running: all running
+outside configured shift hours
+Overtime is the same operational metric as off-hours running in waste analysis: all running energy outside approved shift windows for
+the selected period.
+TOTAL OVERTIME
+0.0 min0.0 hours
+OVERTIME ENERGY
+8.6 kWhEnergy consumed outside shift
+hours
+OVERTIME COST
+INR 0INR 6.5 / kWh
+CONFIGURED DEVICES
+0 / 11 device(s) excluded
+Shift Coverage
+0 devices configured
+Charge Basis
+Outside configured shift hours
+Tariff Snapshot
+INR 6.5 / kWh
+Overtime Cost
+INR 0
+Each overtime proof row below shows the exact outside-shift window in platform local time so teams can audit when running happened,
+not just how much was counted.
+No overtime was detected for the selected range.
+1 device(s) had no active shift configuration and were excluded from overtime charging.
+COMMERCIAL CONTEXT
+Cost and Data Notes Tariff snapshot and calculation context
+These notes capture tariff assumptions, telemetry gaps, and any warning signals that materially affect interpretation of the report.
+T ariff fetched at 09 Apr 2026, 10:19 PM Asia/Kolkata using INR 6.5 per kWh. Estimated total cost: INR 55.9.
+CSV Seed TD00000001 Full: SHIFT_NOT_CONFIGURED: overtime charging skipped because no active shift schedule was found
+1 device(s) had no active shift configuration and were excluded from overtime charging
+DEVICE SHIFT STATUS MINUTES HOURS KWH COST
+CSV Seed TD00000001 Full MISSING SHIFT 0.0 0.0 8.6 INR 55.9
+DECISION SUPPORT
+Key Insights Highlights for quick review
+Use these prioritized observations to guide investigations, follow-up reviews, and operational actions.
+1. CSV Seed TD00000001 Full consumed 100.0% of total energy (8.60 kWh).
+2. Highest cost day: 2026-04-09 at 55.90 INR.
+3. CSV Seed TD00000001 Full: canonical_energy_projection_applied
+Shivex professional energy report generated for CSV Seed TD00000001 Full. 

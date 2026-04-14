@@ -1,0 +1,1039 @@
+{
+  "validation_setup": {
+    "mode": "quick-gate",
+    "environment": {
+      "repo_root": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main",
+      "cert_python": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11",
+      "auth_url": "http://localhost:8090",
+      "device_url": "http://localhost:8000",
+      "data_url": "http://localhost:8081",
+      "rule_url": "http://localhost:8002",
+      "reporting_url": "http://localhost:8085",
+      "analytics_url": "http://localhost:8003",
+      "started_at": "2026-04-08T15:19:14.602738+00:00"
+    },
+    "reset_steps_performed": [],
+    "orgs": [
+      {
+        "id": "3052b75a-54da-4d8f-9738-4690991c3a61",
+        "name": "Test-01",
+        "slug": "test-01",
+        "plants": [
+          {
+            "id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+            "name": "Test-01 Certification Plant A"
+          },
+          {
+            "id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+            "name": "Test-01 Certification Plant B"
+          },
+          {
+            "id": "2af2992b-184d-4be5-8990-4b6645ee5f36",
+            "name": "Test-01 Certification Plant C"
+          }
+        ],
+        "org_admin": {
+          "email": "certify+test-01-admin@factoryops.local",
+          "password": "Validate123!",
+          "role": "org_admin"
+        },
+        "plant_manager": {
+          "email": "certify+test-01-pm@factoryops.local",
+          "password": "Validate123!",
+          "role": "plant_manager"
+        },
+        "devices": [
+          {
+            "device_id": "AD00000001",
+            "device_name": "Certification Duplicate Machine",
+            "plant_id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+            "plant_name": "Test-01 Certification Plant A",
+            "metadata_key": "test-01:duplicate:a"
+          },
+          {
+            "device_id": "AD00000002",
+            "device_name": "Certification Duplicate Machine",
+            "plant_id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+            "plant_name": "Test-01 Certification Plant B",
+            "metadata_key": "test-01:duplicate:b"
+          }
+        ],
+        "operator": {
+          "email": "certify+test-01-operator@factoryops.local",
+          "password": "Validate123!",
+          "role": "operator"
+        },
+        "viewer": {
+          "email": "certify+test-01-viewer@factoryops.local",
+          "password": "Validate123!",
+          "role": "viewer"
+        },
+        "smoke_devices": [
+          {
+            "device_id": "AD00000023",
+            "device_name": "Smoke Device A",
+            "plant_id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+            "plant_name": "Test-01 Certification Plant A"
+          },
+          {
+            "device_id": "AD00000024",
+            "device_name": "Smoke Device B",
+            "plant_id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+            "plant_name": "Test-01 Certification Plant B"
+          },
+          {
+            "device_id": "AD00000025",
+            "device_name": "Smoke Device C",
+            "plant_id": "2af2992b-184d-4be5-8990-4b6645ee5f36",
+            "plant_name": "Test-01 Certification Plant C"
+          }
+        ]
+      },
+      {
+        "id": "72da8caa-56b8-42ed-addb-349ad0821eb2",
+        "name": "Certification Validation Secondary",
+        "slug": "certification-validation-secondary",
+        "plants": [
+          {
+            "id": "e46d8a93-31ea-46ca-9a3b-060f2566b0f9",
+            "name": "Certification Validation Secondary Certification Plant A"
+          },
+          {
+            "id": "9f70b363-a15b-4b05-948c-89531d501d11",
+            "name": "Certification Validation Secondary Certification Plant B"
+          }
+        ],
+        "org_admin": {
+          "email": "certify+certification-validation-secondary-admin@factoryops.local",
+          "password": "Validate123!",
+          "role": "org_admin"
+        },
+        "plant_manager": {
+          "email": "certify+certification-validation-secondary-pm@factoryops.local",
+          "password": "Validate123!",
+          "role": "plant_manager"
+        },
+        "devices": [
+          {
+            "device_id": "AD00000003",
+            "device_name": "Certification Duplicate Machine",
+            "plant_id": "e46d8a93-31ea-46ca-9a3b-060f2566b0f9",
+            "plant_name": "Certification Validation Secondary Certification Plant A",
+            "metadata_key": "certification-validation-secondary:duplicate:a"
+          },
+          {
+            "device_id": "AD00000004",
+            "device_name": "Certification Duplicate Machine",
+            "plant_id": "9f70b363-a15b-4b05-948c-89531d501d11",
+            "plant_name": "Certification Validation Secondary Certification Plant B",
+            "metadata_key": "certification-validation-secondary:duplicate:b"
+          }
+        ]
+      }
+    ],
+    "users": [
+      {
+        "email": "certify+test-01-admin@factoryops.local",
+        "password": "Validate123!",
+        "role": "org_admin"
+      },
+      {
+        "email": "certify+test-01-pm@factoryops.local",
+        "password": "Validate123!",
+        "role": "plant_manager"
+      },
+      {
+        "email": "certify+certification-validation-secondary-admin@factoryops.local",
+        "password": "Validate123!",
+        "role": "org_admin"
+      },
+      {
+        "email": "certify+certification-validation-secondary-pm@factoryops.local",
+        "password": "Validate123!",
+        "role": "plant_manager"
+      },
+      {
+        "email": "certify+test-01-operator@factoryops.local",
+        "password": "Validate123!",
+        "role": "operator"
+      },
+      {
+        "email": "certify+test-01-viewer@factoryops.local",
+        "password": "Validate123!",
+        "role": "viewer"
+      },
+      {
+        "email": "manash.ray@cittagent.com",
+        "password": "Shivex@2706",
+        "role": "super_admin"
+      }
+    ],
+    "plants": [
+      {
+        "id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+        "name": "Test-01 Certification Plant A"
+      },
+      {
+        "id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+        "name": "Test-01 Certification Plant B"
+      },
+      {
+        "id": "e46d8a93-31ea-46ca-9a3b-060f2566b0f9",
+        "name": "Certification Validation Secondary Certification Plant A"
+      },
+      {
+        "id": "9f70b363-a15b-4b05-948c-89531d501d11",
+        "name": "Certification Validation Secondary Certification Plant B"
+      },
+      {
+        "id": "2af2992b-184d-4be5-8990-4b6645ee5f36",
+        "name": "Test-01 Certification Plant C"
+      }
+    ],
+    "devices": [
+      {
+        "device_id": "AD00000001",
+        "device_name": "Certification Duplicate Machine",
+        "plant_id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+        "plant_name": "Test-01 Certification Plant A",
+        "metadata_key": "test-01:duplicate:a"
+      },
+      {
+        "device_id": "AD00000002",
+        "device_name": "Certification Duplicate Machine",
+        "plant_id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+        "plant_name": "Test-01 Certification Plant B",
+        "metadata_key": "test-01:duplicate:b"
+      },
+      {
+        "device_id": "AD00000003",
+        "device_name": "Certification Duplicate Machine",
+        "plant_id": "e46d8a93-31ea-46ca-9a3b-060f2566b0f9",
+        "plant_name": "Certification Validation Secondary Certification Plant A",
+        "metadata_key": "certification-validation-secondary:duplicate:a"
+      },
+      {
+        "device_id": "AD00000004",
+        "device_name": "Certification Duplicate Machine",
+        "plant_id": "9f70b363-a15b-4b05-948c-89531d501d11",
+        "plant_name": "Certification Validation Secondary Certification Plant B",
+        "metadata_key": "certification-validation-secondary:duplicate:b"
+      },
+      {
+        "device_id": "AD00000023",
+        "device_name": "Smoke Device A",
+        "plant_id": "a3070e68-1d36-4380-b3dd-70f600febff5",
+        "plant_name": "Test-01 Certification Plant A"
+      },
+      {
+        "device_id": "AD00000024",
+        "device_name": "Smoke Device B",
+        "plant_id": "80cfadd9-0d86-4c0c-bf00-6fff269e4908",
+        "plant_name": "Test-01 Certification Plant B"
+      },
+      {
+        "device_id": "AD00000025",
+        "device_name": "Smoke Device C",
+        "plant_id": "2af2992b-184d-4be5-8990-4b6645ee5f36",
+        "plant_name": "Test-01 Certification Plant C"
+      }
+    ]
+  },
+  "findings": [
+    {
+      "title": "Financial consistency",
+      "severity": "critical",
+      "affected_module": "financials",
+      "affected_role": "system",
+      "root_cause": "Targeted financial consistency tests failed with exit code 2.",
+      "classification": "confirmed product defect",
+      "production_blocking": true,
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest tests/test_energy_service_cost_alignment.py tests/test_energy_accounting.py services/device-service/tests/test_loss_accounting_consistency.py -q",
+      "error_output": "============================= test session starts ==============================\nplatform darwin -- Python 3.11.9, pytest-8.2.0, pluggy-1.6.0\nrootdir: /Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main\nconfigfile: pytest.ini\nplugins: anyio-4.12.1, asyncio-0.23.6, mock-3.14.0\nasyncio: mode=Mode.STRICT\ncollected 7 items / 1 error\n\n==================================== ERRORS ====================================\n_ ERROR collecting services/device-service/tests/test_loss_accounting_consistency.py _\nImportError while importing test module '/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/device-service/tests/test_loss_accounting_consistency.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n../../../.pyenv/versions/3.11.9/lib/python3.11/importlib/__init__.py:126: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\nservices/device-service/tests/test_loss_accounting_consistency.py:24: in <module>\n    from app.database import Base\nE   ImportError: cannot import name 'Base' from 'app.database' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/energy-service/app/database.py)\n=============================== warnings summary ===============================\n../../../.pyenv/versions/3.11.9/lib/python3.11/site-packages/pydantic/_internal/_config.py:284\n  /Users/vedanthshetty/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pydantic/_internal/_config.py:284: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.7/migration/\n    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nERROR services/device-service/tests/test_loss_accounting_consistency.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n========================= 1 warning, 1 error in 0.41s ==========================\n",
+      "evidence": [
+        {
+          "label": "Targeted financial consistency tests stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/targeted-financial-consistency-tests.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Targeted financial consistency tests stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/targeted-financial-consistency-tests.stderr.log",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "title": "Per-rule notification recipients",
+      "severity": "high",
+      "affected_module": "notifications",
+      "affected_role": "system",
+      "root_cause": "Notification and settings regression tests failed with exit code 1.",
+      "classification": "confirmed product defect",
+      "production_blocking": false,
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest services/rule-engine-service/tests/test_notification_adapter.py services/reporting-service/tests/test_settings_notifications_migration.py tests/test_reporting_settings_tenant_isolation.py -q",
+      "error_output": "============================= test session starts ==============================\nplatform darwin -- Python 3.11.9, pytest-8.2.0, pluggy-1.6.0\nrootdir: /Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main\nconfigfile: pytest.ini\nplugins: anyio-4.12.1, asyncio-0.23.6, mock-3.14.0\nasyncio: mode=Mode.STRICT\ncollected 15 items\n\nservices/rule-engine-service/tests/test_notification_adapter.py ..       [ 13%]\nservices/reporting-service/tests/test_settings_notifications_migration.py . [ 20%]\n..                                                                       [ 33%]\ntests/test_reporting_settings_tenant_isolation.py ......FF..             [100%]\n\n=================================== FAILURES ===================================\n______ test_reporting_settings_migration_backfills_global_rows_per_tenant ______\ntests/test_reporting_settings_tenant_isolation.py:229: in test_reporting_settings_migration_backfills_global_rows_per_tenant\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n_ test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema _\ntests/test_reporting_settings_tenant_isolation.py:305: in test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n=========================== short test summary info ============================\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_backfills_global_rows_per_tenant\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n========================= 2 failed, 13 passed in 3.63s =========================\n",
+      "evidence": [
+        {
+          "label": "Notification and settings regression tests stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Notification and settings regression tests stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stderr.log",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "title": "Settings",
+      "severity": "high",
+      "affected_module": "notifications",
+      "affected_role": "system",
+      "root_cause": "Notification and settings regression tests failed with exit code 1.",
+      "classification": "confirmed product defect",
+      "production_blocking": false,
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest services/rule-engine-service/tests/test_notification_adapter.py services/reporting-service/tests/test_settings_notifications_migration.py tests/test_reporting_settings_tenant_isolation.py -q",
+      "error_output": "============================= test session starts ==============================\nplatform darwin -- Python 3.11.9, pytest-8.2.0, pluggy-1.6.0\nrootdir: /Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main\nconfigfile: pytest.ini\nplugins: anyio-4.12.1, asyncio-0.23.6, mock-3.14.0\nasyncio: mode=Mode.STRICT\ncollected 15 items\n\nservices/rule-engine-service/tests/test_notification_adapter.py ..       [ 13%]\nservices/reporting-service/tests/test_settings_notifications_migration.py . [ 20%]\n..                                                                       [ 33%]\ntests/test_reporting_settings_tenant_isolation.py ......FF..             [100%]\n\n=================================== FAILURES ===================================\n______ test_reporting_settings_migration_backfills_global_rows_per_tenant ______\ntests/test_reporting_settings_tenant_isolation.py:229: in test_reporting_settings_migration_backfills_global_rows_per_tenant\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n_ test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema _\ntests/test_reporting_settings_tenant_isolation.py:305: in test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n=========================== short test summary info ============================\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_backfills_global_rows_per_tenant\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n========================= 2 failed, 13 passed in 3.63s =========================\n",
+      "evidence": [
+        {
+          "label": "Notification and settings regression tests stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Notification and settings regression tests stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stderr.log",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "title": "Legacy notification migration behavior",
+      "severity": "high",
+      "affected_module": "notifications",
+      "affected_role": "system",
+      "root_cause": "Notification and settings regression tests failed with exit code 1.",
+      "classification": "confirmed product defect",
+      "production_blocking": false,
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest services/rule-engine-service/tests/test_notification_adapter.py services/reporting-service/tests/test_settings_notifications_migration.py tests/test_reporting_settings_tenant_isolation.py -q",
+      "error_output": "============================= test session starts ==============================\nplatform darwin -- Python 3.11.9, pytest-8.2.0, pluggy-1.6.0\nrootdir: /Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main\nconfigfile: pytest.ini\nplugins: anyio-4.12.1, asyncio-0.23.6, mock-3.14.0\nasyncio: mode=Mode.STRICT\ncollected 15 items\n\nservices/rule-engine-service/tests/test_notification_adapter.py ..       [ 13%]\nservices/reporting-service/tests/test_settings_notifications_migration.py . [ 20%]\n..                                                                       [ 33%]\ntests/test_reporting_settings_tenant_isolation.py ......FF..             [100%]\n\n=================================== FAILURES ===================================\n______ test_reporting_settings_migration_backfills_global_rows_per_tenant ______\ntests/test_reporting_settings_tenant_isolation.py:229: in test_reporting_settings_migration_backfills_global_rows_per_tenant\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n_ test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema _\ntests/test_reporting_settings_tenant_isolation.py:305: in test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n=========================== short test summary info ============================\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_backfills_global_rows_per_tenant\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n========================= 2 failed, 13 passed in 3.63s =========================\n",
+      "evidence": [
+        {
+          "label": "Notification and settings regression tests stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Notification and settings regression tests stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stderr.log",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "title": "Logs / runtime stability",
+      "severity": "critical",
+      "affected_module": "runtime",
+      "affected_role": "system",
+      "root_cause": "Log sweep found runtime instability indicators in service logs.",
+      "classification": "confirmed product defect",
+      "production_blocking": true,
+      "command": "docker logs --tail 200 <service>",
+      "error_output": "[{\"artifact\": \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/device-service.log\", \"expected_vs_defect\": \"Unexpected log token(s): traceback, unhandled exception\", \"service\": \"device-service\", \"status\": \"warning\"}]",
+      "evidence": [
+        {
+          "label": "reporting-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/reporting-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "analytics-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/analytics-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "analytics-worker",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/analytics-worker.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "rule-engine-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/rule-engine-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "device-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/device-service.log",
+          "detail": "traceback, unhandled exception"
+        },
+        {
+          "label": "auth-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/auth-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "data-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/data-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "ui-web",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/ui-web.log",
+          "detail": "no critical token"
+        }
+      ]
+    }
+  ],
+  "fixes_applied": [],
+  "validation_results": [
+    {
+      "item_id": "fresh_reset_sanity",
+      "title": "Fresh reset sanity",
+      "status": "PASS",
+      "evidence_summary": "Bootstrap and validation logins succeeded for the full role matrix.",
+      "evidence": [
+        {
+          "label": "auth-service",
+          "path": null,
+          "detail": "http://localhost:8090/health | running healthy"
+        },
+        {
+          "label": "device-service",
+          "path": null,
+          "detail": "http://localhost:8000/health | running healthy"
+        },
+        {
+          "label": "data-service",
+          "path": null,
+          "detail": "http://localhost:8081/api/v1/data/health | running healthy"
+        },
+        {
+          "label": "rule-engine-service",
+          "path": null,
+          "detail": "http://localhost:8002/health | running healthy"
+        },
+        {
+          "label": "reporting-service",
+          "path": null,
+          "detail": "http://localhost:8085/health | running healthy"
+        },
+        {
+          "label": "analytics-service",
+          "path": null,
+          "detail": "http://localhost:8003/health/live | running healthy"
+        },
+        {
+          "label": "analytics-worker",
+          "path": null,
+          "detail": "http://localhost:8003/health/ready | running"
+        },
+        {
+          "label": "waste-analysis-service",
+          "path": null,
+          "detail": "http://localhost:8087/health | running healthy"
+        },
+        {
+          "label": "energy-service",
+          "path": null,
+          "detail": "http://localhost:8010/health | running healthy"
+        },
+        {
+          "label": "ui-web",
+          "path": null,
+          "detail": "http://localhost:3000/login | running"
+        },
+        {
+          "label": "super admin",
+          "path": null,
+          "detail": "manash.ray@cittagent.com | role=super_admin"
+        },
+        {
+          "label": "org admin",
+          "path": null,
+          "detail": "certify+test-01-admin@factoryops.local | role=org_admin"
+        },
+        {
+          "label": "plant manager",
+          "path": null,
+          "detail": "certify+test-01-pm@factoryops.local | role=plant_manager"
+        },
+        {
+          "label": "operator",
+          "path": null,
+          "detail": "certify+test-01-operator@factoryops.local | role=operator"
+        },
+        {
+          "label": "viewer",
+          "path": null,
+          "detail": "certify+test-01-viewer@factoryops.local | role=viewer"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "multi_org_isolation",
+      "title": "Multi-org isolation",
+      "status": "PASS",
+      "evidence_summary": "Org isolation validator passed.",
+      "evidence": [
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        },
+        {
+          "label": "Org isolation validator stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/org-isolation-validator.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Org isolation validator stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/org-isolation-validator.stderr.log",
+          "detail": null
+        },
+        {
+          "label": "command",
+          "path": null,
+          "detail": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/validate_isolation.py"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "org_plant_setup",
+      "title": "Org / plant setup",
+      "status": "PASS",
+      "evidence_summary": "Validation roles, plants, and smoke devices were provisioned.",
+      "evidence": [
+        {
+          "label": "seed stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/seed-certification-orgs.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "seed stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/seed-certification-orgs.stderr.log",
+          "detail": null
+        },
+        {
+          "label": "smoke context",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/smoke_context.json",
+          "detail": null
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "device_onboarding",
+      "title": "Device onboarding",
+      "status": "PASS",
+      "evidence_summary": "Device onboarding contract rejected missing plant and maintained one device per plant.",
+      "evidence": [
+        {
+          "label": "Smoke Device A",
+          "path": null,
+          "detail": "AD00000023 -> Test-01 Certification Plant A"
+        },
+        {
+          "label": "Smoke Device B",
+          "path": null,
+          "detail": "AD00000024 -> Test-01 Certification Plant B"
+        },
+        {
+          "label": "Smoke Device C",
+          "path": null,
+          "detail": "AD00000025 -> Test-01 Certification Plant C"
+        },
+        {
+          "label": "missing plant rejection",
+          "path": null,
+          "detail": "HTTP 422"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "real_telemetry_ingestion",
+      "title": "Real telemetry ingestion",
+      "status": "PASS",
+      "evidence_summary": "Real MQTT telemetry was ingested and surfaced through the live telemetry API.",
+      "evidence": [
+        {
+          "label": "device",
+          "path": null,
+          "detail": "AD00000023"
+        },
+        {
+          "label": "latest telemetry",
+          "path": null,
+          "detail": "{\"current\": 12.5, \"device_id\": \"AD00000023\", \"energy_kwh\": 1200.0, \"enrichment_status\": \"pending\", \"power\": 2875.0, \"power_factor\": 0.97, \"schema_version\": \"v1\", \"timestamp\": \"2026-04-08T15:19:19.441926Z\", \"voltage\": 231.0}"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "telemetry_influx_contract",
+      "title": "Telemetry / Influx contract",
+      "status": "PASS",
+      "evidence_summary": "Influx contained fresh points for the device and did not expose forbidden duplicated metadata fields.",
+      "evidence": [
+        {
+          "label": "influx csv sample",
+          "path": null,
+          "detail": ",result,table,_start,_stop,_time,_value,_field,_measurement,device_id,tenant_id\r\n,_result,0,2026-04-08T14:49:24.953586251Z,2026-04-08T15:19:24.953586251Z,2026-04-08T15:17:08.138947Z,12.5,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:49:24.953586251Z,2026-04-08T15:19:24.953586251Z,2026-04-08T15:17:08.34417Z,12.8,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:49:24.953586251Z,2026-04-08T15:19:24.953586251Z,2026-04-08T15:17:08.549386Z,12.5,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:49:24.953586251Z,2026-04-08T15:19:24.953586251Z,2026-04-08T15:17:08.75467Z,12.8,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:49:24.953586251Z,2026-04-08T15:19:24.953586251Z,2026-04-08T15:17:08.956663Z,12.5,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:49:24.953586251Z,2026-04-08T15:19:24.953586251Z,2026-04-08T15:17:09.161194Z,35,current,device_telemetry,AD00000023,3052b75a-54da-4d8f-9738-4690991c3a61\r\n,_result,0,2026-04-08T14:49:24.953586251Z,2"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "role_scoping",
+      "title": "Role scoping",
+      "status": "PASS",
+      "evidence_summary": "Org isolation validator passed.",
+      "evidence": [
+        {
+          "label": "smoke context",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/smoke_context.json",
+          "detail": null
+        },
+        {
+          "label": "super admin",
+          "path": null,
+          "detail": "manash.ray@cittagent.com | role=super_admin"
+        },
+        {
+          "label": "org admin",
+          "path": null,
+          "detail": "certify+test-01-admin@factoryops.local | role=org_admin"
+        },
+        {
+          "label": "plant manager",
+          "path": null,
+          "detail": "certify+test-01-pm@factoryops.local | role=plant_manager"
+        },
+        {
+          "label": "operator",
+          "path": null,
+          "detail": "certify+test-01-operator@factoryops.local | role=operator"
+        },
+        {
+          "label": "viewer",
+          "path": null,
+          "detail": "certify+test-01-viewer@factoryops.local | role=viewer"
+        },
+        {
+          "label": "Org isolation validator stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/org-isolation-validator.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Org isolation validator stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/org-isolation-validator.stderr.log",
+          "detail": null
+        },
+        {
+          "label": "command",
+          "path": null,
+          "detail": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/validate_isolation.py"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "machines_page",
+      "title": "Machines page",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "machine_detail_page",
+      "title": "Machine detail page",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "rules",
+      "title": "Rules",
+      "status": "PASS",
+      "evidence_summary": "Rule creation accepted selected-device scope and per-rule recipients.",
+      "evidence": [
+        {
+          "label": "rule",
+          "path": null,
+          "detail": "{\"condition\": \">\", \"cooldown_minutes\": 5, \"cooldown_mode\": \"interval\", \"cooldown_seconds\": 300, \"cooldown_unit\": \"minutes\", \"created_at\": \"2026-04-08T15:19:25\", \"deleted_at\": null, \"description\": null, \"device_ids\": [\"AD00000023\"], \"last_triggered_at\": null, \"notification_channels\": [\"email\"], \"notification_recipients\": [{\"channel\": \"email\", \"value\": \"alerts-validation@example.com\"}], \"property\": \"current\", \"rule_id\": \"489f9315-5882-43e0-9c96-f624fa7d15b6\", \"rule_name\": \"Preprod Validation High Current 1775661565\", \"rule_type\": \"threshold\", \"scope\": \"selected_devices\", \"status\": \"active\", \"tenant_id\": \"3052b75a-54da-4d8f-9738-4690991c3a61\", \"threshold\": 30.0, \"time_condition\": null, \"time_window_end\": null, \"time_window_start\": null, \"timezone\": \"Asia/Kolkata\", \"triggered_once\": false, \"updated_at\": \"2026-04-08T15:19:25\"}"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "real_rule_trigger_execution",
+      "title": "Real rule trigger execution",
+      "status": "PASS",
+      "evidence_summary": "Telemetry triggered the rule and created a live alert artifact.",
+      "evidence": [
+        {
+          "label": "alerts payload",
+          "path": null,
+          "detail": "[{\"acknowledged_at\": null, \"acknowledged_by\": null, \"actual_value\": 35.0, \"alert_id\": \"6d729008-96bf-4226-ac4b-d6d7eccc5a0a\", \"created_at\": \"2026-04-08T15:19:30\", \"device_id\": \"AD00000023\", \"message\": \"Rule 'Preprod Validation High Current 1775661565' triggered for device AD00000023: current > 30.0 (actual: 35.0)\", \"resolved_at\": null, \"rule_id\": \"489f9315-5882-43e0-9c96-f624fa7d15b6\", \"severity\": \"medium\", \"status\": \"open\", \"threshold_value\": 30.0}, {\"acknowledged_at\": null, \"acknowledged_by\": null, \"actual_value\": 35.0, \"alert_id\": \"277ba37a-eea1-4f68-a39f-9205748e41d5\", \"created_at\": \"2026-04-08T15:18:41\", \"device_id\": \"AD00000023\", \"message\": \"Rule 'Preprod Validation High Current 1775661516' triggered for device AD00000023: current > 30.0 (actual: 35.0)\", \"resolved_at\": null, \"rule_id\": \"82327d16-9028-42c4-b8d6-bc3a6f4c1785\", \"severity\": \"medium\", \"status\": \"open\", \"threshold_value\": 30.0}]"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "per_rule_notification_recipients",
+      "title": "Per-rule notification recipients",
+      "status": "FAIL",
+      "evidence_summary": "Notification and settings regression tests failed with exit code 1.",
+      "evidence": [
+        {
+          "label": "rule",
+          "path": null,
+          "detail": "{\"condition\": \">\", \"cooldown_minutes\": 5, \"cooldown_mode\": \"interval\", \"cooldown_seconds\": 300, \"cooldown_unit\": \"minutes\", \"created_at\": \"2026-04-08T15:19:25\", \"deleted_at\": null, \"description\": null, \"device_ids\": [\"AD00000023\"], \"last_triggered_at\": null, \"notification_channels\": [\"email\"], \"notification_recipients\": [{\"channel\": \"email\", \"value\": \"alerts-validation@example.com\"}], \"property\": \"current\", \"rule_id\": \"489f9315-5882-43e0-9c96-f624fa7d15b6\", \"rule_name\": \"Preprod Validation High Current 1775661565\", \"rule_type\": \"threshold\", \"scope\": \"selected_devices\", \"status\": \"active\", \"tenant_id\": \"3052b75a-54da-4d8f-9738-4690991c3a61\", \"threshold\": 30.0, \"time_condition\": null, \"time_window_end\": null, \"time_window_start\": null, \"timezone\": \"Asia/Kolkata\", \"triggered_once\": false, \"updated_at\": \"2026-04-08T15:19:25\"}"
+        },
+        {
+          "label": "Notification and settings regression tests stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Notification and settings regression tests stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stderr.log",
+          "detail": null
+        }
+      ],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": false,
+        "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest services/rule-engine-service/tests/test_notification_adapter.py services/reporting-service/tests/test_settings_notifications_migration.py tests/test_reporting_settings_tenant_isolation.py -q",
+        "error_output": "============================= test session starts ==============================\nplatform darwin -- Python 3.11.9, pytest-8.2.0, pluggy-1.6.0\nrootdir: /Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main\nconfigfile: pytest.ini\nplugins: anyio-4.12.1, asyncio-0.23.6, mock-3.14.0\nasyncio: mode=Mode.STRICT\ncollected 15 items\n\nservices/rule-engine-service/tests/test_notification_adapter.py ..       [ 13%]\nservices/reporting-service/tests/test_settings_notifications_migration.py . [ 20%]\n..                                                                       [ 33%]\ntests/test_reporting_settings_tenant_isolation.py ......FF..             [100%]\n\n=================================== FAILURES ===================================\n______ test_reporting_settings_migration_backfills_global_rows_per_tenant ______\ntests/test_reporting_settings_tenant_isolation.py:229: in test_reporting_settings_migration_backfills_global_rows_per_tenant\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n_ test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema _\ntests/test_reporting_settings_tenant_isolation.py:305: in test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n=========================== short test summary info ============================\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_backfills_global_rows_per_tenant\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n========================= 2 failed, 13 passed in 3.63s =========================\n"
+      }
+    },
+    {
+      "item_id": "notification_delivery_intent",
+      "title": "Notification delivery intent",
+      "status": "PASS",
+      "evidence_summary": "Telemetry triggered the rule and created a live alert artifact.",
+      "evidence": [
+        {
+          "label": "alerts payload",
+          "path": null,
+          "detail": "[{\"acknowledged_at\": null, \"acknowledged_by\": null, \"actual_value\": 35.0, \"alert_id\": \"6d729008-96bf-4226-ac4b-d6d7eccc5a0a\", \"created_at\": \"2026-04-08T15:19:30\", \"device_id\": \"AD00000023\", \"message\": \"Rule 'Preprod Validation High Current 1775661565' triggered for device AD00000023: current > 30.0 (actual: 35.0)\", \"resolved_at\": null, \"rule_id\": \"489f9315-5882-43e0-9c96-f624fa7d15b6\", \"severity\": \"medium\", \"status\": \"open\", \"threshold_value\": 30.0}, {\"acknowledged_at\": null, \"acknowledged_by\": null, \"actual_value\": 35.0, \"alert_id\": \"277ba37a-eea1-4f68-a39f-9205748e41d5\", \"created_at\": \"2026-04-08T15:18:41\", \"device_id\": \"AD00000023\", \"message\": \"Rule 'Preprod Validation High Current 1775661516' triggered for device AD00000023: current > 30.0 (actual: 35.0)\", \"resolved_at\": null, \"rule_id\": \"82327d16-9028-42c4-b8d6-bc3a6f4c1785\", \"severity\": \"medium\", \"status\": \"open\", \"threshold_value\": 30.0}]"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "settings",
+      "title": "Settings",
+      "status": "FAIL",
+      "evidence_summary": "Notification and settings regression tests failed with exit code 1.",
+      "evidence": [
+        {
+          "label": "Notification and settings regression tests stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Notification and settings regression tests stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stderr.log",
+          "detail": null
+        }
+      ],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": false,
+        "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest services/rule-engine-service/tests/test_notification_adapter.py services/reporting-service/tests/test_settings_notifications_migration.py tests/test_reporting_settings_tenant_isolation.py -q",
+        "error_output": "============================= test session starts ==============================\nplatform darwin -- Python 3.11.9, pytest-8.2.0, pluggy-1.6.0\nrootdir: /Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main\nconfigfile: pytest.ini\nplugins: anyio-4.12.1, asyncio-0.23.6, mock-3.14.0\nasyncio: mode=Mode.STRICT\ncollected 15 items\n\nservices/rule-engine-service/tests/test_notification_adapter.py ..       [ 13%]\nservices/reporting-service/tests/test_settings_notifications_migration.py . [ 20%]\n..                                                                       [ 33%]\ntests/test_reporting_settings_tenant_isolation.py ......FF..             [100%]\n\n=================================== FAILURES ===================================\n______ test_reporting_settings_migration_backfills_global_rows_per_tenant ______\ntests/test_reporting_settings_tenant_isolation.py:229: in test_reporting_settings_migration_backfills_global_rows_per_tenant\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n_ test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema _\ntests/test_reporting_settings_tenant_isolation.py:305: in test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n=========================== short test summary info ============================\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_backfills_global_rows_per_tenant\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n========================= 2 failed, 13 passed in 3.63s =========================\n"
+      }
+    },
+    {
+      "item_id": "legacy_notification_migration_behavior",
+      "title": "Legacy notification migration behavior",
+      "status": "FAIL",
+      "evidence_summary": "Notification and settings regression tests failed with exit code 1.",
+      "evidence": [
+        {
+          "label": "Notification and settings regression tests stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Notification and settings regression tests stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stderr.log",
+          "detail": null
+        }
+      ],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": false,
+        "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest services/rule-engine-service/tests/test_notification_adapter.py services/reporting-service/tests/test_settings_notifications_migration.py tests/test_reporting_settings_tenant_isolation.py -q",
+        "error_output": "============================= test session starts ==============================\nplatform darwin -- Python 3.11.9, pytest-8.2.0, pluggy-1.6.0\nrootdir: /Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main\nconfigfile: pytest.ini\nplugins: anyio-4.12.1, asyncio-0.23.6, mock-3.14.0\nasyncio: mode=Mode.STRICT\ncollected 15 items\n\nservices/rule-engine-service/tests/test_notification_adapter.py ..       [ 13%]\nservices/reporting-service/tests/test_settings_notifications_migration.py . [ 20%]\n..                                                                       [ 33%]\ntests/test_reporting_settings_tenant_isolation.py ......FF..             [100%]\n\n=================================== FAILURES ===================================\n______ test_reporting_settings_migration_backfills_global_rows_per_tenant ______\ntests/test_reporting_settings_tenant_isolation.py:229: in test_reporting_settings_migration_backfills_global_rows_per_tenant\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n_ test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema _\ntests/test_reporting_settings_tenant_isolation.py:305: in test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n    migration = _load_migration_module()\ntests/test_reporting_settings_tenant_isolation.py:51: in _load_migration_module\n    spec.loader.exec_module(module)\n<frozen importlib._bootstrap_external>:940: in exec_module\n    ???\n<frozen importlib._bootstrap>:241: in _call_with_frames_removed\n    ???\nservices/reporting-service/alembic/versions/005_tenant_scope_reporting_settings.py:13: in <module>\n    from alembic import op\nE   ImportError: cannot import name 'op' from 'alembic' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/rule-engine-service/alembic/__init__.py)\n=========================== short test summary info ============================\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_backfills_global_rows_per_tenant\nFAILED tests/test_reporting_settings_tenant_isolation.py::test_reporting_settings_migration_is_idempotent_for_partially_applied_live_schema\n========================= 2 failed, 13 passed in 3.63s =========================\n"
+      }
+    },
+    {
+      "item_id": "reports",
+      "title": "Reports",
+      "status": "FAIL",
+      "evidence_summary": "Live energy report creation request failed.",
+      "evidence": [
+        {
+          "label": "report payload",
+          "path": null,
+          "detail": "{\"device_id\": \"AD00000023\", \"end_date\": \"2026-04-08\", \"report_name\": \"Preprod Validation Energy Report\", \"start_date\": \"2026-04-08\"}"
+        }
+      ],
+      "failure": {
+        "classification": "flaky/unreproduced",
+        "production_blocking": false,
+        "command": "POST /api/reports/energy/consumption",
+        "error_output": "{\"error\":\"DEVICE_SERVICE_ERROR\",\"message\":\"Device service returned status 500\"}"
+      }
+    },
+    {
+      "item_id": "scheduled_reports",
+      "title": "Scheduled reports",
+      "status": "PASS",
+      "evidence_summary": "Scheduled report reliability tests passed.",
+      "evidence": [
+        {
+          "label": "Scheduled report reliability tests stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/scheduled-report-reliability-tests.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Scheduled report reliability tests stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/scheduled-report-reliability-tests.stderr.log",
+          "detail": null
+        },
+        {
+          "label": "command",
+          "path": null,
+          "detail": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest services/reporting-service/tests/test_scheduler_reliability.py services/reporting-service/tests/test_report_history_scope.py -q"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "analytics",
+      "title": "Analytics",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "financial_consistency",
+      "title": "Financial consistency",
+      "status": "FAIL",
+      "evidence_summary": "Targeted financial consistency tests failed with exit code 2.",
+      "evidence": [
+        {
+          "label": "Targeted financial consistency tests stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/targeted-financial-consistency-tests.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Targeted financial consistency tests stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/targeted-financial-consistency-tests.stderr.log",
+          "detail": null
+        }
+      ],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": true,
+        "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest tests/test_energy_service_cost_alignment.py tests/test_energy_accounting.py services/device-service/tests/test_loss_accounting_consistency.py -q",
+        "error_output": "============================= test session starts ==============================\nplatform darwin -- Python 3.11.9, pytest-8.2.0, pluggy-1.6.0\nrootdir: /Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main\nconfigfile: pytest.ini\nplugins: anyio-4.12.1, asyncio-0.23.6, mock-3.14.0\nasyncio: mode=Mode.STRICT\ncollected 7 items / 1 error\n\n==================================== ERRORS ====================================\n_ ERROR collecting services/device-service/tests/test_loss_accounting_consistency.py _\nImportError while importing test module '/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/device-service/tests/test_loss_accounting_consistency.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n../../../.pyenv/versions/3.11.9/lib/python3.11/importlib/__init__.py:126: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\nservices/device-service/tests/test_loss_accounting_consistency.py:24: in <module>\n    from app.database import Base\nE   ImportError: cannot import name 'Base' from 'app.database' (/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/energy-service/app/database.py)\n=============================== warnings summary ===============================\n../../../.pyenv/versions/3.11.9/lib/python3.11/site-packages/pydantic/_internal/_config.py:284\n  /Users/vedanthshetty/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pydantic/_internal/_config.py:284: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.7/migration/\n    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nERROR services/device-service/tests/test_loss_accounting_consistency.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n========================= 1 warning, 1 error in 0.41s ==========================\n"
+      }
+    },
+    {
+      "item_id": "error_handling",
+      "title": "Error handling",
+      "status": "PASS",
+      "evidence_summary": "Org isolation validator passed.",
+      "evidence": [
+        {
+          "label": "Org isolation validator stdout",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/org-isolation-validator.stdout.log",
+          "detail": null
+        },
+        {
+          "label": "Org isolation validator stderr",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/org-isolation-validator.stderr.log",
+          "detail": null
+        },
+        {
+          "label": "command",
+          "path": null,
+          "detail": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/validate_isolation.py"
+        }
+      ],
+      "failure": null
+    },
+    {
+      "item_id": "hardware_lifecycle",
+      "title": "Hardware lifecycle",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "hardware_integrity",
+      "title": "Hardware integrity",
+      "status": "NOT_EXECUTED",
+      "evidence_summary": "Not executed by this run.",
+      "evidence": [],
+      "failure": null
+    },
+    {
+      "item_id": "logs_runtime_stability",
+      "title": "Logs / runtime stability",
+      "status": "FAIL",
+      "evidence_summary": "Log sweep found runtime instability indicators in service logs.",
+      "evidence": [
+        {
+          "label": "reporting-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/reporting-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "analytics-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/analytics-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "analytics-worker",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/analytics-worker.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "rule-engine-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/rule-engine-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "device-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/device-service.log",
+          "detail": "traceback, unhandled exception"
+        },
+        {
+          "label": "auth-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/auth-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "data-service",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/data-service.log",
+          "detail": "no critical token"
+        },
+        {
+          "label": "ui-web",
+          "path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/ui-web.log",
+          "detail": "no critical token"
+        }
+      ],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": true,
+        "command": "docker logs --tail 200 <service>",
+        "error_output": "[{\"artifact\": \"/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/device-service.log\", \"expected_vs_defect\": \"Unexpected log token(s): traceback, unhandled exception\", \"service\": \"device-service\", \"status\": \"warning\"}]"
+      }
+    },
+    {
+      "item_id": "final_go_no_go",
+      "title": "Final GO / NO-GO",
+      "status": "FAIL",
+      "evidence_summary": "7 checklist item(s) failed.",
+      "evidence": [],
+      "failure": {
+        "classification": "confirmed product defect",
+        "production_blocking": true,
+        "command": "final-decision",
+        "error_output": "7 checklist item(s) failed."
+      }
+    }
+  ],
+  "logs_review": [
+    {
+      "service": "device-service",
+      "status": "warning",
+      "expected_vs_defect": "Unexpected log token(s): traceback, unhandled exception",
+      "artifact": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/logs/device-service.log"
+    }
+  ],
+  "production_recommendation": {
+    "decision": "NO-GO",
+    "reason": "7 checklist item(s) failed."
+  },
+  "follow_ups": [
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Notification and settings regression tests failed with exit code 1.",
+    "Notification and settings regression tests failed with exit code 1.",
+    "Notification and settings regression tests failed with exit code 1.",
+    "Live energy report creation request failed.",
+    "Not executed by this run.",
+    "Targeted financial consistency tests failed with exit code 2.",
+    "Not executed by this run.",
+    "Not executed by this run.",
+    "Log sweep found runtime instability indicators in service logs."
+  ],
+  "commands": [
+    {
+      "name": "Org isolation validator",
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 scripts/validate_isolation.py",
+      "status": "PASS",
+      "returncode": 0,
+      "duration_seconds": 6.209133148193359,
+      "stdout_path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/org-isolation-validator.stdout.log",
+      "stderr_path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/org-isolation-validator.stderr.log",
+      "classification": null,
+      "production_blocking": null
+    },
+    {
+      "name": "Targeted financial consistency tests",
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest tests/test_energy_service_cost_alignment.py tests/test_energy_accounting.py services/device-service/tests/test_loss_accounting_consistency.py -q",
+      "status": "FAIL",
+      "returncode": 2,
+      "duration_seconds": 0.7637379169464111,
+      "stdout_path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/targeted-financial-consistency-tests.stdout.log",
+      "stderr_path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/targeted-financial-consistency-tests.stderr.log",
+      "classification": "confirmed product defect",
+      "production_blocking": true
+    },
+    {
+      "name": "Notification and settings regression tests",
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest services/rule-engine-service/tests/test_notification_adapter.py services/reporting-service/tests/test_settings_notifications_migration.py tests/test_reporting_settings_tenant_isolation.py -q",
+      "status": "FAIL",
+      "returncode": 1,
+      "duration_seconds": 4.027709007263184,
+      "stdout_path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stdout.log",
+      "stderr_path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/notification-and-settings-regression-tests.stderr.log",
+      "classification": "confirmed product defect",
+      "production_blocking": false
+    },
+    {
+      "name": "Scheduled report reliability tests",
+      "command": "/Users/vedanthshetty/.pyenv/versions/3.11.9/bin/python3.11 -m pytest services/reporting-service/tests/test_scheduler_reliability.py services/reporting-service/tests/test_report_history_scope.py -q",
+      "status": "PASS",
+      "returncode": 0,
+      "duration_seconds": 5.676649808883667,
+      "stdout_path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/scheduled-report-reliability-tests.stdout.log",
+      "stderr_path": "/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/artifacts/preprod-validation/20260408-151914/commands/scheduled-report-reliability-tests.stderr.log",
+      "classification": null,
+      "production_blocking": null
+    }
+  ],
+  "generated_at": "2026-04-08T15:19:50.897033+00:00"
+}

@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+import importlib
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import types
+
+ROOT = Path(__file__).resolve().parents[4]
+for path in (ROOT, ROOT / "services", ROOT / "services/analytics-service"):
+    resolved = str(path)
+    if resolved not in sys.path:
+        sys.path.insert(0, resolved)
+
+shared_tenant_context = importlib.import_module("shared.tenant_context")
+services_pkg = sys.modules.setdefault("services", types.ModuleType("services"))
+services_shared_pkg = sys.modules.setdefault("services.shared", types.ModuleType("services.shared"))
+services_pkg.shared = services_shared_pkg
+services_shared_pkg.tenant_context = shared_tenant_context
+sys.modules["services.shared.tenant_context"] = shared_tenant_context
+
+from src.infrastructure.mysql_repository import MySQLResultRepository
+from src.utils.exceptions import JobNotFoundError
+
+
+class _FakeScalarResult:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
+    def scalars(self):
+        return _FakeScalarResult(self._rows)
+
+
+class _FakeSession:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    async def execute(self, query):
+        offset_clause = getattr(query, "_offset_clause", None)
+        limit_clause = getattr(query, "_limit_clause", None)
+        offset = int(offset_clause.value) if offset_clause is not None else 0
+        limit = int(limit_clause.value) if limit_clause is not None else None
+        rows = self._rows[offset:]
+        if limit is not None:
+            rows = rows[:limit]
+        return _FakeResult(rows)
+
+
+def _job(job_id: str, device_id: str, *, tenant_id: str, device_ids: list[str] | None = None):
+    parameters = {"tenant_id": tenant_id}
+    if device_ids is not None:
+        parameters["device_ids"] = device_ids
+    return SimpleNamespace(
+        job_id=job_id,
+        device_id=device_id,
+        parameters=parameters,
+        created_at=job_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_job_scoped_hides_out_of_scope_single_device_job():
+    repo = MySQLResultRepository(_FakeSession([]))
+    repo.get_job = lambda job_id: _async_return(_job("job-1", "dev-b", tenant_id="tenant-1"))  # type: ignore[method-assign]
+
+    with pytest.raises(JobNotFoundError):
+        await repo.get_job_scoped("job-1", tenant_id="tenant-1", accessible_device_ids=["dev-a"])
+
+
+@pytest.mark.asyncio
+async def test_get_job_scoped_allows_scoped_parent_fleet_job():
+    repo = MySQLResultRepository(_FakeSession([]))
+    parent_job = _job("job-1", "ALL", tenant_id="tenant-1", device_ids=["dev-a", "dev-b"])
+    repo.get_job = lambda job_id: _async_return(parent_job)  # type: ignore[method-assign]
+
+    job = await repo.get_job_scoped(
+        "job-1",
+        tenant_id="tenant-1",
+        accessible_device_ids=["dev-a", "dev-b", "dev-c"],
+    )
+    assert job is parent_job
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_filters_before_pagination_by_accessible_devices():
+    jobs = [
+        _job("job-3", "dev-c", tenant_id="tenant-1"),
+        _job("job-2", "dev-b", tenant_id="tenant-1"),
+        _job("job-1", "dev-a", tenant_id="tenant-1"),
+    ]
+    repo = MySQLResultRepository(_FakeSession(jobs))
+
+    visible = await repo.list_jobs(
+        tenant_id="tenant-1",
+        accessible_device_ids=["dev-a", "dev-c"],
+        limit=10,
+        offset=0,
+    )
+
+    assert [job.job_id for job in visible] == ["job-3", "job-1"]
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_applies_database_pagination_for_unscoped_history_queries():
+    jobs = [
+        _job("job-4", "dev-d", tenant_id="tenant-1"),
+        _job("job-3", "dev-c", tenant_id="tenant-1"),
+        _job("job-2", "dev-b", tenant_id="tenant-1"),
+        _job("job-1", "dev-a", tenant_id="tenant-1"),
+    ]
+    repo = MySQLResultRepository(_FakeSession(jobs))
+
+    visible = await repo.list_jobs(
+        tenant_id="tenant-1",
+        accessible_device_ids=None,
+        limit=2,
+        offset=1,
+    )
+
+    assert [job.job_id for job in visible] == ["job-3", "job-2"]
+
+
+def _async_return(value):
+    async def _inner(*args, **kwargs):
+        return value
+
+    return _inner()

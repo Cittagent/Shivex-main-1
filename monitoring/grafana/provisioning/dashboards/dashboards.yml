@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: device-slo
+    orgId: 1
+    folder: Device SLO
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
