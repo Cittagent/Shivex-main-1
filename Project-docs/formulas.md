@@ -281,6 +281,12 @@ How P_baseline is Established
         Percentile	    Use When	                        Effect
         50th (Median)	Anomaly detection, alerts	        Flags more deviations
         75th	        Conservative baseline, ROI claims	Fewer false positives
+    - E.g.
+        import numpy as np
+        data = [12, 45, 67, ..., 89]  # 1440 values
+        p75 = np.percentile(data, 75)
+        print("P75:", p75)
+    - This needs to be done for 30 days data to calculate the final P75th percentile for Power across each of the state
 ```
 
 
