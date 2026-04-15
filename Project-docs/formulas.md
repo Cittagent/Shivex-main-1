@@ -287,6 +287,16 @@ How P_baseline is Established
         p75 = np.percentile(data, 75)
         print("P75:", p75)
     - This needs to be done for 30 days data to calculate the final P75th percentile for Power across each of the state
+
+    import numpy as np
+    
+    # Example: 1440 minute-level datapoints
+    data = np.random.rand(1440) * 100  # replace with your actual data
+    
+    # Calculate 75th percentile
+    p75 = np.percentile(data, 75)
+    
+    print("P75:", p75)
 ```
 
 
