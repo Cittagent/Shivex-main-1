@@ -353,9 +353,9 @@ Summary:
 - Total Energy: 0.5 + 2.0 + 3.0 = 5.5 kWh
 - Idle: 0.5 kWh
 - Running: 2.0 + 2.5 = 4.5 kWh
-- Overconsumption: 0.5 kWh
-- Total Loss: 0.5 + 0.5 = 1.0 kWh
-- Loss Cost: 1.0 × 8.00 = 8.00 INR
+- Overconsumption: 0.6 kWh
+- Total Loss: 0.5 + 0.6 = 1.1 kWh
+- Loss Cost: 1.1 × 8.00 = 8.80 INR
 ```
 
 ---
