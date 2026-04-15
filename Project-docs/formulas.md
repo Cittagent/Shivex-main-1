@@ -345,9 +345,9 @@ Calculations:
 - 10:30-10:45: power=12kW, current=30A > 25A (overconsumption)
   - interval = 0.25 hours
   - energy = 12.0 × 0.25 = 3.0 kWh
-  - over_ratio = (30-25)/30 = 0.167
-  - overconsumption = 3.0 × 0.167 = 0.5 kWh
-  - remaining = 3.0 - 0.5 = 2.5 kWh (running)
+  - over_ratio = (30-25)/25 = 0.2
+  - overconsumption = 3.0 × 0.2 = 0.6 kWh
+  - remaining = 3.0 - 0.6 = 2.4 kWh (running)
 
 Summary:
 - Total Energy: 0.5 + 2.0 + 3.0 = 5.5 kWh
