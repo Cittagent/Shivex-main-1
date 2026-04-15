@@ -310,8 +310,6 @@ total_loss_kwh = idle_kwh + off_hours_kwh + overconsumption_kwh
 energy_cost = total_energy_kwh × tariff_rate
 loss_cost = total_loss_kwh × tariff_rate
 
-Invariant Check:
-  loss_cost ≤ energy_cost + 0.01 INR (tolerance)
 ```
 
 ### Example Calculation
