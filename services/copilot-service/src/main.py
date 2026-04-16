@@ -21,7 +21,10 @@ logger = logging.getLogger(__name__)
 
 startup_state = {
     "schema_loaded": False,
+    "curated_mode_available": True,
+    "provider_optional": True,
     "provider_configured": False,
+    "provider_available": False,
     "provider_ping": False,
     "db_ready": False,
 }
@@ -40,7 +43,8 @@ async def lifespan(app: FastAPI):
 
         model_client = ModelClient()
         startup_state["provider_configured"] = model_client.is_provider_configured()
-        startup_state["provider_ping"] = await model_client.ping() if startup_state["provider_configured"] else False
+        startup_state["provider_available"] = model_client.is_available()
+        startup_state["provider_ping"] = await model_client.ping() if startup_state["provider_available"] else False
 
         logger.info("copilot_startup_complete", extra=startup_state)
     except Exception as exc:
@@ -84,7 +88,10 @@ async def health():
     return {
         "status": "ok",
         "provider": settings.ai_provider,
+        "curated_mode_available": startup_state["curated_mode_available"],
+        "provider_optional": startup_state["provider_optional"],
         "provider_configured": startup_state["provider_configured"],
+        "provider_available": startup_state["provider_available"],
     }
 
 

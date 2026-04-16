@@ -4,12 +4,25 @@ from contextlib import asynccontextmanager
 from src.ai.copilot_engine import CopilotEngine
 from src.db.query_engine import QueryResult
 from src.response.schema import CuratedContext
-from src.templates.curated_catalog import CATALOG
+from src.templates.curated_catalog import CATALOG, match_curated_question
 
 
 class _NonJsonModelClient:
     async def generate(self, messages, max_tokens=1000):
         return "not valid json"
+
+
+class _UnavailableModelClient:
+    def is_available(self) -> bool:
+        return False
+
+    async def generate(self, messages, max_tokens=1000):
+        raise AssertionError("generate() must not be called in curated-only mode")
+
+
+class _StrictCuratedModelClient:
+    async def generate(self, messages, max_tokens=1000):
+        raise AssertionError("curated handlers must not call generate()")
 
 
 def _engine() -> CopilotEngine:
@@ -272,3 +285,61 @@ def test_plant_level_questions_return_healthy_no_data_when_plants_missing():
 
 def test_broken_ranked_machine_alert_runtime_path_is_removed():
     assert not hasattr(CopilotEngine, "_resolve_alert_target")
+
+
+def test_curated_alias_resolves_and_returns_deterministic_table_chart_without_provider():
+    assert match_curated_question("Which machine has the highest idle cost today?").id == "highest_loss_machine_today"
+
+    engine = CopilotEngine(_UnavailableModelClient())
+    _install_happy_path_stubs(engine)
+
+    response = asyncio.run(
+        engine.process_question(
+            "Which machine has the highest idle cost today?",
+            [],
+            8.5,
+            "INR",
+            tenant_id="tenant-a",
+        )
+    )
+
+    assert response.error_code is None
+    assert response.data_table is not None
+    assert response.chart is not None
+    assert response.chart.type == "bar"
+
+
+def test_curated_question_never_calls_model_generate():
+    engine = CopilotEngine(_StrictCuratedModelClient())
+    _install_happy_path_stubs(engine)
+
+    response = asyncio.run(
+        engine.process_question(
+            "Which machine consumed the most power today?",
+            [],
+            8.5,
+            "INR",
+            tenant_id="tenant-a",
+        )
+    )
+
+    assert response.error_code is None
+    assert response.answer
+
+
+def test_unsupported_question_returns_safe_fallback_when_provider_unavailable():
+    engine = CopilotEngine(_UnavailableModelClient())
+
+    response = asyncio.run(
+        engine.process_question(
+            "What will happen to output next quarter?",
+            [],
+            8.5,
+            "INR",
+            tenant_id="tenant-a",
+        )
+    )
+
+    assert response.error_code == "APPROVED_QUESTIONS_ONLY"
+    assert response.answer == "This Copilot currently supports approved factory questions only."
+    assert response.follow_up_suggestions

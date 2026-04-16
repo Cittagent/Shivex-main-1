@@ -31,7 +31,7 @@ DEFAULT_CURATED_FOLLOWUP_IDS = ("factory_summary", "top_energy_today", "total_id
 
 
 class CopilotEngine:
-    def __init__(self, model_client: ModelClient):
+    def __init__(self, model_client: ModelClient | None):
         self.model_client = model_client
         self.query_engine = QueryEngine()
         self.data_service = DataServiceClient()
@@ -60,6 +60,8 @@ class CopilotEngine:
         intent = classify_intent(message, history)
 
         if intent.intent == "unsupported":
+            if not self._can_use_ai_sql():
+                return self._approved_questions_only_response()
             unsupported = ReasoningComposer.for_unsupported_module()
             return CopilotResponse(
                 answer=unsupported.answer,
@@ -80,6 +82,9 @@ class CopilotEngine:
                 tenant_id=tenant_id,
                 curated_context=curated_context,
             )
+
+        if not self._can_use_ai_sql():
+            return self._approved_questions_only_response()
 
         return await self._run_ai_sql(
             message=message,
@@ -736,6 +741,9 @@ class CopilotEngine:
         currency: str,
         tenant_id: str,
     ) -> CopilotResponse:
+        if not self._can_use_ai_sql():
+            return self._approved_questions_only_response()
+
         history_text = "\n".join(
             f"{t.get('role', 'user').upper()}: {t.get('content', '')}" for t in history[-settings.max_history_turns :]
         )
@@ -847,6 +855,15 @@ class CopilotEngine:
             rows=rows,
             chart_omission_reason=chart_omission_reason,
         )
+        if not self._can_use_ai_sql():
+            return CopilotResponse(
+                answer=composed.answer,
+                reasoning=self._append_chart_omission(composed.text if not reasoning else reasoning, chart_omission_reason),
+                reasoning_sections=composed.sections,
+                data_table=forced_table,
+                chart=force_chart or self._fallback_chart(headers, rows, default_title, chart_hint),
+                follow_up_suggestions=self._validated_followups(default_followups),
+            )
         try:
             formatted_raw = await self.model_client.generate(
                 messages=[
@@ -1152,6 +1169,30 @@ class CopilotEngine:
             f"What happened: {sections.what_happened}\n"
             f"Why it matters: {sections.why_it_matters}\n"
             f"How calculated: {sections.how_calculated}"
+        )
+
+    def _can_use_ai_sql(self) -> bool:
+        if self.model_client is None:
+            return False
+        availability = getattr(self.model_client, "is_available", None)
+        if callable(availability):
+            return bool(availability())
+        return hasattr(self.model_client, "generate")
+
+    def _approved_questions_only_response(self) -> CopilotResponse:
+        sections = ReasoningSections(
+            what_happened="This Copilot currently supports approved factory questions only.",
+            why_it_matters="Without an external AI provider, only curated deterministic questions are supported.",
+            how_calculated="Matched your request against the approved curated question catalog and blocked non-curated execution.",
+        )
+        return CopilotResponse(
+            answer=sections.what_happened,
+            reasoning=self._sections_to_text(sections),
+            reasoning_sections=sections,
+            chart=None,
+            data_table=None,
+            follow_up_suggestions=self._followup_texts(DEFAULT_CURATED_FOLLOWUP_IDS),
+            error_code="APPROVED_QUESTIONS_ONLY",
         )
 
     def _blocked_response(self, suggested_followups: list[str]) -> CopilotResponse:

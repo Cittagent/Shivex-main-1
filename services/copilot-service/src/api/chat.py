@@ -15,10 +15,13 @@ engine: CopilotEngine | None = None
 
 def _get_engine() -> tuple[ModelClient | None, CopilotEngine | None]:
     global model_client, engine
-    if model_client and engine:
+    if engine is not None:
         return model_client, engine
     try:
         model_client = ModelClient()
+    except Exception:
+        model_client = None
+    try:
         engine = CopilotEngine(model_client=model_client)
         return model_client, engine
     except Exception:
@@ -27,18 +30,11 @@ def _get_engine() -> tuple[ModelClient | None, CopilotEngine | None]:
 
 @router.post("/api/v1/copilot/chat", response_model=CopilotResponse)
 async def chat(request: ChatRequest, http_request: Request) -> CopilotResponse:
-    model, copilot_engine = _get_engine()
-    if not model or not copilot_engine:
+    _, copilot_engine = _get_engine()
+    if not copilot_engine:
         return CopilotResponse(
-            answer="Copilot is not configured. Please add AI_PROVIDER and provider API key.",
-            reasoning="Provider setup failed during initialization.",
-            error_code="NOT_CONFIGURED",
-        )
-
-    if not model.is_provider_configured():
-        return CopilotResponse(
-            answer="Copilot is not configured. Please add AI_PROVIDER and provider API key.",
-            reasoning="Provider config missing in environment.",
+            answer="Something went wrong. Please try again.",
+            reasoning="Copilot engine initialization failed.",
             error_code="NOT_CONFIGURED",
         )
 

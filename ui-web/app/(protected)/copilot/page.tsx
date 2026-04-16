@@ -5,6 +5,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { fetchCuratedStarterQuestions, sendCopilotMessage, ChatTurn, CopilotResponse, CuratedContext } from "@/lib/copilotApi";
+import {
+  COPILOT_EMPTY_STATE_MESSAGE,
+  COPILOT_SUBTITLE,
+  COPILOT_TITLE,
+  CURATED_ONLY_HELPER_TEXT,
+  CURATED_ONLY_SECTION_SUBTITLE,
+  CURATED_ONLY_SECTION_TITLE,
+  getApprovedQuestionsOnlyHint,
+} from "@/lib/copilotPresentation";
 
 interface UiMessage {
   role: "user" | "assistant";
@@ -25,7 +34,6 @@ const STORAGE_KEY = "factoryops_copilot_messages";
 export default function CopilotPage() {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [starterQuestions, setStarterQuestions] = useState<string[]>([]);
-  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -95,13 +103,7 @@ export default function CopilotPage() {
       setError("Could not get answer. Please try again.");
     } finally {
       setLoading(false);
-      setInput("");
     }
-  }
-
-  function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    void ask(input);
   }
 
   function newChat() {
@@ -114,7 +116,10 @@ export default function CopilotPage() {
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-6xl">
         <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-slate-900">Factory Copilot</h1>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">{COPILOT_TITLE}</h1>
+            <p className="text-sm text-slate-600">{COPILOT_SUBTITLE}</p>
+          </div>
           <button
             onClick={newChat}
             className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-100"
@@ -127,7 +132,7 @@ export default function CopilotPage() {
           <div className="mb-4 h-[62vh] overflow-y-auto rounded-lg border border-slate-100 bg-slate-50 p-4">
             {messages.length === 0 && (
               <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-slate-700">
-                Hello! Ask me anything about machines, energy, alerts, waste, and trends.
+                {COPILOT_EMPTY_STATE_MESSAGE}
               </div>
             )}
 
@@ -167,6 +172,11 @@ export default function CopilotPage() {
                           <div className="whitespace-pre-line">{msg.response.reasoning}</div>
                         )}
                       </div>
+                      {getApprovedQuestionsOnlyHint(msg.response) && (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                          {getApprovedQuestionsOnlyHint(msg.response)}
+                        </div>
+                      )}
 
                       {msg.response.data_table && (
                         <div className="overflow-x-auto">
@@ -269,21 +279,14 @@ export default function CopilotPage() {
 
           {error && <div className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">{error}</div>}
 
-          <form onSubmit={onSubmit} className="mb-3 flex gap-2">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about your factory..."
-              className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <button
-              type="submit"
-              disabled={loading || !input.trim()}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
-              Send
-            </button>
-          </form>
+          <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+            {CURATED_ONLY_HELPER_TEXT}
+          </div>
+
+          <div className="mb-3 rounded-md border border-slate-200 bg-white px-4 py-3">
+            <div className="text-sm font-medium text-slate-900">{CURATED_ONLY_SECTION_TITLE}</div>
+            <div className="mt-1 text-xs text-slate-600">{CURATED_ONLY_SECTION_SUBTITLE}</div>
+          </div>
 
           <div className="flex flex-wrap gap-2">
             {starterQuestions.map((q) => (
