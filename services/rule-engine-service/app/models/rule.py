@@ -1,11 +1,11 @@
 """SQLAlchemy models for Rule Engine Service."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, List, Dict, Any
 import uuid
 
-from sqlalchemy import String, DateTime, Float, Integer, Text, ForeignKey, JSON
+from sqlalchemy import String, DateTime, Float, Integer, Text, ForeignKey, JSON, Index, CheckConstraint, UniqueConstraint
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,6 +60,55 @@ class CooldownUnit(str, Enum):
 
     MINUTES = "minutes"
     SECONDS = "seconds"
+
+
+class NotificationDeliveryStatus(str, Enum):
+    """Explicit notification delivery lifecycle for billing-safe auditing."""
+
+    QUEUED = "queued"
+    ATTEMPTED = "attempted"
+    PROVIDER_ACCEPTED = "provider_accepted"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class RuleTriggerState(Base):
+    """Per-device trigger state so cooldown applies independently per device."""
+
+    __tablename__ = "rule_trigger_states"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "rule_id", "device_id", name="uq_rule_trigger_states_tenant_rule_device"),
+        Index("ix_rule_trigger_states_tenant_rule", "tenant_id", "rule_id"),
+        Index("ix_rule_trigger_states_tenant_device", "tenant_id", "device_id"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False, index=True)
+    rule_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("rules.rule_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    device_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    last_triggered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    triggered_once: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
 
 
 class Rule(Base):
@@ -285,3 +334,74 @@ class ActivityEvent(Base):
 
     def __repr__(self) -> str:
         return f"<ActivityEvent(event_id={self.event_id}, type={self.event_type}, device_id={self.device_id})>"
+
+
+class NotificationDeliveryLog(Base):
+    """Permanent audit ledger for notification delivery attempts."""
+
+    __tablename__ = "notification_delivery_logs"
+    __table_args__ = (
+        Index("ix_notification_delivery_logs_tenant_attempted_at", "tenant_id", "attempted_at"),
+        Index("ix_notification_delivery_logs_tenant_channel_attempted_at", "tenant_id", "channel", "attempted_at"),
+        Index("ix_notification_delivery_logs_tenant_status_attempted_at", "tenant_id", "status", "attempted_at"),
+        Index("ix_notification_delivery_logs_rule_id", "rule_id"),
+        Index("ix_notification_delivery_logs_alert_id", "alert_id"),
+        Index("ix_notification_delivery_logs_provider_message_id", "provider_message_id"),
+        CheckConstraint("tenant_id IS NOT NULL", name="ck_notification_delivery_logs_tenant_required"),
+        CheckConstraint(
+            "status IN ('queued','attempted','provider_accepted','delivered','failed','skipped')",
+            name="ck_notification_delivery_logs_valid_status",
+        ),
+        CheckConstraint("billable_units >= 0", name="ck_notification_delivery_logs_billable_non_negative"),
+        CheckConstraint(
+            "CASE "
+            "WHEN status IN ('provider_accepted','delivered') AND billable_units = 1 THEN 1 "
+            "WHEN status IN ('queued','attempted','failed','skipped') AND billable_units = 0 THEN 1 "
+            "ELSE 0 END = 1",
+            name="ck_notification_delivery_logs_billable_by_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    tenant_id: Mapped[Optional[str]] = mapped_column(String(TENANT_ID_LENGTH), nullable=True, index=True)
+    alert_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("alerts.alert_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    rule_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("rules.rule_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    device_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    recipient_masked: Mapped[str] = mapped_column(String(255), nullable=False)
+    recipient_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[NotificationDeliveryStatus] = mapped_column(String(32), nullable=False, index=True)
+    billable_units: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    failure_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )

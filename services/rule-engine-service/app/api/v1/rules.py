@@ -25,7 +25,8 @@ from app.schemas.rule import (
 from app.services.rule import RuleService
 from app.services.evaluator import RuleEvaluator
 from app.services.device_scope import DeviceScopeService
-from app.notifications.adapter import notification_adapter
+from app.notifications.adapter import NotificationAdapter
+from app.services.notification_delivery import NotificationDeliveryAuditService
 from services.shared.tenant_context import TenantContext
 import logging
 
@@ -172,7 +173,10 @@ async def create_rule(
                 
                 status_value = rule.status.value if hasattr(rule.status, 'value') else str(rule.status)
                 
-                await notification_adapter.send_alert(
+                adapter = NotificationAdapter(
+                    audit_service=NotificationDeliveryAuditService(db, ctx)
+                )
+                await adapter.send_alert(
                     channel="email",
                     subject=f"Rule Created: {rule.rule_name}",
                     message=f"Your rule '{rule.rule_name}' has been successfully created and is now {status_value}.",
@@ -189,6 +193,7 @@ async def create_rule(
                         "channels": rule.notification_channels,
                     }
                 )
+                await db.commit()
             except Exception as e:
                 logger.error(
                     "Failed to send rule creation notification",

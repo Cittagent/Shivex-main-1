@@ -7,9 +7,10 @@ from datetime import datetime, timezone, timedelta
 from uuid import UUID
 
 from sqlalchemy import select, func, and_, or_, false, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.rule import Rule, RuleScope, RuleStatus, CooldownMode, Alert, ActivityEvent
+from app.models.rule import Rule, RuleScope, RuleStatus, CooldownMode, Alert, ActivityEvent, RuleTriggerState
 from services.shared.scoped_repository import TenantScopedRepository
 from services.shared.tenant_context import TenantContext
 
@@ -31,6 +32,15 @@ class RuleRepository(TenantScopedRepository[Rule]):
         ctx: TenantContext,
     ):
         super().__init__(session, ctx)
+
+    @staticmethod
+    def _coerce_utc_timestamp(value: Optional[datetime]) -> Optional[datetime]:
+        """Treat naive database timestamps as UTC for cooldown comparisons."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
     
     @staticmethod
     def _rule_visible_to_scope(rule: Rule, accessible_device_ids: Optional[list[str]] = None) -> bool:
@@ -161,45 +171,74 @@ class RuleRepository(TenantScopedRepository[Rule]):
         self,
         *,
         rule_id: str,
+        device_id: str,
         cooldown_mode: str,
         cooldown_seconds: int,
     ) -> bool:
         """
-        Atomically reserve the right to emit an alert for a rule trigger.
+        Atomically reserve the right to emit an alert for a rule+device trigger.
 
-        This closes the race where concurrent evaluators both read "not in cooldown"
-        before either one persists the new last_triggered_at.
+        Cooldown/no-repeat is enforced per target device so one machine firing does
+        not suppress alerts for another machine under the same rule.
         """
         now = datetime.now(timezone.utc)
-        stmt = (
-            update(Rule)
-            .where(
-                Rule.rule_id == rule_id,
-                Rule.deleted_at.is_(None),
-            )
-            .execution_options(synchronize_session=False)
-        )
-        stmt = self._apply_tenant_scope_dml(stmt)
-
-        if cooldown_mode == CooldownMode.NO_REPEAT.value:
-            stmt = stmt.where(Rule.triggered_once.is_(False)).values(
-                last_triggered_at=now,
-                triggered_once=True,
-            )
-        else:
-            cooldown_seconds = max(int(cooldown_seconds), 0)
-            if cooldown_seconds > 0:
-                cooldown_cutoff = now - timedelta(seconds=cooldown_seconds)
-                stmt = stmt.where(
-                    or_(
-                        Rule.last_triggered_at.is_(None),
-                        Rule.last_triggered_at <= cooldown_cutoff,
+        for _ in range(2):
+            try:
+                async with self._session.begin_nested():
+                    state_stmt = (
+                        select(RuleTriggerState)
+                        .where(
+                            RuleTriggerState.rule_id == rule_id,
+                            RuleTriggerState.device_id == device_id,
+                        )
+                        .with_for_update()
                     )
-                )
-            stmt = stmt.values(last_triggered_at=now)
+                    if self._tenant_id is not None:
+                        state_stmt = state_stmt.where(RuleTriggerState.tenant_id == self._tenant_id)
+                    result = await self._session.execute(state_stmt)
+                    state = result.scalar_one_or_none()
 
-        result = await self._session.execute(stmt)
-        return bool(result.rowcount)
+                    if state is None:
+                        state = RuleTriggerState(
+                            tenant_id=self._tenant_id,
+                            rule_id=rule_id,
+                            device_id=device_id,
+                            last_triggered_at=now,
+                            triggered_once=(cooldown_mode == CooldownMode.NO_REPEAT.value),
+                        )
+                        self._session.add(state)
+                        await self._session.flush()
+                    elif cooldown_mode == CooldownMode.NO_REPEAT.value:
+                        if state.triggered_once:
+                            return False
+                        state.triggered_once = True
+                        state.last_triggered_at = now
+                    else:
+                        cooldown_seconds = max(int(cooldown_seconds), 0)
+                        last_triggered_at = self._coerce_utc_timestamp(state.last_triggered_at)
+                        if cooldown_seconds > 0 and last_triggered_at is not None:
+                            cooldown_cutoff = now - timedelta(seconds=cooldown_seconds)
+                            if last_triggered_at > cooldown_cutoff:
+                                return False
+                        state.last_triggered_at = now
+
+                    metadata_stmt = (
+                        update(Rule)
+                        .where(
+                            Rule.rule_id == rule_id,
+                            Rule.deleted_at.is_(None),
+                        )
+                        .execution_options(synchronize_session=False)
+                    )
+                    metadata_stmt = self._apply_tenant_scope_dml(metadata_stmt)
+                    metadata_values = {"last_triggered_at": now}
+                    if cooldown_mode == CooldownMode.NO_REPEAT.value:
+                        metadata_values["triggered_once"] = True
+                    await self._session.execute(metadata_stmt.values(**metadata_values))
+                    return True
+            except IntegrityError:
+                continue
+        return False
     
     async def update_status(self, rule_id: str, status: RuleStatus) -> Optional[Rule]:
         """Update rule status."""

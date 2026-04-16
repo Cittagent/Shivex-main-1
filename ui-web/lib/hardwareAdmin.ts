@@ -25,7 +25,7 @@ export const INSTALLATION_ROLE_OPTIONS = [
   { value: "motor_sensor", label: "Motor Sensor" },
 ] as const;
 
-export type AdminOrgTabKey = "plants" | "users" | "hardware";
+export type AdminOrgTabKey = "plants" | "users" | "hardware" | "notification_usage";
 
 export interface AdminOrgTab {
   key: AdminOrgTabKey;
@@ -78,12 +78,22 @@ export function buildAdminOrgTabs(counts: {
   plants: number;
   users: number;
   hardware: number;
+  notificationUsage?: number;
+  includeNotificationUsage?: boolean;
 }): AdminOrgTab[] {
-  return [
+  const tabs: AdminOrgTab[] = [
     { key: "plants", label: "Plants", count: counts.plants },
-    { key: "users", label: "Users", count: counts.users },
+    { key: "users", label: "Org Admins", count: counts.users },
     { key: "hardware", label: "Hardware", count: counts.hardware },
   ];
+  if (counts.includeNotificationUsage) {
+    tabs.push({
+      key: "notification_usage",
+      label: "Notification Usage",
+      count: counts.notificationUsage ?? 0,
+    });
+  }
+  return tabs;
 }
 
 export function flattenDeviceHistory(

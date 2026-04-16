@@ -64,6 +64,7 @@ export function MachineRulesView({ deviceId }: MachineRulesViewProps) {
   const { canCreateRule } = usePermissions();
   const [rules, setRules] = useState<Rule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingRule, setEditingRule] = useState<Rule | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -182,6 +183,9 @@ export function MachineRulesView({ deviceId }: MachineRulesViewProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     setFormError(null);
     if (formData.ruleType === "threshold" && (formData.threshold === "" || Number.isNaN(Number(formData.threshold)))) {
       setFormError("Please enter a valid threshold value.");
@@ -229,6 +233,7 @@ export function MachineRulesView({ deviceId }: MachineRulesViewProps) {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       await createRule({
         ruleName: formData.ruleName,
@@ -267,10 +272,12 @@ export function MachineRulesView({ deviceId }: MachineRulesViewProps) {
       
       setShowForm(false);
       resetForm();
-      fetchRules();
+      await fetchRules();
     } catch (err) {
       console.error("Failed to create rule:", err);
       setFormError(err instanceof Error ? err.message : "Failed to create rule.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -640,11 +647,16 @@ export function MachineRulesView({ deviceId }: MachineRulesViewProps) {
               
               <div className="flex gap-3 pt-4">
                 {canCreateRule ? (
-                  <Button type="submit">
-                    {editingRule ? "Update Rule" : "Create Rule"}
+                  <Button type="submit" isLoading={isSubmitting} disabled={isSubmitting}>
+                    {isSubmitting ? (editingRule ? "Updating Rule..." : "Creating Rule...") : (editingRule ? "Update Rule" : "Create Rule")}
                   </Button>
                 ) : null}
-                <Button type="button" variant="outline" onClick={() => { setShowForm(false); resetForm(); }}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isSubmitting}
+                  onClick={() => { setShowForm(false); resetForm(); }}
+                >
                   Cancel
                 </Button>
               </div>

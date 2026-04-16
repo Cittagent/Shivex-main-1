@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 from app.api.v1.router import api_router
 from app.config import settings
 from app.database import engine
-from app.logging_config import configure_logging
 from shared.auth_middleware import AuthMiddleware
 from shared.feature_entitlements import require_feature
 from services.shared.startup_contract import validate_startup_contract
@@ -26,6 +25,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan handler for graceful startup and shutdown."""
     # Startup
+    from app.logging_config import configure_logging
+
     validate_startup_contract()
     configure_logging()
     logger.info(

@@ -12,6 +12,7 @@ import { CreatePlantModal } from "@/components/auth/CreatePlantModal";
 import { CreateOrgAdminModal } from "@/components/auth/CreateOrgAdminModal";
 import { OrgFeatureAccessEditor } from "@/components/auth/OrgFeatureAccessEditor";
 import { OrgHardwareTab } from "@/components/admin/OrgHardwareTab";
+import { OrgNotificationUsageTab } from "@/components/admin/OrgNotificationUsageTab";
 import {
   Table,
   TableBody,
@@ -24,8 +25,9 @@ import { formatIST, getRelativeTime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { buildAdminOrgTabs } from "@/lib/hardwareAdmin";
 import { setSelectedTenantId } from "@/lib/tenantStore";
+import { useAuth } from "@/lib/authContext";
 
-type TabKey = "plants" | "users" | "hardware";
+type TabKey = "plants" | "users" | "hardware" | "notification_usage";
 
 function DataSkeletonTable({ columns }: { columns: string[] }) {
   return (
@@ -53,6 +55,8 @@ function DataSkeletonTable({ columns }: { columns: string[] }) {
 }
 
 export default function AdminOrgDetailPage() {
+  const { me } = useAuth();
+  const isSuperAdmin = me?.user.role === "super_admin";
   const params = useParams<{ orgId?: string; tenantId?: string }>();
   const tenantId =
     typeof params.tenantId === "string" && params.tenantId
@@ -128,9 +132,21 @@ export default function AdminOrgDetailPage() {
   }, [tenantId]);
 
   const tabs = useMemo(
-    () => buildAdminOrgTabs({ plants: plants.length, users: users.length, hardware: hardwareCount }),
-    [hardwareCount, plants.length, users.length],
+    () => buildAdminOrgTabs({
+      plants: plants.length,
+      users: users.length,
+      hardware: hardwareCount,
+      notificationUsage: 0,
+      includeNotificationUsage: isSuperAdmin,
+    }),
+    [hardwareCount, isSuperAdmin, plants.length, users.length],
   );
+
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.key === activeTab)) {
+      setActiveTab(tabs[0]?.key ?? "plants");
+    }
+  }, [activeTab, tabs]);
 
   async function handleDeactivateUser(userId: string): Promise<void> {
     const confirmed = window.confirm("Are you sure? This will immediately log out the user.");
@@ -306,12 +322,17 @@ export default function AdminOrgDetailPage() {
               </Table>
             )}
           </SectionCard>
-        ) : (
+        ) : activeTab === "hardware" ? (
           <OrgHardwareTab
             orgId={tenantId}
             plants={plants}
             active={activeTab === "hardware"}
             onHardwareCountChange={setHardwareCount}
+          />
+        ) : (
+          <OrgNotificationUsageTab
+            orgId={tenantId}
+            active={activeTab === "notification_usage"}
           />
         )}
       </div>

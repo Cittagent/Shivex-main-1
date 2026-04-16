@@ -12,6 +12,7 @@ from app.models.rule import Rule, RuleType, CooldownMode
 from app.schemas.rule import EvaluationResult, TelemetryPayload
 from app.schemas.telemetry import TelemetryIn
 from app.services.rule import RuleService, AlertService
+from app.services.notification_delivery import NotificationDeliveryAuditService
 from app.repositories.rule import RuleRepository, AlertRepository
 from app.notifications.adapter import NotificationAdapter
 from app.config import settings
@@ -33,7 +34,8 @@ class RuleEvaluator:
         self._alert_service = AlertService(session, ctx)
         self._rule_repository = RuleRepository(session, ctx)
         self._alert_repository = AlertRepository(session, ctx)
-        self._notification_adapter = NotificationAdapter()
+        self._notification_audit_service = NotificationDeliveryAuditService(session, ctx)
+        self._notification_adapter = NotificationAdapter(audit_service=self._notification_audit_service)
 
     def _require_rule_tenant(self, rule: Rule) -> str:
         tenant_id = self._ctx.require_tenant()
@@ -98,6 +100,7 @@ class RuleEvaluator:
             if result.triggered:
                 acquired = await self._rule_repository.try_acquire_trigger_slot(
                     rule_id=str(rule.rule_id),
+                    device_id=device_id,
                     cooldown_mode=rule.cooldown_mode,
                     cooldown_seconds=rule.effective_cooldown_seconds(),
                 )
@@ -110,7 +113,7 @@ class RuleEvaluator:
 
                 triggered_rules.append(result)
 
-                await self._alert_service.create_alert(
+                created_alert = await self._alert_service.create_alert(
                     rule=rule,
                     device_id=device_id,
                     actual_value=result.actual_value,
@@ -118,7 +121,7 @@ class RuleEvaluator:
                 )
                 self._record_alert(device_id, now)
 
-                await self._send_notifications(rule, device_id, result)
+                await self._send_notifications(rule, device_id, result, alert_id=str(created_alert.alert_id))
 
         await self._session.commit()
 
@@ -318,6 +321,7 @@ class RuleEvaluator:
         rule: Rule,
         device_id: str,
         result: EvaluationResult,
+        alert_id: Optional[str] = None,
     ) -> None:
 
         if not rule.notification_channels:
@@ -329,7 +333,7 @@ class RuleEvaluator:
             f"Condition: "
             f"{self._describe_rule_condition(rule)}\n"
             f"Actual: {result.actual_value}\n"
-            f"Time: {format_platform_datetime(datetime.utcnow())}"
+            f"Time: {format_platform_datetime(datetime.now(timezone.utc))}"
         )
 
         for channel in rule.notification_channels:
@@ -339,6 +343,7 @@ class RuleEvaluator:
                     message=message,
                     rule=rule,
                     device_id=device_id,
+                    alert_id=alert_id,
                 )
                 logger.info(
                     "Notification sent",

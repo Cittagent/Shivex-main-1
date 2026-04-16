@@ -87,6 +87,7 @@ export default function RulesPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   
@@ -359,6 +360,9 @@ export default function RulesPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     setFormError(null);
 
     if (!formData.ruleName.trim()) {
@@ -419,6 +423,7 @@ export default function RulesPage() {
       return;
     }
     
+    setIsSubmitting(true);
     try {
       await createRule({
         ruleName: formData.ruleName,
@@ -457,10 +462,12 @@ export default function RulesPage() {
       
       setShowForm(false);
       resetForm();
-      loadData();
+      await loadData();
     } catch (err) {
       console.error("Failed to create rule:", err);
       setFormError(err instanceof Error ? err.message : "Failed to create rule.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -903,16 +910,19 @@ export default function RulesPage() {
                 <div className="flex gap-3 pt-4">
                   <Button
                     type="submit"
+                    isLoading={isSubmitting}
                     disabled={
-                      formData.ruleType === "threshold" &&
-                      (propertiesLoading || availableProperties.length === 0)
+                      isSubmitting ||
+                      (formData.ruleType === "threshold" &&
+                        (propertiesLoading || availableProperties.length === 0))
                     }
                   >
-                    Create Rule
+                    {isSubmitting ? "Creating Rule..." : "Create Rule"}
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
+                    disabled={isSubmitting}
                     onClick={() => {
                       setShowForm(false);
                       resetForm();

@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     
     # Multi-tenancy (Phase-2 ready)
     TENANT_ID_HEADER: str = "X-Tenant-ID"
+    
+    # Notification delivery ledger retention (explicitly opt-in cleanup)
+    NOTIFICATION_DELIVERY_RETENTION_ENABLED: bool = False
+    NOTIFICATION_DELIVERY_RETENTION_MONTHS: int = 18
+    NOTIFICATION_USAGE_EXPORT_STREAM_BATCH_SIZE: int = 500
 
     def model_post_init(self, __context):
         if self.EMAIL_SMTP_PASSWORD is not None:

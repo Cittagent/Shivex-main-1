@@ -141,12 +141,16 @@ async def test_email_adapter_sends_only_rule_attached_recipients(monkeypatch):
     )
 
     assert sent is True
-    assert len(_FakeSMTP.sent_messages) == 1
-    assert _FakeSMTP.sent_messages[0]["recipients"] == [
-        "guarda@example.com",
-        "opsa@example.com",
+    assert len(_FakeSMTP.sent_messages) == 2
+    assert sorted(message["recipients"] for message in _FakeSMTP.sent_messages) == [
+        ["guarda@example.com"],
+        ["opsa@example.com"],
     ]
-    assert "opsb@example.com" not in _FakeSMTP.sent_messages[0]["message"].lower()
+    combined_messages = "\n".join(entry["message"].lower() for entry in _FakeSMTP.sent_messages)
+    assert "opsb@example.com" not in combined_messages
+    assert all("message-id:" in entry["message"].lower() for entry in _FakeSMTP.sent_messages)
+    assert "to: guarda@example.com" in _FakeSMTP.sent_messages[0]["message"].lower() or "to: guarda@example.com" in _FakeSMTP.sent_messages[1]["message"].lower()
+    assert "to: opsa@example.com" in _FakeSMTP.sent_messages[0]["message"].lower() or "to: opsa@example.com" in _FakeSMTP.sent_messages[1]["message"].lower()
 
 
 @pytest.mark.asyncio

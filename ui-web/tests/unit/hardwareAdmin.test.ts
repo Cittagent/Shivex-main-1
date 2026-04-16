@@ -20,9 +20,27 @@ import {
 test("buildAdminOrgTabs adds hardware tab with live inventory count", () => {
   assert.deepEqual(buildAdminOrgTabs({ plants: 2, users: 1, hardware: 5 }), [
     { key: "plants", label: "Plants", count: 2 },
-    { key: "users", label: "Users", count: 1 },
+    { key: "users", label: "Org Admins", count: 1 },
     { key: "hardware", label: "Hardware", count: 5 },
   ]);
+});
+
+test("buildAdminOrgTabs appends notification usage tab for super admin org detail", () => {
+  assert.deepEqual(
+    buildAdminOrgTabs({
+      plants: 2,
+      users: 1,
+      hardware: 5,
+      includeNotificationUsage: true,
+      notificationUsage: 12,
+    }),
+    [
+      { key: "plants", label: "Plants", count: 2 },
+      { key: "users", label: "Org Admins", count: 1 },
+      { key: "hardware", label: "Hardware", count: 5 },
+      { key: "notification_usage", label: "Notification Usage", count: 12 },
+    ],
+  );
 });
 
 test("buildInventoryRows resolves active device assignment and plant filter", () => {
