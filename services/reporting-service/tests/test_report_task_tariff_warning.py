@@ -948,8 +948,14 @@ async def test_run_consumption_report_adds_hidden_overconsumption_contract_witho
     assert isinstance(hidden, dict)
     assert "summary" in hidden
     assert "daily_breakdown" in hidden
+    assert "device_breakdown" in hidden
     assert hidden["summary"]["selected_days"] == 1
     assert len(hidden["daily_breakdown"]) == 1
+    assert len(hidden["device_breakdown"]) == 1
+    assert hidden["device_breakdown"][0]["device_id"] == "DEVICE-1"
+    assert hidden["device_breakdown"][0]["device_name"] == "Machine 1"
+    assert hidden["device_breakdown"][0]["difference_vs_baseline_kwh"] == 0.0
+    assert hidden["device_breakdown"][0]["status"] == "Within Baseline"
     assert hidden["summary"]["total_hidden_overconsumption_kwh"] == round(
         sum(float(row["hidden_overconsumption_kwh"]) for row in hidden["daily_breakdown"]),
         4,

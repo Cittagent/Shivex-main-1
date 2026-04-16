@@ -22,9 +22,26 @@ export interface HiddenOverconsumptionDailyRow {
   tariff_rate_used?: number | null;
 }
 
+export interface HiddenOverconsumptionDeviceRow {
+  date: string;
+  device_id?: string | null;
+  device_name?: string | null;
+  actual_energy_kwh?: number | null;
+  p75_power_baseline_w?: number | null;
+  baseline_energy_kwh?: number | null;
+  difference_vs_baseline_kwh?: number | null;
+  status?: HiddenBaselineStatus | string | null;
+  hidden_overconsumption_kwh?: number | null;
+  hidden_overconsumption_cost?: number | null;
+  sample_count?: number | null;
+  covered_duration_hours?: number | null;
+  tariff_rate_used?: number | null;
+}
+
 export interface HiddenOverconsumptionInsight {
   summary?: HiddenOverconsumptionSummary | null;
   daily_breakdown?: HiddenOverconsumptionDailyRow[] | null;
+  device_breakdown?: HiddenOverconsumptionDeviceRow[] | null;
   aggregation_rule?: Record<string, string> | null;
   insight_text?: string | null;
 }
@@ -70,6 +87,28 @@ export function getDifferenceVsBaselineKwh(row: HiddenOverconsumptionDailyRow): 
     return null;
   }
   return row.actual_energy_kwh - row.baseline_energy_kwh;
+}
+
+export function getUsableHiddenDeviceRows(
+  rows: HiddenOverconsumptionDeviceRow[] | null | undefined,
+): HiddenOverconsumptionDeviceRow[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.filter(
+    (row) =>
+      isFiniteNumber(row.p75_power_baseline_w) &&
+      isFiniteNumber(row.baseline_energy_kwh),
+  );
+}
+
+export function getHiddenDeviceDisplayName(row: HiddenOverconsumptionDeviceRow): string {
+  const trimmedName = typeof row.device_name === "string" ? row.device_name.trim() : "";
+  if (trimmedName) {
+    return trimmedName;
+  }
+  const trimmedId = typeof row.device_id === "string" ? row.device_id.trim() : "";
+  return trimmedId || "—";
 }
 
 export function getHiddenBaselineStatus(row: HiddenOverconsumptionDailyRow): HiddenBaselineStatus {

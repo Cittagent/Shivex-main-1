@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 import {
   formatSignedKwh,
   formatHiddenCost,
+  getHiddenDeviceDisplayName,
   getDifferenceVsBaselineKwh,
   getHiddenBaselineStatus,
+  getUsableHiddenDeviceRows,
   getUsableHiddenInsightRows,
   isFiniteNumber,
   type HiddenOverconsumptionInsight,
@@ -51,6 +53,22 @@ function baseInsight(): HiddenOverconsumptionInsight {
         covered_duration_hours: 24,
       },
     ],
+    device_breakdown: [
+      {
+        date: "2026-04-10",
+        device_id: "DEVICE-1",
+        device_name: "Machine 1",
+        actual_energy_kwh: 15,
+        p75_power_baseline_w: 450,
+        baseline_energy_kwh: 12,
+        difference_vs_baseline_kwh: 3,
+        status: "Above Baseline",
+        hidden_overconsumption_kwh: 3,
+        hidden_overconsumption_cost: 30,
+        sample_count: 10,
+        covered_duration_hours: 24,
+      },
+    ],
   };
 }
 
@@ -60,6 +78,7 @@ test("energy report page reuses the shared hidden overconsumption section", () =
     true,
   );
   assert.equal(energyPageSource.includes("<HiddenOverconsumptionInsightSection"), true);
+  assert.equal(energyPageSource.includes('renderMode="snapshot"'), true);
   assert.equal(
     energyPageSource.includes('const hiddenInsight = result?.hidden_overconsumption_insight ?? null;'),
     true,
@@ -95,6 +114,17 @@ test("shared hidden overconsumption section includes the full rich table structu
   assert.equal(sharedSectionSource.includes("Hidden Overconsumption Cost"), true);
   assert.equal(sharedSectionSource.includes("Sample Count"), true);
   assert.equal(sharedSectionSource.includes("Covered Duration (hours)"), true);
+});
+
+test("shared hidden overconsumption section uses explicit aggregate and device labels", () => {
+  assert.equal(sharedSectionSource.includes("Daily Aggregate"), true);
+  assert.equal(sharedSectionSource.includes("Aggregate hidden overconsumption by day across the selected report scope."), true);
+  assert.equal(sharedSectionSource.includes("Device Breakdown"), true);
+  assert.equal(sharedSectionSource.includes("Device Name"), true);
+  assert.equal(sharedSectionSource.includes("Device ID"), true);
+  assert.equal(sharedSectionSource.includes("Device-wise hidden overconsumption breakdown is unavailable for this selection."), true);
+  assert.equal(sharedSectionSource.includes('renderMode?: "snapshot" | "detailed";'), true);
+  assert.equal(sharedSectionSource.includes('const showDeviceBreakdown = renderMode === "detailed";'), true);
 });
 
 test("shared hidden overconsumption section keeps summary cards above the records table", () => {
@@ -139,6 +169,38 @@ test("multi-day selection keeps one usable row per day", () => {
   assert.deepEqual(rows.map((row) => row.date), ["2026-04-10", "2026-04-11"]);
 });
 
+test("device breakdown rows are kept per device and per day for detailed rendering paths", () => {
+  const insight = baseInsight();
+  insight.device_breakdown = [
+    ...(insight.device_breakdown || []),
+    {
+      date: "2026-04-10",
+      device_id: "DEVICE-2",
+      device_name: "Machine 2",
+      actual_energy_kwh: 11,
+      p75_power_baseline_w: 400,
+      baseline_energy_kwh: 9,
+      difference_vs_baseline_kwh: 2,
+      status: "Above Baseline",
+      hidden_overconsumption_kwh: 2,
+      hidden_overconsumption_cost: 20,
+      sample_count: 8,
+      covered_duration_hours: 20,
+    },
+  ];
+  const rows = getUsableHiddenDeviceRows(insight.device_breakdown);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => row.device_id), ["DEVICE-1", "DEVICE-2"]);
+});
+
+test("snapshot ui hides device breakdown while keeping aggregate rendering", () => {
+  assert.equal(sharedSectionSource.includes("{showDeviceBreakdown ? ("), true);
+  assert.equal(energyPageSource.includes('renderMode="snapshot"'), true);
+  assert.equal(sharedSectionSource.includes("Daily Aggregate"), true);
+  assert.equal(sharedSectionSource.includes("Device Breakdown"), true);
+  assert.equal(sharedSectionSource.includes("Actual Energy (kWh)"), true);
+});
+
 test("insufficient telemetry rows are filtered and page contains clean fallback text", () => {
   const rows = getUsableHiddenInsightRows([
     {
@@ -155,6 +217,22 @@ test("insufficient telemetry rows are filtered and page contains clean fallback 
       "Hidden overconsumption insight is unavailable for this selection due to insufficient telemetry.",
     ),
     true,
+  );
+});
+
+test("empty device breakdown is handled safely", () => {
+  const rows = getUsableHiddenDeviceRows([]);
+  assert.deepEqual(rows, []);
+});
+
+test("device name falls back to device id when missing", () => {
+  assert.equal(
+    getHiddenDeviceDisplayName({
+      date: "2026-04-10",
+      device_id: "DEVICE-9",
+      device_name: null,
+    }),
+    "DEVICE-9",
   );
 });
 
@@ -220,7 +298,9 @@ test("zero values remain valid display values, not treated as missing", () => {
 });
 
 test("existing energy report sections remain present", () => {
-  assert.equal(energyPageSource.includes("Data Notes"), true);
+  assert.equal(energyPageSource.includes("Data Notes"), false);
+  assert.equal(energyPageSource.includes("Commercial Context"), false);
+  assert.equal(energyPageSource.includes("Cost and Data Notes"), false);
   assert.equal(energyPageSource.includes("Key Insights"), true);
   assert.equal(energyPageSource.includes("Download PDF"), true);
   assert.equal(energyPageSource.includes("Configure Another Report"), true);
@@ -259,4 +339,9 @@ test("pdf template keeps hidden overconsumption summary cards", () => {
   assert.equal(pdfBuilderSource.includes("Total Baseline Energy"), true);
   assert.equal(pdfBuilderSource.includes("Aggregate P75 Baseline"), true);
   assert.equal(pdfBuilderSource.includes("selected day"), true);
+});
+
+test("pdf remains the detailed artifact with device breakdown present", () => {
+  assert.equal(pdfBuilderSource.includes("Hidden Overconsumption by Device"), true);
+  assert.equal(pdfBuilderSource.includes("Machine-wise contribution to hidden overconsumption"), true);
 });

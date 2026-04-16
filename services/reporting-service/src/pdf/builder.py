@@ -1108,24 +1108,105 @@ def get_consumption_report_template():
             </div>
             {% endif %}
 
+            {% if hidden_overconsumption_insight %}
             <div class="section">
-                <div class="section-kicker">Commercial Context</div>
+                <div class="section-kicker">Machine Detail</div>
                 <div class="section-title-row">
-                    <h2>Cost and Data Notes</h2>
-                    <div class="section-subtitle">Tariff snapshot and calculation context</div>
+                    <h2>Hidden Overconsumption by Device</h2>
+                    <div class="section-subtitle">Machine-wise contribution to hidden overconsumption</div>
                 </div>
-                <p class="section-intro">These notes capture tariff assumptions, telemetry gaps, and any warning signals that materially affect interpretation of the report.</p>
-                {% if tariff_rate_used is not none %}
-                <div class="notice">Tariff fetched at {{ tariff_fetched_at }} using {{ currency }} {{ tariff_rate_used }} per kWh. Estimated total cost: {{ currency }} {{ total_cost }}.</div>
-                {% else %}
-                <div class="error">Tariff not configured. Cost calculation was skipped for this report.</div>
-                {% endif %}
-                {% if warnings %}
-                {% for warning in warnings %}
-                <div class="warning">{{ warning }}</div>
+
+                {% set hidden_device_usable = namespace(count=0) %}
+                {% for row in hidden_overconsumption_insight.device_breakdown or [] %}
+                    {% if row.p75_power_baseline_w is not none and row.baseline_energy_kwh is not none %}
+                        {% set hidden_device_usable.count = hidden_device_usable.count + 1 %}
+                    {% endif %}
                 {% endfor %}
+
+                {% if hidden_device_usable.count > 0 %}
+                <div class="hidden-record-list">
+                    {% for row in hidden_overconsumption_insight.device_breakdown or [] %}
+                    {% if row.p75_power_baseline_w is not none and row.baseline_energy_kwh is not none %}
+                    {% set device_label = row.device_name if row.device_name else row.device_id %}
+                    <div class="hidden-record-card">
+                        <table class="hidden-record-grid">
+                            <tbody>
+                                <tr>
+                                    <td>
+                                        <span class="hidden-record-label">Date</span>
+                                        <span class="hidden-record-value">{{ row.date }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Device Name</span>
+                                        <span class="hidden-record-value">{{ device_label if device_label else "N/A" }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Device ID</span>
+                                        <span class="hidden-record-value">{{ row.device_id if row.device_id else "N/A" }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Actual Energy (kWh)</span>
+                                        <span class="hidden-record-value">{% if row.actual_energy_kwh is not none %}{{ row.actual_energy_kwh }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">P75 Baseline Power (W)</span>
+                                        <span class="hidden-record-value">{{ row.p75_power_baseline_w }} W</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <span class="hidden-record-label">Baseline Energy (kWh)</span>
+                                        <span class="hidden-record-value">{% if row.baseline_energy_kwh is not none %}{{ row.baseline_energy_kwh }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Difference vs Baseline (kWh)</span>
+                                        <span class="hidden-record-value">{% if row.difference_vs_baseline_kwh is not none %}{% if row.difference_vs_baseline_kwh > 0 %}+{% endif %}{{ "%.4f"|format(row.difference_vs_baseline_kwh) }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Status</span>
+                                        <span class="hidden-record-value">
+                                            {% if row.status == "Above Baseline" %}
+                                            <span class="badge badge-danger">Above Baseline</span>
+                                            {% elif row.status == "Below Baseline" %}
+                                            <span class="badge badge-success-soft">Below Baseline</span>
+                                            {% elif row.status == "Within Baseline" %}
+                                            <span class="badge badge-muted">Within Baseline</span>
+                                            {% else %}
+                                            <span class="badge badge-muted">Unavailable</span>
+                                            {% endif %}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Hidden Overconsumption (kWh)</span>
+                                        <span class="hidden-record-value">{% if row.hidden_overconsumption_kwh is not none %}{{ row.hidden_overconsumption_kwh }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Hidden Overconsumption Cost</span>
+                                        <span class="hidden-record-value">{% if row.hidden_overconsumption_cost is not none %}{{ currency }} {{ row.hidden_overconsumption_cost }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <span class="hidden-record-label">Sample Count</span>
+                                        <span class="hidden-record-value">{% if row.sample_count is not none %}{{ row.sample_count }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Covered Duration (hours)</span>
+                                        <span class="hidden-record-value">{% if row.covered_duration_hours is not none %}{{ row.covered_duration_hours }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td colspan="3"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="notice">Device-wise hidden overconsumption breakdown is unavailable for this selection.</div>
                 {% endif %}
             </div>
+            {% endif %}
 
             {% if insights %}
             <div class="section">

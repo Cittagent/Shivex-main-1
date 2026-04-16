@@ -781,6 +781,8 @@ async def run_consumption_report(report_id: str, params: dict) -> None:
                         rows=rows,
                         start_date=start_date,
                         end_date=end_date,
+                        device_id=device_id,
+                        device_name=device_name,
                         daily_actual_energy_kwh=daily_actual_kwh_map,
                         tariff_rate=tariff_rate_used,
                         device_power_config=device_power_config,

@@ -352,18 +352,8 @@ export default function EnergyReportPage() {
           <HiddenOverconsumptionInsightSection
             insight={hiddenInsight}
             currency={hiddenCurrency}
+            renderMode="snapshot"
           />
-
-          {result.warnings && result.warnings.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-              <h3 className="font-medium text-amber-900 mb-2">Data Notes</h3>
-              <ul className="space-y-1">
-                {result.warnings.slice(0, 5).map((w, i) => (
-                  <li key={i} className="text-sm text-amber-800">{w}</li>
-                ))}
-              </ul>
-            </div>
-          )}
 
           {result.insights && result.insights.length > 0 && (
             <div>

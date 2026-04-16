@@ -14,6 +14,22 @@ class HiddenOverconsumptionDailyResponse(BaseModel):
     tariff_rate_used: float | None = None
 
 
+class HiddenOverconsumptionDeviceResponse(BaseModel):
+    date: str
+    device_id: str | None = None
+    device_name: str | None = None
+    actual_energy_kwh: float
+    p75_power_baseline_w: float | None = None
+    baseline_energy_kwh: float | None = None
+    difference_vs_baseline_kwh: float | None = None
+    status: str
+    hidden_overconsumption_kwh: float
+    hidden_overconsumption_cost: float | None = None
+    sample_count: int
+    covered_duration_hours: float
+    tariff_rate_used: float | None = None
+
+
 class HiddenOverconsumptionSummaryResponse(BaseModel):
     selected_days: int
     total_actual_energy_kwh: float
@@ -27,6 +43,7 @@ class HiddenOverconsumptionSummaryResponse(BaseModel):
 class HiddenOverconsumptionInsightResponse(BaseModel):
     summary: HiddenOverconsumptionSummaryResponse
     daily_breakdown: list[HiddenOverconsumptionDailyResponse]
+    device_breakdown: list[HiddenOverconsumptionDeviceResponse] = []
     aggregation_rule: dict[str, str]
     insight_text: str | None = None
 

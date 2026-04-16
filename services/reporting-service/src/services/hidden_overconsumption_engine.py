@@ -67,6 +67,8 @@ def calculate_device_hidden_overconsumption_insight(
     rows: list[dict[str, Any]],
     start_date: date,
     end_date: date,
+    device_id: str | None = None,
+    device_name: str | None = None,
     daily_actual_energy_kwh: dict[str, float] | None = None,
     tariff_rate: float | None = None,
     device_power_config: dict[str, Any] | None = None,
@@ -102,15 +104,32 @@ def calculate_device_hidden_overconsumption_insight(
 
         rounded_actual_kwh = round(actual_kwh, 4)
         rounded_baseline_kwh = round(baseline_energy_kwh, 4) if baseline_energy_kwh is not None else None
+        difference_vs_baseline_kwh = (
+            round(rounded_actual_kwh - rounded_baseline_kwh, 4)
+            if rounded_baseline_kwh is not None
+            else None
+        )
+        status = "Unavailable"
+        if difference_vs_baseline_kwh is not None:
+            if difference_vs_baseline_kwh > 0:
+                status = "Above Baseline"
+            elif difference_vs_baseline_kwh < 0:
+                status = "Below Baseline"
+            else:
+                status = "Within Baseline"
         rounded_hidden_kwh = round(hidden_kwh, 4)
         hidden_cost = round(rounded_hidden_kwh * tariff_rate, 2) if tariff_rate is not None else None
 
         breakdown.append(
             {
                 "date": day_key,
+                "device_id": device_id,
+                "device_name": device_name or device_id,
                 "actual_energy_kwh": rounded_actual_kwh,
                 "p75_power_baseline_w": round(p75_power_w, 4) if p75_power_w is not None else None,
                 "baseline_energy_kwh": rounded_baseline_kwh,
+                "difference_vs_baseline_kwh": difference_vs_baseline_kwh,
+                "status": status,
                 "hidden_overconsumption_kwh": rounded_hidden_kwh,
                 "hidden_overconsumption_cost": hidden_cost,
                 "sample_count": sample_count,
@@ -210,6 +229,50 @@ def aggregate_hidden_overconsumption_insight(
             if isinstance(p75_power_w, (int, float)) and covered_hours > 0.0:
                 target["_weighted_p75_numerator"] += float(p75_power_w) * covered_hours
 
+    device_breakdown: list[dict[str, Any]] = []
+    for insight in per_device_insights or []:
+        for row in insight.get("daily_breakdown", []) or []:
+            device_breakdown.append(
+                {
+                    "date": str(row.get("date") or ""),
+                    "device_id": row.get("device_id"),
+                    "device_name": row.get("device_name") or row.get("device_id"),
+                    "actual_energy_kwh": round(float(row.get("actual_energy_kwh") or 0.0), 4),
+                    "p75_power_baseline_w": (
+                        round(float(row.get("p75_power_baseline_w")), 4)
+                        if isinstance(row.get("p75_power_baseline_w"), (int, float))
+                        else None
+                    ),
+                    "baseline_energy_kwh": (
+                        round(float(row.get("baseline_energy_kwh")), 4)
+                        if isinstance(row.get("baseline_energy_kwh"), (int, float))
+                        else None
+                    ),
+                    "difference_vs_baseline_kwh": (
+                        round(float(row.get("difference_vs_baseline_kwh")), 4)
+                        if isinstance(row.get("difference_vs_baseline_kwh"), (int, float))
+                        else None
+                    ),
+                    "status": row.get("status") or "Unavailable",
+                    "hidden_overconsumption_kwh": round(float(row.get("hidden_overconsumption_kwh") or 0.0), 4),
+                    "hidden_overconsumption_cost": (
+                        round(float(row.get("hidden_overconsumption_cost")), 2)
+                        if row.get("hidden_overconsumption_cost") is not None
+                        else None
+                    ),
+                    "sample_count": int(row.get("sample_count") or 0),
+                    "covered_duration_hours": round(float(row.get("covered_duration_hours") or 0.0), 4),
+                    "tariff_rate_used": row.get("tariff_rate_used"),
+                }
+            )
+    device_breakdown.sort(
+        key=lambda row: (
+            str(row.get("date") or ""),
+            str(row.get("device_name") or row.get("device_id") or ""),
+            str(row.get("device_id") or ""),
+        )
+    )
+
     daily_breakdown: list[dict[str, Any]] = []
     weighted_p75_numerator = 0.0
     weighted_p75_denominator = 0.0
@@ -290,6 +353,7 @@ def aggregate_hidden_overconsumption_insight(
     return {
         "summary": summary,
         "daily_breakdown": daily_breakdown,
+        "device_breakdown": device_breakdown,
         "aggregation_rule": {
             "total_baseline_energy_kwh": "sum(daily_baseline_energy_kwh)",
             "total_hidden_overconsumption_kwh": "sum(daily_hidden_overconsumption_kwh)",

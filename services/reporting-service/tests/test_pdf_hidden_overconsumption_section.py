@@ -69,6 +69,36 @@ def _base_payload() -> dict:
                     "covered_duration_hours": 24.0,
                 },
             ],
+            "device_breakdown": [
+                {
+                    "date": "2026-04-15",
+                    "device_id": "DEVICE-1",
+                    "device_name": "Machine 1",
+                    "actual_energy_kwh": 5.1,
+                    "p75_power_baseline_w": 145.0,
+                    "baseline_energy_kwh": 4.2,
+                    "difference_vs_baseline_kwh": 0.9,
+                    "status": "Above Baseline",
+                    "hidden_overconsumption_kwh": 0.9,
+                    "hidden_overconsumption_cost": 7.47,
+                    "sample_count": 60,
+                    "covered_duration_hours": 24.0,
+                },
+                {
+                    "date": "2026-04-16",
+                    "device_id": "DEVICE-2",
+                    "device_name": "Machine 2",
+                    "actual_energy_kwh": 4.9,
+                    "p75_power_baseline_w": 155.0,
+                    "baseline_energy_kwh": 4.0,
+                    "difference_vs_baseline_kwh": 0.9,
+                    "status": "Above Baseline",
+                    "hidden_overconsumption_kwh": 0.9,
+                    "hidden_overconsumption_cost": 7.47,
+                    "sample_count": 58,
+                    "covered_duration_hours": 24.0,
+                },
+            ],
             "aggregation_rule": {
                 "total_baseline_energy_kwh": "sum(daily_baseline_energy_kwh)",
             },
@@ -95,6 +125,8 @@ def test_consumption_report_template_renders_hidden_overconsumption_section_when
     assert "P75 Baseline Power (W)" in html
     assert "Baseline Energy (kWh)" in html
     assert "Hidden Overconsumption (kWh)" in html
+    assert "Hidden Overconsumption by Device" in html
+    assert "Machine-wise contribution to hidden overconsumption" in html
 
 
 def test_consumption_report_template_renders_hidden_overconsumption_daily_headers() -> None:
@@ -130,6 +162,36 @@ def test_consumption_report_template_uses_print_safe_hidden_record_layout_instea
     assert "hidden-record-grid" in html
     assert '<th class="align-right">Hidden Overconsumption (kWh)</th>' not in html
     assert '<th class="align-right">Covered Duration (hours)</th>' not in html
+
+
+def test_consumption_report_template_renders_device_hidden_overconsumption_fields() -> None:
+    html = _render(_base_payload())
+
+    assert "Device Name" in html
+    assert "Device ID" in html
+    assert "Sample Count" in html
+    assert "Covered Duration (hours)" in html
+    assert "Machine 1" in html
+    assert "DEVICE-1" in html
+
+
+def test_consumption_report_template_falls_back_to_device_id_when_device_name_missing() -> None:
+    payload = _base_payload()
+    payload["hidden_overconsumption_insight"]["device_breakdown"][0]["device_name"] = None
+
+    html = _render(payload)
+
+    assert "Device Name" in html
+    assert "DEVICE-1" in html
+
+
+def test_consumption_report_template_shows_safe_message_when_device_breakdown_missing() -> None:
+    payload = _base_payload()
+    payload["hidden_overconsumption_insight"]["device_breakdown"] = []
+
+    html = _render(payload)
+
+    assert "Device-wise hidden overconsumption breakdown is unavailable for this selection." in html
 
 
 def test_consumption_report_template_renders_baseline_status_for_below_and_above_days() -> None:
@@ -180,10 +242,12 @@ def test_consumption_report_template_shows_insufficient_telemetry_message_when_n
             "covered_duration_hours": 0.0,
         }
     ]
+    payload["hidden_overconsumption_insight"]["device_breakdown"] = []
 
     html = _render(payload)
 
     assert "Hidden overconsumption insight is unavailable for this selection due to insufficient telemetry." in html
+    assert "Device-wise hidden overconsumption breakdown is unavailable for this selection." in html
     assert "P75 Baseline Power" not in html
 
 
@@ -191,6 +255,7 @@ def test_consumption_report_template_keeps_existing_sections() -> None:
     html = _render(_base_payload())
 
     assert "Executive Summary" in html
-    assert "Cost and Data Notes" in html
+    assert "Commercial Context" not in html
+    assert "Cost and Data Notes" not in html
     assert "professional energy report generated" in html
     assert "Aggregation Rule" not in html
