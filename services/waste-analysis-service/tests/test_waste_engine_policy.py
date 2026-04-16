@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from src.services.telemetry_normalizer import extract_current, extract_voltage
-from src.services.waste_engine import compute_device_waste
+from src.services.waste_engine import compute_device_waste, summarize_insights
 
 
 def _rows(count: int = 5):
@@ -239,3 +239,34 @@ def test_waste_normalizer_keeps_authoritative_aggregate_over_phase_diagnostics()
 
     assert extract_current(row) == (10.0, "current")
     assert extract_voltage(row) == (230.0, "voltage")
+
+
+def test_summarize_insights_excludes_standby_based_messages():
+    rows = [
+        {
+            "timestamp": datetime(2026, 3, 13, 0, 0, tzinfo=timezone.utc),
+            "power": 200.0,
+            "current": 2.0,
+            "voltage": 230.0,
+        },
+        {
+            "timestamp": datetime(2026, 3, 13, 0, 30, tzinfo=timezone.utc),
+            "power": 200.0,
+            "current": 2.0,
+            "voltage": 230.0,
+        },
+    ]
+    result = compute_device_waste(
+        device_id="D7",
+        device_name="Device 7",
+        data_source_type="metered",
+        rows=rows,
+        threshold=3.0,
+        overconsumption_threshold=10.0,
+        tariff_rate=8.5,
+        shifts=[{"day_of_week": 4, "shift_start": "08:00", "shift_end": "18:00"}],
+    )
+    insights = summarize_insights([result], "INR")
+    joined = " | ".join(insights).lower()
+    assert "standby" not in joined
+    assert "highest standby consumers" not in joined

@@ -10,6 +10,7 @@ import { getTariffConfig } from "@/lib/settingsApi";
 import { formatIST } from "@/lib/utils";
 import { formatCurrencyValue, formatEnergyKwh } from "@/lib/presentation";
 import { EXCLUSIVE_LOSS_BUCKET_HELP, WASTE_ANALYSIS_POLICY_HELP } from "@/lib/wasteSemantics";
+import { DateRangeSelector } from "@/components/reports/DateRangeSelector";
 import { DeviceScopeSelector } from "@/components/reports/DeviceScopeSelector";
 import {
   buildDeviceScopeCatalog,
@@ -28,6 +29,7 @@ import {
   WasteStatus,
 } from "@/lib/wasteApi";
 import { buildWasteRunParams } from "@/lib/wasteScopeRequest";
+import { getWasteDefaultRange } from "@/lib/reportDateRange";
 
 interface WasteHistoryRow {
   job_id: string;
@@ -122,16 +124,6 @@ function WastageRow({
   );
 }
 
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-function defaultStartDate(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 7);
-  return isoDate(d);
-}
-
 export default function WasteAnalysisPage() {
   const { me } = useAuth();
   const { selectedTenantId } = useTenantStore();
@@ -142,8 +134,9 @@ export default function WasteAnalysisPage() {
     plantId: null,
     deviceIds: [],
   });
-  const [startDate, setStartDate] = useState(defaultStartDate);
-  const [endDate, setEndDate] = useState(isoDate(new Date()));
+  const defaultRange = useMemo(() => getWasteDefaultRange(), []);
+  const [startDate, setStartDate] = useState(defaultRange.start);
+  const [endDate, setEndDate] = useState(defaultRange.end);
   const [granularity, setGranularity] = useState<WasteGranularity>("daily");
   const [jobName, setJobName] = useState("");
 
@@ -233,6 +226,11 @@ const onDownload = useCallback(async (id: string) => {
     } catch {
       setError("Failed to download waste report");
     }
+  }, []);
+
+  const handleRangeChange = useCallback((start: string, end: string) => {
+    setStartDate(start);
+    setEndDate(end);
   }, []);
 
   useEffect(() => {
@@ -346,15 +344,13 @@ const onDownload = useCallback(async (id: string) => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">Start Date</label>
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full border rounded-lg px-3 py-2" />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">End Date</label>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full border rounded-lg px-3 py-2" />
-          </div>
+        <div>
+          <label className="block text-sm text-gray-700 mb-2">Date Range</label>
+          <DateRangeSelector
+            onRangeChange={handleRangeChange}
+            disabled={running}
+            initialRange={defaultRange}
+          />
         </div>
 
         <div>

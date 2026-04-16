@@ -8,6 +8,7 @@ import ssl
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from html import escape
 from email.utils import formatdate, make_msgid
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -159,6 +160,8 @@ class EmailAdapter(NotificationChannel):
         alert_type: str = "threshold_alert",
         alert_id: Optional[str] = None,
         device_names: Optional[str] = None,
+        alert_context: Optional[dict[str, Any]] = None,
+        scope_label: Optional[str] = None,
         **kwargs: Any,
     ) -> NotificationDispatchResult:
         recipients = self._recipients_for_rule(rule)
@@ -231,6 +234,8 @@ class EmailAdapter(NotificationChannel):
                         device_id=device_id,
                         alert_type=alert_type,
                         device_names=device_names,
+                        alert_context=alert_context,
+                        scope_label=scope_label,
                     )
                     refused = server.sendmail(self._from_address, [recipient], msg.as_string()) or {}
                     refusal = refused.get(recipient)
@@ -298,6 +303,8 @@ class EmailAdapter(NotificationChannel):
         device_id: str,
         alert_type: str,
         device_names: Optional[str],
+        alert_context: Optional[dict[str, Any]] = None,
+        scope_label: Optional[str] = None,
     ) -> MIMEMultipart:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -307,11 +314,19 @@ class EmailAdapter(NotificationChannel):
         msg["Message-ID"] = make_msgid(domain=self._message_id_domain())
 
         if alert_type == "rule_created":
-            html_content = self._format_rule_created_message(rule, device_id, plain_message, device_names)
+            html_content = self._format_rule_created_message(
+                rule,
+                device_id,
+                plain_message,
+                device_names,
+                scope_label=scope_label,
+            )
+            plain_text_content = plain_message
         else:
-            html_content = self._format_alert_message(rule, device_id, plain_message)
+            html_content = self._format_alert_message(rule, device_id, plain_message, alert_context)
+            plain_text_content = self._format_alert_plain_text(rule, device_id, alert_context)
 
-        msg.attach(MIMEText(plain_message, "plain"))
+        msg.attach(MIMEText(plain_text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
         return msg
 
@@ -331,8 +346,14 @@ class EmailAdapter(NotificationChannel):
             return code, str(message)
         return "smtp_refused", str(refusal)
 
-    def _format_alert_message(self, rule: Rule, device_id: str, message: str) -> str:
-        condition_text, property_text = self._describe_rule(rule)
+    def _format_alert_message(
+        self,
+        rule: Rule,
+        device_id: str,
+        message: str,
+        alert_context: Optional[dict[str, Any]] = None,
+    ) -> str:
+        context = self._build_alert_email_context(rule, device_id, alert_context)
         return f"""
 <!DOCTYPE html>
 <html>
@@ -342,39 +363,87 @@ class EmailAdapter(NotificationChannel):
         .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
         .header {{ background: #dc3545; color: white; padding: 20px; text-align: center; }}
         .content {{ padding: 20px; background: #f8f9fa; }}
-        .alert-box {{ background: white; border-left: 4px solid #dc3545; padding: 15px; margin: 10px 0; }}
+        .summary {{ margin: 0 0 14px 0; color: #475569; font-size: 14px; }}
+        .alert-box {{ background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 10px 0; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        td {{ padding: 8px 4px; vertical-align: top; border-bottom: 1px solid #f1f5f9; }}
+        td.label {{ width: 38%; font-weight: bold; color: #334155; }}
+        td.value {{ color: #0f172a; }}
         .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
-        .label {{ font-weight: bold; color: #555; }}
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h2>🚨 Energy Alert</h2>
+            <h2>Energy Alert</h2>
         </div>
         <div class="content">
+            <p class="summary">A rule has triggered for one of your monitored devices. Details are below.</p>
             <div class="alert-box">
-                <p><span class="label">Rule:</span> {rule.rule_name}</p>
-                <p><span class="label">Device ID:</span> {device_id}</p>
-                <p><span class="label">Property:</span> {property_text}</p>
-                <p><span class="label">Condition:</span> {condition_text}</p>
-                <p><span class="label">Message:</span> {message}</p>
-                <p><span class="label">Time:</span> {format_platform_datetime(datetime.now(timezone.utc))}</p>
+                <table>
+                    <tr><td class="label">Rule Name</td><td class="value">{context["rule_name"]}</td></tr>
+                    <tr><td class="label">Device Name</td><td class="value">{context["device_name"]}</td></tr>
+                    <tr><td class="label">Device ID</td><td class="value">{context["device_id"]}</td></tr>
+                    <tr><td class="label">Device Location</td><td class="value">{context["device_location"]}</td></tr>
+                    <tr><td class="label">Property</td><td class="value">{context["property"]}</td></tr>
+                    <tr><td class="label">Condition</td><td class="value">{context["condition"]}</td></tr>
+                    <tr><td class="label">Actual Value</td><td class="value">{context["actual_value"]}</td></tr>
+                    <tr><td class="label">Triggered Time</td><td class="value">{context["triggered_at"]}</td></tr>
+                </table>
             </div>
         </div>
         <div class="footer">
-            <p>This is an automated alert from Energy Platform</p>
+            <p>This is an automated alert from Energy Platform.</p>
         </div>
     </div>
 </body>
 </html>
 """
 
-    def _format_rule_created_message(self, rule: Rule, device_id: str, message: str, device_names: str | None = None) -> str:
+    def _format_alert_plain_text(
+        self,
+        rule: Rule,
+        device_id: str,
+        alert_context: Optional[dict[str, Any]] = None,
+    ) -> str:
+        context = self._build_alert_email_context(rule, device_id, alert_context, escape_values=False)
+        return "\n".join(
+            [
+                "Energy Alert",
+                f"Rule Name: {context['rule_name']}",
+                f"Device Name: {context['device_name']}",
+                f"Device ID: {context['device_id']}",
+                f"Device Location: {context['device_location']}",
+                f"Property: {context['property']}",
+                f"Condition: {context['condition']}",
+                f"Actual Value: {context['actual_value']}",
+                f"Triggered Time: {context['triggered_at']}",
+                "",
+                "This is an automated alert from Energy Platform.",
+            ]
+        )
+
+    def _format_rule_created_message(
+        self,
+        rule: Rule,
+        device_id: str,
+        message: str,
+        device_names: str | None = None,
+        scope_label: str | None = None,
+    ) -> str:
         status_value = rule.status.value if hasattr(rule.status, "value") else str(rule.status)
         condition_text, property_text = self._describe_rule(rule)
+        normalized_scope = str(rule.scope.value) if hasattr(rule.scope, "value") else str(rule.scope or "")
+        resolved_scope = scope_label or self._humanize_rule_scope(normalized_scope)
 
-        devices_display = device_names if device_names else device_id
+        if device_names and device_names.strip():
+            devices_display = device_names.strip()
+        elif normalized_scope == "all_devices":
+            devices_display = "All accessible machines"
+        elif device_id and device_id.strip():
+            devices_display = device_id.strip()
+        else:
+            devices_display = "Not specified"
 
         return f"""
 <!DOCTYPE html>
@@ -400,6 +469,7 @@ class EmailAdapter(NotificationChannel):
             <div class="info-box">
                 <p><span class="label">Rule Name:</span> {rule.rule_name}</p>
                 <p><span class="label">Rule ID:</span> {rule.rule_id}</p>
+                <p><span class="label">Scope:</span> {resolved_scope}</p>
                 <p><span class="label">Devices:</span> {devices_display}</p>
                 <p><span class="label">Status:</span> {status_value}</p>
                 <p><span class="label">Property:</span> {property_text}</p>
@@ -430,6 +500,39 @@ class EmailAdapter(NotificationChannel):
                 "idle duration",
             )
         return (f"{rule.condition} {rule.threshold}", rule.property)
+
+    @staticmethod
+    def _humanize_rule_scope(scope: str) -> str:
+        normalized = str(scope or "").strip().lower()
+        if normalized == "all_devices":
+            return "All Machines"
+        if normalized == "selected_devices":
+            return "Selected Machines"
+        return "Scoped Machines"
+
+    def _build_alert_email_context(
+        self,
+        rule: Rule,
+        device_id: str,
+        alert_context: Optional[dict[str, Any]] = None,
+        *,
+        escape_values: bool = True,
+    ) -> dict[str, str]:
+        context = alert_context or {}
+        default_condition, default_property = self._describe_rule(rule)
+        normalized = {
+            "rule_name": str(context.get("rule_name") or rule.rule_name or "Unnamed Rule"),
+            "device_name": str(context.get("device_name") or device_id or "Unknown Device"),
+            "device_id": str(context.get("device_id") or device_id or "Unknown Device"),
+            "device_location": str(context.get("device_location") or "Not specified"),
+            "property": str(context.get("property") or default_property or "Value"),
+            "condition": str(context.get("condition") or default_condition or "Condition met"),
+            "actual_value": str(context.get("actual_value") or "N/A"),
+            "triggered_at": str(context.get("triggered_at") or format_platform_datetime(datetime.now(timezone.utc))),
+        }
+        if not escape_values:
+            return normalized
+        return {key: escape(value) for key, value in normalized.items()}
 
     async def _record_skipped_batch(
         self,
@@ -618,6 +721,144 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
     def _configured(self) -> bool:
         return bool(self._account_sid and self._auth_token and self._from_number)
 
+    @staticmethod
+    def _compact_whitespace(value: str) -> str:
+        return " ".join(str(value or "").split())
+
+    @classmethod
+    def _shorten(cls, value: str, limit: int) -> str:
+        cleaned = cls._compact_whitespace(value)
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: max(0, limit - 1)].rstrip() + "…"
+
+    @classmethod
+    def _build_alert_text_context(
+        cls,
+        *,
+        rule: Rule,
+        device_id: str,
+        alert_context: Optional[dict[str, Any]],
+    ) -> dict[str, str]:
+        context = alert_context or {}
+        property_text = str(context.get("property_label") or context.get("property") or (rule.property or "Value"))
+        condition_text = str(context.get("condition_label") or context.get("condition") or "Condition met")
+        actual_value = str(context.get("actual_value") or "N/A")
+        triggered_at = str(context.get("triggered_at") or format_platform_datetime(datetime.now(timezone.utc)))
+        device_name = str(context.get("device_name") or device_id)
+        device_location = str(context.get("device_location") or "Not specified")
+        return {
+            "rule_name": str(context.get("rule_name") or rule.rule_name or "Unnamed Rule"),
+            "device_name": device_name,
+            "device_id": str(context.get("device_id") or device_id),
+            "device_location": device_location,
+            "property": property_text,
+            "condition": condition_text,
+            "actual_value": actual_value,
+            "triggered_at": triggered_at,
+        }
+
+    @classmethod
+    def _format_sms_alert_message(cls, context: dict[str, str], max_len: int = 320) -> str:
+        # Priority order is deterministic: preserve core business fields first.
+        device_line = (
+            f"Device: {context['device_name']} ({context['device_id']})"
+            if context["device_name"] != context["device_id"]
+            else f"Device: {context['device_id']}"
+        )
+        lines = [
+            "Energy Alert",
+            f"Rule: {context['rule_name']}",
+            device_line,
+            f"Location: {context['device_location']}",
+            f"Condition: {context['condition']}",
+            f"Actual: {context['actual_value']}",
+            f"Time: {context['triggered_at']}",
+        ]
+
+        def _join(parts: list[str]) -> str:
+            return "\n".join(parts)
+
+        # Step 1: omit location when unavailable or when needed for size.
+        if context["device_location"].strip().lower() == "not specified":
+            lines = [line for line in lines if not line.startswith("Location:")]
+        if len(_join(lines)) > max_len:
+            lines = [line for line in lines if not line.startswith("Location:")]
+        # Step 2: drop header if still long.
+        if len(_join(lines)) > max_len and lines and lines[0] == "Energy Alert":
+            lines = lines[1:]
+
+        # Step 3: deterministic field shortening.
+        for idx, prefix, limit in (
+            (0 if lines and lines[0].startswith("Rule: ") else -1, "Rule: ", 48),
+            (1 if len(lines) > 1 and lines[1].startswith("Device: ") else -1, "Device: ", 60),
+        ):
+            if idx >= 0:
+                raw_value = lines[idx][len(prefix) :]
+                lines[idx] = prefix + cls._shorten(raw_value, limit)
+
+        for i, line in enumerate(lines):
+            if line.startswith("Condition: "):
+                lines[i] = "Condition: " + cls._shorten(line[len("Condition: ") :], 72)
+            elif line.startswith("Actual: "):
+                lines[i] = "Actual: " + cls._shorten(line[len("Actual: ") :], 40)
+            elif line.startswith("Time: "):
+                lines[i] = "Time: " + cls._shorten(line[len("Time: ") :], 42)
+
+        msg = _join(lines)
+        if len(msg) <= max_len:
+            return msg
+        # Step 4: compact to mandatory lines with tighter value limits.
+        compact_lines = [
+            f"Rule: {cls._shorten(context['rule_name'], 24)}",
+            (
+                f"Device: {cls._shorten(context['device_name'], 20)} ({cls._shorten(context['device_id'], 16)})"
+                if context["device_name"] != context["device_id"]
+                else f"Device: {cls._shorten(context['device_id'], 24)}"
+            ),
+            f"Condition: {cls._shorten(context['condition'], 28)}",
+            f"Actual: {cls._shorten(context['actual_value'], 16)}",
+            f"Time: {cls._shorten(context['triggered_at'], 20)}",
+        ]
+        msg = _join(compact_lines)
+        if len(msg) <= max_len:
+            return msg
+        return msg[: max_len - 1].rstrip() + "…"
+
+    @classmethod
+    def _format_whatsapp_alert_message(cls, context: dict[str, str]) -> str:
+        return "\n".join(
+            [
+                "Energy Alert",
+                f"Rule Name: {context['rule_name']}",
+                f"Device Name: {context['device_name']}",
+                f"Device ID: {context['device_id']}",
+                f"Device Location: {context['device_location']}",
+                f"Property: {context['property']}",
+                f"Condition: {context['condition']}",
+                f"Actual Value: {context['actual_value']}",
+                f"Triggered Time: {context['triggered_at']}",
+            ]
+        )
+
+    def _format_channel_alert_body(
+        self,
+        *,
+        message: str,
+        rule: Rule,
+        device_id: str,
+        alert_type: str,
+        alert_context: Optional[dict[str, Any]],
+    ) -> str:
+        if alert_type != "threshold_alert":
+            return f"{self._prefix}{message}".strip()
+        context = self._build_alert_text_context(rule=rule, device_id=device_id, alert_context=alert_context)
+        if self.channel_name == "sms":
+            return self._format_sms_alert_message(context)
+        if self.channel_name == "whatsapp":
+            return self._format_whatsapp_alert_message(context)
+        return f"{self._prefix}{message}".strip()
+
     async def dispatch_alert(
         self,
         subject: str,
@@ -626,6 +867,7 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
         device_id: str,
         alert_type: str = "threshold_alert",
         alert_id: Optional[str] = None,
+        alert_context: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> NotificationDispatchResult:
         recipients = self._recipients_for_rule(rule, self.channel_name)
@@ -683,7 +925,13 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
             result.forced_success = False
             return result
 
-        body = f"{self._prefix}{message}".strip()
+        body = self._format_channel_alert_body(
+            message=message,
+            rule=rule,
+            device_id=device_id,
+            alert_type=alert_type,
+            alert_context=alert_context,
+        )
         try:
             async with httpx.AsyncClient(timeout=10.0, auth=(self._account_sid, self._auth_token)) as client:
                 for recipient in recipients:

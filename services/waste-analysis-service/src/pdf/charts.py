@@ -106,41 +106,6 @@ def total_energy_bar(rows: list[dict]) -> str | None:
     return _fig_to_data_uri(fig)
 
 
-def standby_bar(rows: list[dict]) -> str | None:
-    available = [r for r in rows if r.get("standby_power_kw") is not None]
-    if not available:
-        return None
-    labels = [_truncate(r.get("device_name") or r.get("device_id") or "Unknown", max_len=16) for r in available]
-    vals = [float(r.get("standby_power_kw") or 0.0) for r in available]
-    if not any(v > 0 for v in vals):
-        return None
-    h = min(3.2, max(2.1, 1.7 + 0.2 * len(labels)))
-    fig, ax = plt.subplots(figsize=(7.0, h))
-    bars = ax.bar(labels, vals, color="#f59e0b", edgecolor="#d97706", width=0.52)
-    _compact_style(ax)
-    ax.set_ylabel("kW", fontsize=8, color="#475569")
-    ax.set_title("Average Standby Power", fontsize=9, color="#334155", pad=8)
-    ax.tick_params(axis="x", rotation=18)
-    ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
-    ax.yaxis.grid(True)
-    ax.xaxis.grid(False)
-    max_val = max(vals) if vals else 0
-    ax.set_ylim(0, max_val * 1.22 if max_val > 0 else 1)
-    for b, v in zip(bars, vals):
-        ax.text(
-            b.get_x() + (b.get_width() / 2),
-            b.get_height() + _value_label_padding(max_val),
-            f"{v:.2f} kW",
-            ha="center",
-            va="bottom",
-            fontsize=7.5,
-            color="#9a3412",
-            fontweight="bold",
-        )
-    fig.tight_layout(pad=0.6)
-    return _fig_to_data_uri(fig)
-
-
 def offhours_cost_bar(rows: list[dict], currency: str | None = None) -> str | None:
     if not rows:
         return None

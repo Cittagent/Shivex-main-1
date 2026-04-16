@@ -13,6 +13,7 @@ from app.schemas.rule import EvaluationResult, TelemetryPayload
 from app.schemas.telemetry import TelemetryIn
 from app.services.rule import RuleService, AlertService
 from app.services.notification_delivery import NotificationDeliveryAuditService
+from app.services.device_metadata import DeviceMetadataService
 from app.repositories.rule import RuleRepository, AlertRepository
 from app.notifications.adapter import NotificationAdapter
 from app.config import settings
@@ -34,6 +35,7 @@ class RuleEvaluator:
         self._alert_service = AlertService(session, ctx)
         self._rule_repository = RuleRepository(session, ctx)
         self._alert_repository = AlertRepository(session, ctx)
+        self._device_metadata_service = DeviceMetadataService(ctx)
         self._notification_audit_service = NotificationDeliveryAuditService(session, ctx)
         self._notification_adapter = NotificationAdapter(audit_service=self._notification_audit_service)
 
@@ -327,14 +329,48 @@ class RuleEvaluator:
         if not rule.notification_channels:
             return
 
+        triggered_at = datetime.now(timezone.utc)
+        device_name = None
+        device_location = None
+        if "email" in set(rule.notification_channels):
+            try:
+                metadata = await self._device_metadata_service.get_device_metadata(device_id)
+                device_name = metadata.device_name
+                device_location = metadata.device_location
+            except Exception as exc:
+                logger.warning(
+                    "device_metadata_lookup_failed",
+                    extra={"device_id": device_id, "error": str(exc)},
+                )
+
+        property_label = self._humanize_property_label(rule)
+        condition_label = self._humanize_condition_label(rule)
+        actual_value_label = self._format_actual_value(rule, result.actual_value)
+        triggered_at_label = format_platform_datetime(triggered_at)
+
         message = (
-            f"🚨 Alert: {rule.rule_name}\n"
-            f"Device: {device_id}\n"
-            f"Condition: "
-            f"{self._describe_rule_condition(rule)}\n"
-            f"Actual: {result.actual_value}\n"
-            f"Time: {format_platform_datetime(datetime.now(timezone.utc))}"
+            f"Rule Name: {rule.rule_name}\n"
+            f"Device Name: {device_name or device_id}\n"
+            f"Device ID: {device_id}\n"
+            f"Device Location: {device_location or 'Not specified'}\n"
+            f"Property: {property_label}\n"
+            f"Condition: {condition_label}\n"
+            f"Actual Value: {actual_value_label}\n"
+            f"Triggered Time: {triggered_at_label}"
         )
+
+        alert_context = {
+            "rule_name": rule.rule_name,
+            "device_name": device_name or device_id,
+            "device_id": device_id,
+            "device_location": device_location or "Not specified",
+            "property_label": property_label,
+            "condition_label": condition_label,
+            "property": property_label,
+            "condition": condition_label,
+            "actual_value": actual_value_label,
+            "triggered_at": triggered_at_label,
+        }
 
         for channel in rule.notification_channels:
             try:
@@ -344,6 +380,7 @@ class RuleEvaluator:
                     rule=rule,
                     device_id=device_id,
                     alert_id=alert_id,
+                    alert_context=alert_context,
                 )
                 logger.info(
                     "Notification sent",
@@ -370,6 +407,41 @@ class RuleEvaluator:
         if rule.rule_type == RuleType.CONTINUOUS_IDLE_DURATION.value:
             return f"idle continuously for {rule.duration_minutes} minute(s)"
         return f"{rule.property} {rule.condition} {rule.threshold}"
+
+    @staticmethod
+    def _humanize_property_label(rule: Rule) -> str:
+        if rule.rule_type == RuleType.TIME_BASED.value:
+            return "Power Status"
+        if rule.rule_type == RuleType.CONTINUOUS_IDLE_DURATION.value:
+            return "Idle Duration"
+        raw_property = str(rule.property or "value").replace("_", " ").strip()
+        return raw_property.title() if raw_property else "Value"
+
+    @staticmethod
+    def _humanize_condition_label(rule: Rule) -> str:
+        if rule.rule_type == RuleType.TIME_BASED.value:
+            return f"running between {rule.time_window_start}-{rule.time_window_end} {settings.PLATFORM_TIMEZONE}"
+        if rule.rule_type == RuleType.CONTINUOUS_IDLE_DURATION.value:
+            return f"greater than or equal to {rule.duration_minutes} minute(s)"
+        operator_map = {
+            ">": "greater than",
+            "<": "less than",
+            ">=": "greater than or equal to",
+            "<=": "less than or equal to",
+            "=": "equal to",
+            "==": "equal to",
+            "!=": "not equal to",
+        }
+        operator = operator_map.get(str(rule.condition or "").strip(), str(rule.condition or "").strip() or "equal to")
+        return f"{operator} {rule.threshold}"
+
+    @staticmethod
+    def _format_actual_value(rule: Rule, actual_value: float) -> str:
+        if rule.rule_type == RuleType.TIME_BASED.value:
+            return "Running"
+        if rule.rule_type == RuleType.CONTINUOUS_IDLE_DURATION.value:
+            return f"{actual_value:.2f} minute(s)"
+        return f"{actual_value:.3f}".rstrip("0").rstrip(".")
 
     async def evaluate(
         self,

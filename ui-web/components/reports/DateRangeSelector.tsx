@@ -1,85 +1,64 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import {
+  formatIsoDate,
+  getCustomEndDateBounds,
+  getMaxSelectableDate,
+  getMinSelectableDate,
+  getRecentMonths,
+  REPORT_DATE_PRESETS,
+  resolveCustomEndFromStart,
+  resolveMonthRange,
+  resolvePresetRange,
+} from "@/lib/reportDateRange";
 
 interface DateRangeSelectorProps {
   onRangeChange: (start: string, end: string) => void;
   disabled?: boolean;
+  initialRange?: { start: string; end: string } | null;
+  initialMode?: TabMode;
 }
 
 type TabMode = "presets" | "month" | "custom";
 
-export function DateRangeSelector({ onRangeChange, disabled }: DateRangeSelectorProps) {
-  const [mode, setMode] = useState<TabMode>("presets");
+export function DateRangeSelector({ onRangeChange, disabled, initialRange, initialMode = "presets" }: DateRangeSelectorProps) {
+  const [mode, setMode] = useState<TabMode>(initialMode);
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
-  const [selectedMonth, setSelectedMonth] = useState<string>("");
-
+  const [selectedMonth, setSelectedMonth] = useState<string>(initialRange?.start || "");
   const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
 
-  const formatDate = (d: Date): string => d.toISOString().split("T")[0];
   const formatDisplay = (d: Date): string =>
     d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  const presets = REPORT_DATE_PRESETS;
+  const months = getRecentMonths(12, today);
 
-  const presets: { label: string; days: number; offset?: number }[] = [
-    { label: "Today", days: 1 },
-    { label: "Yesterday", days: 2, offset: 1 },
-    { label: "Last 7 days", days: 7 },
-    { label: "Last 30 days", days: 30 },
-    { label: "Last 90 days", days: 90 },
-  ];
-
-  const months: Date[] = [];
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    months.push(d);
-  }
+  useEffect(() => {
+    if (!initialRange?.start || !initialRange?.end) return;
+    setStartDate(initialRange.start);
+    setEndDate(initialRange.end);
+    onRangeChange(initialRange.start, initialRange.end);
+  }, [initialRange, onRangeChange]);
 
   const handlePresetClick = (days: number, offset: number = 0) => {
-    const end = new Date(Date.UTC(
-      today.getUTCFullYear(),
-      today.getUTCMonth(),
-      today.getUTCDate() - offset
-    ));
-    const start = new Date(Date.UTC(
-      today.getUTCFullYear(),
-      today.getUTCMonth(),
-      today.getUTCDate() - days
-    ));
-    const startStr = start.toISOString().split("T")[0];
-    const endStr = end.toISOString().split("T")[0];
-    setStartDate(startStr);
-    setEndDate(endStr);
-    onRangeChange(startStr, endStr);
+    const range = resolvePresetRange(days, offset, today);
+    setStartDate(range.start);
+    setEndDate(range.end);
+    onRangeChange(range.start, range.end);
   };
 
   const handleMonthClick = (monthDate: Date) => {
-    const start = new Date(Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth(), 1));
-    const end = new Date(Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth() + 1, 0));
-    const startStr = start.toISOString().split("T")[0];
-    const endStr = end.toISOString().split("T")[0];
-    setStartDate(startStr);
-    setEndDate(endStr);
-    setSelectedMonth(formatDate(monthDate));
-    onRangeChange(startStr, endStr);
+    const range = resolveMonthRange(monthDate);
+    setStartDate(range.start);
+    setEndDate(range.end);
+    setSelectedMonth(formatIsoDate(monthDate));
+    onRangeChange(range.start, range.end);
   };
 
   const handleCustomStartChange = (value: string) => {
     setStartDate(value);
-    const start = new Date(value + "T00:00:00Z");
-    let end = new Date(value + "T00:00:00Z");
-    end.setUTCDate(end.getUTCDate() + 90);
-    const yesterdayTime = new Date(Date.UTC(
-      today.getUTCFullYear(),
-      today.getUTCMonth(),
-      today.getUTCDate() - 1
-    ));
-    if (end > yesterdayTime) {
-      end = yesterdayTime;
-    }
-    const endStr = end.toISOString().split("T")[0];
+    const endStr = resolveCustomEndFromStart(value, today);
     setEndDate(endStr);
     onRangeChange(value, endStr);
   };
@@ -89,19 +68,11 @@ export function DateRangeSelector({ onRangeChange, disabled }: DateRangeSelector
     onRangeChange(startDate, value);
   };
 
-  const minDate = formatDate(new Date(Date.UTC(today.getUTCFullYear() - 1, today.getUTCMonth(), today.getUTCDate())));
-  const maxDate = formatDate(yesterday);
-  const minEndDate = startDate ? formatDate(new Date(new Date(startDate + "T00:00:00Z").getTime() + 24 * 60 * 60 * 1000)) : "";
-  const maxEndDate = startDate
-    ? formatDate(
-        new Date(
-          Math.min(
-            new Date(startDate + "T00:00:00Z").getTime() + 90 * 24 * 60 * 60 * 1000,
-            yesterday.getTime()
-          )
-        )
-      )
-    : maxDate;
+  const minDate = getMinSelectableDate(today);
+  const maxDate = getMaxSelectableDate(today);
+  const customEndBounds = startDate ? getCustomEndDateBounds(startDate, today) : null;
+  const minEndDate = customEndBounds?.min || "";
+  const maxEndDate = customEndBounds?.max || maxDate;
 
   const getDaysBetween = (): number => {
     if (!startDate || !endDate) return 0;
@@ -159,7 +130,9 @@ export function DateRangeSelector({ onRangeChange, disabled }: DateRangeSelector
                 key={m.toISOString()}
                 onClick={() => handleMonthClick(m)}
                 disabled={disabled}
-                className="px-3 py-2 text-sm bg-white border rounded-md hover:bg-blue-50 hover:border-blue-300 transition-colors"
+                className={`px-3 py-2 text-sm bg-white border rounded-md hover:bg-blue-50 hover:border-blue-300 transition-colors ${
+                  selectedMonth === formatIsoDate(m) ? "border-blue-500 text-blue-700" : ""
+                }`}
               >
                 {m.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}
               </button>

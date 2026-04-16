@@ -109,9 +109,6 @@ def _build_device_summary(result, tariff_rate: float | None) -> dict:
         "idle_duration_label": _duration_label(result.idle_duration_sec),
         "idle_energy_kwh": result.idle_energy_kwh,
         "idle_cost": result.idle_cost,
-        "standby_power_kw": result.standby_power_kw,
-        "standby_energy_kwh": result.standby_energy_kwh,
-        "standby_cost": result.standby_cost,
         "total_energy_kwh": result.total_energy_kwh,
         "total_cost": result.total_cost,
         "total_energy_cost": result.total_cost,
@@ -164,11 +161,6 @@ def _build_device_summary(result, tariff_rate: float | None) -> dict:
             "config_source": result.unoccupied_config_source,
             "config_used": result.unoccupied_config_used,
         },
-        "data_quality": result.data_quality,
-        "energy_quality": result.energy_quality,
-        "idle_quality": result.idle_quality,
-        "standby_quality": result.standby_quality,
-        "overall_quality": result.overall_quality,
         "idle_status": result.idle_status,
         "power_unit_input": result.power_unit_input,
         "power_unit_normalized_to": result.power_unit_normalized_to,
@@ -186,43 +178,43 @@ def _sync_canonical_overlay_warnings(result) -> None:
         result.warnings = [w for w in result.warnings if w != "OVERCONSUMPTION: No overconsumption detected in this period"]
 
 
-def _to_db_summary(x: dict) -> dict:
+def _to_db_summary_from_result(result) -> dict:
     return {
-        "device_id": x["device_id"],
-        "device_name": x["device_name"],
-        "data_source_type": x["data_source_type"],
-        "idle_duration_sec": x["idle_duration_sec"],
-        "idle_energy_kwh": x["idle_energy_kwh"],
-        "idle_cost": x["idle_cost"],
-        "standby_power_kw": x["standby_power_kw"],
-        "standby_energy_kwh": x["standby_energy_kwh"],
-        "standby_cost": x["standby_cost"],
-        "total_energy_kwh": x["total_energy_kwh"],
-        "total_cost": x["total_cost"],
-        "offhours_energy_kwh": x["offhours_energy_kwh"],
-        "offhours_cost": x["offhours_cost"],
-        "offhours_duration_sec": x.get("offhours_duration_sec"),
-        "offhours_skipped_reason": x.get("offhours_skipped_reason"),
-        "offhours_pf_estimated": x.get("offhours_pf_estimated", False),
-        "overconsumption_duration_sec": x.get("overconsumption_duration_sec"),
-        "overconsumption_kwh": x.get("overconsumption_kwh"),
-        "overconsumption_cost": x.get("overconsumption_cost"),
-        "overconsumption_skipped_reason": x.get("overconsumption_skipped_reason"),
-        "overconsumption_pf_estimated": x.get("overconsumption_pf_estimated", False),
-        "unoccupied_duration_sec": x.get("unoccupied_duration_sec"),
-        "unoccupied_energy_kwh": x.get("unoccupied_energy_kwh"),
-        "unoccupied_cost": x.get("unoccupied_cost"),
-        "unoccupied_skipped_reason": x.get("unoccupied_skipped_reason"),
-        "unoccupied_pf_estimated": x.get("unoccupied_pf_estimated", False),
-        "data_quality": x["data_quality"],
-        "energy_quality": x["energy_quality"],
-        "idle_quality": x["idle_quality"],
-        "standby_quality": x["standby_quality"],
-        "overall_quality": x["overall_quality"],
-        "idle_status": x["idle_status"],
-        "pf_estimated": x["pf_estimated"],
-        "warnings": x["warnings"],
-        "calculation_method": x["calculation_method"],
+        "device_id": result.device_id,
+        "device_name": result.device_name,
+        "data_source_type": result.data_source_type,
+        "idle_duration_sec": result.idle_duration_sec,
+        "idle_energy_kwh": result.idle_energy_kwh,
+        "idle_cost": result.idle_cost,
+        "standby_power_kw": result.standby_power_kw,
+        "standby_energy_kwh": result.standby_energy_kwh,
+        "standby_cost": result.standby_cost,
+        "total_energy_kwh": result.total_energy_kwh,
+        "total_cost": result.total_cost,
+        "offhours_energy_kwh": result.offhours_energy_kwh,
+        "offhours_cost": result.offhours_cost,
+        "offhours_duration_sec": result.offhours_duration_sec,
+        "offhours_skipped_reason": result.offhours_skipped_reason,
+        "offhours_pf_estimated": result.offhours_pf_estimated,
+        "overconsumption_duration_sec": result.overconsumption_duration_sec,
+        "overconsumption_kwh": result.overconsumption_energy_kwh,
+        "overconsumption_cost": result.overconsumption_cost,
+        "overconsumption_skipped_reason": result.overconsumption_skipped_reason,
+        "overconsumption_pf_estimated": result.overconsumption_pf_estimated,
+        "unoccupied_duration_sec": result.unoccupied_duration_sec,
+        "unoccupied_energy_kwh": result.unoccupied_energy_kwh,
+        "unoccupied_cost": result.unoccupied_cost,
+        "unoccupied_skipped_reason": result.unoccupied_skipped_reason,
+        "unoccupied_pf_estimated": result.unoccupied_pf_estimated,
+        "data_quality": result.data_quality,
+        "energy_quality": result.energy_quality,
+        "idle_quality": result.idle_quality,
+        "standby_quality": result.standby_quality,
+        "overall_quality": result.overall_quality,
+        "idle_status": result.idle_status,
+        "pf_estimated": result.pf_estimated,
+        "warnings": _public_warnings(list(result.warnings or [])),
+        "calculation_method": result.calculation_method,
     }
 
 
@@ -534,7 +526,6 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
                 "estimation_used": False,
                 "calculation_version": "waste_v2_exclusive",
                 "aggregation_policy": "mutually_exclusive",
-                "diagnostic_only_categories": ["standby"],
             }
 
             invariant_checks = {"waste_le_total_energy": True}
@@ -568,7 +559,7 @@ async def run_waste_analysis(job_id: str, params: dict) -> None:
             except Exception:
                 result_payload["parity_check"] = {"checked": False}
 
-            db_summaries = [_to_db_summary(x) for x in device_summaries]
+            db_summaries = [_to_db_summary_from_result(r) for r in results]
 
             if settings.WASTE_STRICT_QUALITY_GATE and not quality_gate_passed:
                 await repo.replace_device_summaries_chunked(

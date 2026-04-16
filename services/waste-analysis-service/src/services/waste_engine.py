@@ -449,20 +449,6 @@ def summarize_insights(results: list[DeviceWasteResult], currency: str) -> list[
         share = (worst_cost / total_waste_cost) * 100 if total_waste_cost else 0
         insights.append(f"{worst.device_name} accounts for {share:.0f}% of total waste cost")
 
-    savings_lines = []
-    for r in results:
-        if r.standby_power_kw and r.standby_power_kw > 0 and total_waste_cost >= 0:
-            monthly = r.standby_power_kw * 30
-            if monthly > 0.2:
-                savings_lines.append((monthly, r.device_name))
-    savings_lines.sort(reverse=True)
-    for monthly, name in savings_lines[:3]:
-        insights.append(f"Reducing {name} idle time by 1hr/day can save about {currency} {monthly:.0f}/month")
-
-    high_standby = [r.device_name for r in sorted(results, key=lambda x: x.standby_power_kw or 0, reverse=True) if (r.standby_power_kw or 0) > 0.5]
-    if high_standby:
-        insights.append(f"Highest standby consumers: {', '.join(high_standby[:3])}")
-
     offhours_total = sum(r.offhours_cost or 0.0 for r in results)
     if offhours_total > 0:
         insights.append(f"Off-hours energy waste in selected period: {currency} {offhours_total:.0f}")

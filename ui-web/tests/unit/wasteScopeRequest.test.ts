@@ -5,6 +5,7 @@ import type { PlantProfile } from "../../lib/authApi.ts";
 import type { Device } from "../../lib/deviceApi.ts";
 import { buildDeviceScopeCatalog } from "../../lib/deviceScopeSelection.ts";
 import { resolveVisiblePlants } from "../../lib/orgScope.ts";
+import { resolvePresetRange } from "../../lib/reportDateRange.ts";
 import { buildWasteRunParams } from "../../lib/wasteScopeRequest.ts";
 
 const plants: PlantProfile[] = [
@@ -117,4 +118,22 @@ test("plant-scoped roles only resolve accessible plant devices for waste analysi
   assert.equal(params.scope, "all");
   assert.equal(params.device_ids, null);
   assert.deepEqual(catalog.allDeviceIds, ["01KNH6PVQW023A92HTYTFB9F7X"]);
+});
+
+test("waste run params preserve selected shared date-range values", () => {
+  const catalog = buildDeviceScopeCatalog(devices, plants);
+  const selectedRange = resolvePresetRange(7, 0, new Date("2026-04-16T00:00:00Z"));
+
+  const params = buildWasteRunParams(
+    {
+      ...baseForm,
+      start_date: selectedRange.start,
+      end_date: selectedRange.end,
+    },
+    { mode: "all", plantId: null, deviceIds: [] },
+    catalog,
+  );
+
+  assert.equal(params.start_date, "2026-04-09");
+  assert.equal(params.end_date, "2026-04-16");
 });

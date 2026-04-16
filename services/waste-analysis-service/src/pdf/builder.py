@@ -1,7 +1,6 @@
 from datetime import datetime
 
 from jinja2 import Template
-from weasyprint import HTML
 
 from src.config import settings
 from src.pdf import charts
@@ -12,6 +11,8 @@ from src.utils.localization import format_platform_timestamp
 
 
 def generate_waste_pdf(payload: dict) -> bytes:
+    from weasyprint import HTML
+
     devices = payload.get("device_summaries", [])
     max_devices = max(1, int(settings.WASTE_PDF_MAX_DEVICES))
 
@@ -43,7 +44,6 @@ def generate_waste_pdf(payload: dict) -> bytes:
     chart_currency = str(payload.get("currency") or "")
     payload["charts"] = {
         "idle_cost": charts.idle_cost_bar(render_devices, chart_currency),
-        "standby": charts.standby_bar(render_devices),
         "offhours_cost": charts.offhours_cost_bar(render_devices, chart_currency),
         "overconsumption_cost": charts.overconsumption_cost_bar(render_devices, chart_currency),
         "energy": charts.total_energy_bar(render_devices),
@@ -103,37 +103,17 @@ th { background:#f8fafc; text-align:left; }
 <div class=\"section\">
   <h2>Idle Running Analysis</h2>
   <table>
-    <tr><th>Device</th><th>Idle Time</th><th>Idle Energy (kWh)</th><th>Idle Cost</th><th>Data Quality</th></tr>
+    <tr><th>Device</th><th>Idle Time</th><th>Idle Energy (kWh)</th><th>Idle Cost</th></tr>
     {% for d in pdf_devices %}
     <tr>
       <td>{{ d.device_name }}</td>
       <td>{{ d.idle_duration_label }}</td>
       <td>{{ d.idle_energy_kwh }}</td>
       <td>{% if d.idle_cost is not none %}{{ currency }} {{ d.idle_cost }}{% else %}N/A{% endif %}</td>
-      <td>{{ d.data_quality }}</td>
     </tr>
     {% endfor %}
   </table>
   {% if charts.idle_cost %}<div class=\"chart\"><img src=\"{{ charts.idle_cost }}\"/></div>{% endif %}
-</div>
-
-<div class=\"section\">
-  <h2>Standby Energy Loss</h2>
-  <div class=\"warn\" style=\"background:#eff6ff;border-left-color:#2563eb;color:#1e3a8a\">
-    Standby is diagnostic and is excluded from Total Waste Cost aggregation.
-  </div>
-  <table>
-    <tr><th>Device</th><th>Avg Standby Power (kW)</th><th>Standby Energy (kWh)</th><th>Standby Cost</th></tr>
-    {% for d in pdf_devices %}
-    <tr>
-      <td>{{ d.device_name }}</td>
-      <td>{{ d.standby_power_kw if d.standby_power_kw is not none else 'N/A' }}</td>
-      <td>{{ d.standby_energy_kwh if d.standby_energy_kwh is not none else 'N/A' }}</td>
-      <td>{% if d.standby_cost is not none %}{{ currency }} {{ d.standby_cost }}{% else %}N/A{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% if charts.standby %}<div class=\"chart\"><img src=\"{{ charts.standby }}\"/></div>{% endif %}
 </div>
 
 <div class=\"section\">
@@ -200,16 +180,6 @@ th { background:#f8fafc; text-align:left; }
   <h2>Key Insights</h2>
   {% for item in insights %}
   <div class=\"warn\" style=\"background:#eff6ff;border-left-color:#2563eb;color:#1e3a8a\">{{ loop.index }}. {{ item }}</div>
-  {% endfor %}
-</div>
-
-<div class=\"section\">
-  <h2>Data Notes</h2>
-  {% if warnings|length == 0 %}
-  <div class=\"warn\">No data quality warnings for this run.</div>
-  {% endif %}
-  {% for w in warnings %}
-  <div class=\"warn\">{{ w }}</div>
   {% endfor %}
 </div>
 

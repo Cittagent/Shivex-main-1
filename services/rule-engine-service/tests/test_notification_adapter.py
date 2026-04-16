@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime, timezone
+from email import message_from_string
 from pathlib import Path
 
 import pytest
@@ -204,6 +205,16 @@ async def test_sms_adapter_sends_normalized_phone_recipients(monkeypatch):
         message="Threshold exceeded",
         rule=rule,
         device_id="P1",
+        alert_context={
+            "rule_name": "Current Guard",
+            "device_name": "Compressor A",
+            "device_id": "P1",
+            "device_location": "Line 1",
+            "property_label": "Current",
+            "condition_label": "greater than 1.0",
+            "actual_value": "1.234",
+            "triggered_at": "16 Apr 2026, 03:15 PM IST",
+        },
     )
 
     assert sent is True
@@ -212,7 +223,17 @@ async def test_sms_adapter_sends_normalized_phone_recipients(monkeypatch):
     assert request["url"].endswith("/Messages.json")
     assert request["data"]["From"] == "+15550000000"
     assert request["data"]["To"] == "+15551234567"
-    assert request["data"]["Body"] == "Threshold exceeded"
+    assert request["data"]["Body"] == "\n".join(
+        [
+            "Energy Alert",
+            "Rule: Current Guard",
+            "Device: Compressor A (P1)",
+            "Location: Line 1",
+            "Condition: greater than 1.0",
+            "Actual: 1.234",
+            "Time: 16 Apr 2026, 03:15 PM IST",
+        ]
+    )
     assert request["auth"] == ("AC123", "secret")
 
 
@@ -239,6 +260,16 @@ async def test_whatsapp_adapter_prefixes_phone_recipients(monkeypatch):
         message="Threshold exceeded",
         rule=rule,
         device_id="P1",
+        alert_context={
+            "rule_name": "Current Guard",
+            "device_name": "Compressor A",
+            "device_id": "P1",
+            "device_location": "Line 1",
+            "property_label": "Current",
+            "condition_label": "greater than 1.0",
+            "actual_value": "1.234",
+            "triggered_at": "16 Apr 2026, 03:15 PM IST",
+        },
     )
 
     assert sent is True
@@ -246,7 +277,19 @@ async def test_whatsapp_adapter_prefixes_phone_recipients(monkeypatch):
     request = _FakeAsyncClient.requests[0]
     assert request["data"]["From"] == "whatsapp:+15550000001"
     assert request["data"]["To"] == "whatsapp:+15559876543"
-    assert request["data"]["Body"] == "WhatsApp: Threshold exceeded"
+    assert request["data"]["Body"] == "\n".join(
+        [
+            "Energy Alert",
+            "Rule Name: Current Guard",
+            "Device Name: Compressor A",
+            "Device ID: P1",
+            "Device Location: Line 1",
+            "Property: Current",
+            "Condition: greater than 1.0",
+            "Actual Value: 1.234",
+            "Triggered Time: 16 Apr 2026, 03:15 PM IST",
+        ]
+    )
     assert request["auth"] == ("AC456", "secret")
 
 
@@ -280,3 +323,280 @@ async def test_sms_adapter_fails_closed_when_enabled_without_credentials(monkeyp
 def test_notification_adapter_supported_channels_are_email_sms_whatsapp():
     adapter = NotificationAdapter()
     assert adapter.get_supported_channels() == ["email", "sms", "whatsapp"]
+
+
+@pytest.mark.asyncio
+async def test_alert_email_html_is_structured_and_excludes_legacy_raw_message(monkeypatch):
+    _FakeSMTP.sent_messages = []
+    monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
+
+    adapter = EmailAdapter()
+    adapter._enabled = True
+    adapter._smtp_host = "smtp.example.com"
+    adapter._smtp_port = 587
+    adapter._smtp_username = "user"
+    adapter._smtp_password = "pass"
+    adapter._from_address = "alerts@example.com"
+
+    rule = _make_rule(
+        rule_id="rule-email-structured",
+        recipients=[{"channel": "email", "value": "ops@example.com"}],
+    )
+
+    sent = await adapter.send_alert(
+        subject="Alert",
+        message="🚨 Alert: raw blob should never be visible",
+        rule=rule,
+        device_id="AD00000001",
+        alert_context={
+            "rule_name": "OP A",
+            "device_name": "Compressor A",
+            "device_id": "AD00000001",
+            "device_location": "Shop Floor 1",
+            "property": "Current",
+            "condition": "greater than 1.0",
+            "actual_value": "1.001",
+            "triggered_at": "16 Apr 2026, 03:15 PM IST",
+        },
+    )
+
+    assert sent is True
+    assert len(_FakeSMTP.sent_messages) == 1
+    raw_email = _FakeSMTP.sent_messages[0]["message"]
+    parsed = message_from_string(raw_email)
+    payloads = parsed.get_payload()
+    plain_part = payloads[0].get_payload(decode=True).decode("utf-8", errors="replace")
+    html_part = payloads[1].get_payload(decode=True).decode("utf-8", errors="replace")
+
+    for label in [
+        "Rule Name",
+        "Device Name",
+        "Device ID",
+        "Device Location",
+        "Property",
+        "Condition",
+        "Actual Value",
+        "Triggered Time",
+    ]:
+        assert label in html_part
+        assert label in plain_part
+
+    assert "Compressor A" in html_part
+    assert "Shop Floor 1" in html_part
+    assert "Message:" not in html_part
+    assert "raw blob should never be visible" not in html_part
+
+
+@pytest.mark.asyncio
+async def test_alert_email_handles_missing_location_and_name_fallback(monkeypatch):
+    _FakeSMTP.sent_messages = []
+    monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
+
+    adapter = EmailAdapter()
+    adapter._enabled = True
+    adapter._smtp_host = "smtp.example.com"
+    adapter._smtp_port = 587
+    adapter._smtp_username = "user"
+    adapter._smtp_password = "pass"
+    adapter._from_address = "alerts@example.com"
+
+    rule = _make_rule(
+        rule_id="rule-email-fallback",
+        recipients=[{"channel": "email", "value": "ops@example.com"}],
+    )
+
+    sent = await adapter.send_alert(
+        subject="Alert",
+        message="Threshold exceeded",
+        rule=rule,
+        device_id="AD00000001",
+        alert_context={
+            "rule_name": "OP B",
+            "device_name": "AD00000001",
+            "device_id": "AD00000001",
+            "property": "Current",
+            "condition": "greater than 1.0",
+            "actual_value": "1.001",
+            "triggered_at": "16 Apr 2026, 03:15 PM IST",
+        },
+    )
+
+    assert sent is True
+    raw_email = _FakeSMTP.sent_messages[0]["message"]
+    parsed = message_from_string(raw_email)
+    html_part = parsed.get_payload()[1].get_payload(decode=True).decode("utf-8", errors="replace")
+    plain_part = parsed.get_payload()[0].get_payload(decode=True).decode("utf-8", errors="replace")
+
+    assert "Device Name" in html_part and "AD00000001" in html_part
+    assert "Not specified" in html_part
+    assert "Not specified" in plain_part
+
+
+@pytest.mark.asyncio
+async def test_rule_created_email_all_devices_scope_never_shows_na(monkeypatch):
+    _FakeSMTP.sent_messages = []
+    monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
+
+    adapter = EmailAdapter()
+    adapter._enabled = True
+    adapter._smtp_host = "smtp.example.com"
+    adapter._smtp_port = 587
+    adapter._smtp_username = "user"
+    adapter._smtp_password = "pass"
+    adapter._from_address = "alerts@example.com"
+
+    rule = _make_rule(
+        rule_id="rule-created-all-devices",
+        recipients=[{"channel": "email", "value": "ops@example.com"}],
+    )
+    rule.scope = RuleScope.ALL_DEVICES.value
+    rule.device_ids = []
+
+    sent = await adapter.send_alert(
+        subject="Rule Created",
+        message="Rule created successfully",
+        rule=rule,
+        device_id="All Machines",
+        device_names="All accessible machines",
+        scope_label="All Machines",
+        alert_type="rule_created",
+    )
+
+    assert sent is True
+    raw_email = _FakeSMTP.sent_messages[0]["message"]
+    parsed = message_from_string(raw_email)
+    html_part = parsed.get_payload()[1].get_payload(decode=True).decode("utf-8", errors="replace")
+    assert "Scope:</span> All Machines" in html_part
+    assert "Devices:</span> All accessible machines" in html_part
+    assert "Devices:</span> N/A" not in html_part
+
+
+@pytest.mark.asyncio
+async def test_rule_created_email_selected_devices_scope_shows_device_targets(monkeypatch):
+    _FakeSMTP.sent_messages = []
+    monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
+
+    adapter = EmailAdapter()
+    adapter._enabled = True
+    adapter._smtp_host = "smtp.example.com"
+    adapter._smtp_port = 587
+    adapter._smtp_username = "user"
+    adapter._smtp_password = "pass"
+    adapter._from_address = "alerts@example.com"
+
+    rule = _make_rule(
+        rule_id="rule-created-selected-devices",
+        recipients=[{"channel": "email", "value": "ops@example.com"}],
+    )
+    rule.scope = RuleScope.SELECTED_DEVICES.value
+    rule.device_ids = ["AD00000001", "AD00000002"]
+
+    sent = await adapter.send_alert(
+        subject="Rule Created",
+        message="Rule created successfully",
+        rule=rule,
+        device_id="AD00000001, AD00000002",
+        device_names="AD00000001, AD00000002",
+        scope_label="Selected Machines",
+        alert_type="rule_created",
+    )
+
+    assert sent is True
+    raw_email = _FakeSMTP.sent_messages[0]["message"]
+    parsed = message_from_string(raw_email)
+    html_part = parsed.get_payload()[1].get_payload(decode=True).decode("utf-8", errors="replace")
+    assert "Scope:</span> Selected Machines" in html_part
+    assert "Devices:</span> AD00000001, AD00000002" in html_part
+
+
+def test_sms_formatter_shortens_deterministically_and_preserves_priority_fields():
+    context = {
+        "rule_name": "Very Long Rule Name " * 6,
+        "device_name": "Very Long Device Name " * 6,
+        "device_id": "AD00000001",
+        "device_location": "Very Long Device Location " * 8,
+        "property": "Current",
+        "condition": "greater than 1.0 and sustained beyond configured sampling window tolerance",
+        "actual_value": "12345.6789",
+        "triggered_at": "16 Apr 2026, 03:15 PM IST",
+    }
+
+    body = SmsAdapter._format_sms_alert_message(context, max_len=180)
+    assert len(body) <= 180
+    assert "Rule:" in body
+    assert "Device:" in body
+    assert "Condition:" in body
+    assert "Actual:" in body
+    assert "Time:" in body
+    assert "🚨 Alert:" not in body
+    assert "Message:" not in body
+
+
+@pytest.mark.asyncio
+async def test_sms_and_whatsapp_fallback_metadata_is_clean(monkeypatch):
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.responses = [
+        _FakeResponse(),
+        _FakeResponse(),
+    ]
+    monkeypatch.setattr("app.notifications.adapter.httpx.AsyncClient", _FakeAsyncClient)
+
+    sms_adapter = SmsAdapter()
+    sms_adapter._enabled = True
+    sms_adapter._account_sid = "AC123"
+    sms_adapter._auth_token = "secret"
+    sms_adapter._from_number = "+15550000000"
+
+    wa_adapter = WhatsAppAdapter()
+    wa_adapter._enabled = True
+    wa_adapter._account_sid = "AC456"
+    wa_adapter._auth_token = "secret"
+    wa_adapter._from_number = "+15550000001"
+
+    sms_rule = _make_rule(
+        rule_id="rule-sms-fallback",
+        recipients=[{"channel": "sms", "value": "+1 (555) 123-4567"}],
+    )
+    wa_rule = _make_rule(
+        rule_id="rule-wa-fallback",
+        recipients=[{"channel": "whatsapp", "value": "+1 (555) 987-6543"}],
+    )
+
+    await sms_adapter.send_alert(
+        subject="SMS fallback",
+        message="Threshold exceeded",
+        rule=sms_rule,
+        device_id="AD00000001",
+        alert_context={
+            "rule_name": "Current Guard",
+            "device_name": "AD00000001",
+            "device_id": "AD00000001",
+            "device_location": "Not specified",
+            "condition_label": "greater than 1.0",
+            "actual_value": "1.234",
+            "triggered_at": "16 Apr 2026, 03:15 PM IST",
+        },
+    )
+    await wa_adapter.send_alert(
+        subject="WA fallback",
+        message="Threshold exceeded",
+        rule=wa_rule,
+        device_id="AD00000001",
+        alert_context={
+            "rule_name": "Current Guard",
+            "device_name": "AD00000001",
+            "device_id": "AD00000001",
+            "device_location": "Not specified",
+            "condition_label": "greater than 1.0",
+            "actual_value": "1.234",
+            "triggered_at": "16 Apr 2026, 03:15 PM IST",
+        },
+    )
+
+    assert len(_FakeAsyncClient.requests) == 2
+    sms_body = _FakeAsyncClient.requests[0]["data"]["Body"]
+    wa_body = _FakeAsyncClient.requests[1]["data"]["Body"]
+    assert "Device: AD00000001" in sms_body
+    assert "Location: Not specified" not in sms_body
+    assert "Device Name: AD00000001" in wa_body
+    assert "Device Location: Not specified" in wa_body

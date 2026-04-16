@@ -91,6 +91,14 @@ def test_build_device_summary_exposes_flat_fla_metadata_and_overconsumption_alia
     assert payload["overconsumption_kwh"] == 0.04
     assert payload["overconsumption_energy_kwh"] == 0.04
     assert payload["overconsumption"]["config_used"]["derived_overconsumption_threshold_a"] == 20.0
+    assert "standby_power_kw" not in payload
+    assert "standby_energy_kwh" not in payload
+    assert "standby_cost" not in payload
+    assert "data_quality" not in payload
+    assert "energy_quality" not in payload
+    assert "idle_quality" not in payload
+    assert "standby_quality" not in payload
+    assert "overall_quality" not in payload
     assert payload["warnings"] == []
 
 

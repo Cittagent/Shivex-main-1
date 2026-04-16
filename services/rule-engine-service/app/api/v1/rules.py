@@ -35,6 +35,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _summarize_selected_devices(device_ids: list[str], limit: int = 6) -> str:
+    cleaned = [str(device_id).strip() for device_id in device_ids if str(device_id).strip()]
+    if not cleaned:
+        return "Not specified"
+    if len(cleaned) <= limit:
+        return ", ".join(cleaned)
+    head = ", ".join(cleaned[:limit])
+    return f"{head} (+{len(cleaned) - limit} more)"
+
+
+def _rule_scope_email_display(scope_value: str, device_ids: list[str]) -> tuple[str, str, str]:
+    normalized_scope = str(scope_value or "").strip().lower()
+    if normalized_scope == "all_devices":
+        return ("All Machines", "All accessible machines", "All Machines")
+    if normalized_scope == "selected_devices":
+        selected = _summarize_selected_devices(device_ids)
+        return ("Selected Machines", selected, selected)
+    selected = _summarize_selected_devices(device_ids)
+    return ("Scoped Machines", selected, selected)
+
+
 def _tenant_context(request: Request) -> TenantContext:
     ctx = TenantContext.from_request(request)
     ctx.require_tenant()
@@ -168,8 +189,8 @@ async def create_rule(
         if rule.notification_channels and "email" in rule.notification_channels:
             try:
                 device_ids = rule.device_ids or []
-                
-                devices_display = ", ".join(device_ids) if device_ids else "N/A"
+                scope_value = str(rule.scope.value) if hasattr(rule.scope, "value") else str(rule.scope)
+                scope_label, devices_display, device_id_display = _rule_scope_email_display(scope_value, device_ids)
                 
                 status_value = rule.status.value if hasattr(rule.status, 'value') else str(rule.status)
                 
@@ -181,8 +202,9 @@ async def create_rule(
                     subject=f"Rule Created: {rule.rule_name}",
                     message=f"Your rule '{rule.rule_name}' has been successfully created and is now {status_value}.",
                     rule=rule,
-                    device_id=", ".join(device_ids) if device_ids else "N/A",
+                    device_id=device_id_display,
                     device_names=devices_display,
+                    scope_label=scope_label,
                     alert_type="rule_created"
                 )
                 logger.info(
