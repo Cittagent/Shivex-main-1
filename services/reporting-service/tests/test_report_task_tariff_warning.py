@@ -899,3 +899,65 @@ async def test_run_consumption_report_keeps_aggregate_demand_for_fully_eligible_
     assert pdf_payloads[-1]["peak_demand_kw"] == summary["peak_demand_kw"]
     assert pdf_payloads[-1]["average_load_kw"] == summary["average_load_kw"]
     assert pdf_payloads[-1]["load_factor_pct"] == summary["load_factor_pct"]
+
+
+@pytest.mark.asyncio
+async def test_run_consumption_report_adds_hidden_overconsumption_contract_without_breaking_existing_summary(monkeypatch):
+    updates: list[dict] = []
+    pdf_payloads: list[dict] = []
+
+    monkeypatch.setattr(report_task, "AsyncSessionLocal", lambda: _FakeSessionContext())
+    monkeypatch.setattr(report_task, "ReportRepository", lambda db, ctx=None: _FakeRepo(updates))
+    monkeypatch.setattr(report_task, "build_service_tenant_context", lambda tenant_id: SimpleNamespace(tenant_id=tenant_id))
+    monkeypatch.setattr(report_task.httpx, "AsyncClient", lambda *args, **kwargs: _TelemetryOnlyAsyncClient())
+    monkeypatch.setattr(report_task, "resolve_tariff", _fake_resolve_tariff_inr)
+    monkeypatch.setattr(report_task.influx_reader, "query_telemetry", _fake_query_telemetry_sparse_positive)
+    monkeypatch.setattr(report_task, "generate_report_insights", lambda **kwargs: [])
+    monkeypatch.setattr(
+        report_task,
+        "generate_consumption_pdf",
+        lambda payload: pdf_payloads.append(payload) or b"%PDF-1.4",
+    )
+    monkeypatch.setattr(report_task.minio_client, "upload_pdf", lambda pdf_bytes, s3_key: None)
+    monkeypatch.setattr(report_task, "clean_for_json", lambda payload: payload)
+
+    await report_task.run_consumption_report(
+        "report-hidden-overconsumption",
+        {
+            "tenant_id": "TENANT-1",
+            "start_date": "2026-04-08",
+            "end_date": "2026-04-08",
+            "resolved_device_ids": ["DEVICE-1"],
+        },
+    )
+
+    completed_updates = [item for item in updates if item.get("status") == "completed"]
+    assert completed_updates, "report should complete"
+    result_json = completed_updates[-1]["result_json"]
+
+    # Existing summary contract remains intact.
+    summary = result_json["summary"]
+    assert summary["total_kwh"] == 1.0
+    assert summary["peak_demand_kw"] == 1.0
+    assert summary["average_load_kw"] == 0.0417
+    assert summary["load_factor_pct"] == 4.17
+    assert summary["total_cost"] == 10.0
+
+    # New additive hidden insight contract is available.
+    hidden = result_json.get("hidden_overconsumption_insight")
+    assert isinstance(hidden, dict)
+    assert "summary" in hidden
+    assert "daily_breakdown" in hidden
+    assert hidden["summary"]["selected_days"] == 1
+    assert len(hidden["daily_breakdown"]) == 1
+    assert hidden["summary"]["total_hidden_overconsumption_kwh"] == round(
+        sum(float(row["hidden_overconsumption_kwh"]) for row in hidden["daily_breakdown"]),
+        4,
+    )
+    assert hidden["summary"]["total_hidden_overconsumption_cost"] == round(
+        sum(float(row["hidden_overconsumption_cost"] or 0.0) for row in hidden["daily_breakdown"]),
+        2,
+    )
+    assert pdf_payloads, "pdf should be generated with the hidden insight payload"
+    assert "hidden_overconsumption_insight" in pdf_payloads[-1]
+    assert isinstance(pdf_payloads[-1]["hidden_overconsumption_insight"], dict)

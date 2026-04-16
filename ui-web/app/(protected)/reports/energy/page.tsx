@@ -5,7 +5,11 @@ import { DateRangeSelector } from "@/components/reports/DateRangeSelector";
 import { DeviceScopeSelector } from "@/components/reports/DeviceScopeSelector";
 import { ReportProgress } from "@/components/reports/ReportProgress";
 import { ErrorPanel } from "@/components/reports/ErrorPanel";
+import { HiddenOverconsumptionInsightSection } from "@/components/reports/HiddenOverconsumptionInsightSection";
 import { formatCurrencyCodeValue } from "@/lib/presentation";
+import {
+  type HiddenOverconsumptionInsight,
+} from "@/lib/hiddenOverconsumptionPresentation";
 import { authApi, type PlantProfile } from "@/lib/authApi";
 import { getDevices, type Device } from "@/lib/deviceApi";
 import { resolveScopedTenantId, resolveVisiblePlants } from "@/lib/orgScope";
@@ -36,6 +40,7 @@ interface ReportResult {
   };
   insights: string[];
   warnings?: string[];
+  hidden_overconsumption_insight?: HiddenOverconsumptionInsight | null;
 }
 
 export default function EnergyReportPage() {
@@ -192,6 +197,205 @@ export default function EnergyReportPage() {
   };
 
   const isFormValid = startDate && endDate && selectedDeviceIds.length > 0 && !submitting;
+  const hiddenInsight = result?.hidden_overconsumption_insight ?? null;
+  const hiddenCurrency = result?.summary?.currency || "INR";
+  const isCompletedView = viewState === "completed" && result != null;
+
+  const configurationPanel = (
+    <div className="space-y-6">
+      {viewState === "empty" && (
+        <>
+          <div className="bg-white p-4 rounded-lg border">
+            <h3 className="font-medium text-gray-900 mb-3">Date Range</h3>
+            <DateRangeSelector
+              onRangeChange={handleRangeChange}
+              disabled={submitting}
+            />
+          </div>
+
+          <div className="bg-white p-4 rounded-lg border">
+            <h3 className="font-medium text-gray-900 mb-3">Scope</h3>
+            <DeviceScopeSelector
+              catalog={scopeCatalog}
+              value={normalizedScopeSelection}
+              onChange={setScopeSelection}
+              disabled={submitting || !selectedTenantId}
+              helperText={reportScopeHint}
+              allModeTitle={getReportScopeLabel(me?.user.role)}
+            />
+            <p className="mt-3 text-sm text-gray-500">{selectedScopeSummary}</p>
+          </div>
+
+          <div className="bg-white p-4 rounded-lg border">
+            <h3 className="font-medium text-gray-900 mb-3">Group By</h3>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="groupBy"
+                  value="daily"
+                  checked={groupBy === "daily"}
+                  onChange={() => setGroupBy("daily")}
+                  disabled={submitting}
+                  className="w-4 h-4"
+                />
+                <span className="text-sm text-gray-700">Daily</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="groupBy"
+                  value="weekly"
+                  checked={groupBy === "weekly"}
+                  onChange={() => setGroupBy("weekly")}
+                  disabled={submitting}
+                  className="w-4 h-4"
+                />
+                <span className="text-sm text-gray-700">Weekly</span>
+              </label>
+            </div>
+          </div>
+
+          <button
+            onClick={handleSubmit}
+            disabled={!isFormValid || !selectedTenantId}
+            className={`w-full py-3 rounded-lg font-medium transition-colors ${
+              isFormValid && selectedTenantId
+                ? "bg-blue-600 text-white hover:bg-blue-700"
+                : "bg-gray-200 text-gray-500 cursor-not-allowed"
+            }`}
+          >
+            {submitting ? "Submitting..." : "Generate Report"}
+          </button>
+        </>
+      )}
+
+      {viewState === "processing" && reportId && (
+        <ReportProgress
+          reportId={reportId}
+          tenantId={selectedTenantId ?? ""}
+          onComplete={handleComplete}
+          onError={handleError}
+        />
+      )}
+
+      {viewState === "failed" && error && (
+        <ErrorPanel
+          errorCode={error.error_code}
+          errorMessage={error.error_message}
+          onRetry={handleRetry}
+        />
+      )}
+    </div>
+  );
+
+  const completedResultPanel = isCompletedView && result ? (
+    <div className="space-y-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Report Result</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Completed reports use a full-width layout so detailed sections like Hidden Overconsumption stay readable.
+            </p>
+          </div>
+          <div className="grid gap-3 text-sm text-slate-600 sm:grid-cols-3 lg:min-w-[420px]">
+            <div className="rounded-lg bg-slate-50 p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Date Range</div>
+              <div className="mt-1 text-sm font-semibold text-slate-900">
+                {startDate && endDate ? `${startDate} to ${endDate}` : "Selected range"}
+              </div>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Scope</div>
+              <div className="mt-1 text-sm font-semibold text-slate-900">{selectedScopeSummary}</div>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Group By</div>
+              <div className="mt-1 text-sm font-semibold capitalize text-slate-900">{groupBy}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="bg-blue-50 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-blue-600">
+                {result.summary?.total_kwh?.toFixed(1) ?? "—"}
+              </div>
+              <div className="text-sm text-gray-600">Total kWh</div>
+            </div>
+            <div className="bg-green-50 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-green-600">
+                {result.summary?.peak_demand_kw != null ? result.summary.peak_demand_kw.toFixed(1) : "—"}
+              </div>
+              <div className="text-sm text-gray-600">Peak kW</div>
+            </div>
+            <div className="bg-purple-50 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-purple-600">
+                {result.summary?.load_factor_pct != null
+                  ? `${result.summary.load_factor_pct.toFixed(1)}%`
+                  : "—"}
+              </div>
+              <div className="text-sm text-gray-600">Load Factor</div>
+            </div>
+            <div className="bg-orange-50 p-4 rounded-lg text-center">
+              <div className="text-2xl font-bold text-orange-600">
+                {formatCurrencyCodeValue(result.summary?.total_cost, result.summary?.currency || "INR")}
+              </div>
+              <div className="text-sm text-gray-600">Est. Cost</div>
+            </div>
+          </div>
+
+          <HiddenOverconsumptionInsightSection
+            insight={hiddenInsight}
+            currency={hiddenCurrency}
+          />
+
+          {result.warnings && result.warnings.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <h3 className="font-medium text-amber-900 mb-2">Data Notes</h3>
+              <ul className="space-y-1">
+                {result.warnings.slice(0, 5).map((w, i) => (
+                  <li key={i} className="text-sm text-amber-800">{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {result.insights && result.insights.length > 0 && (
+            <div>
+              <h3 className="font-medium text-gray-900 mb-3">Key Insights</h3>
+              <ul className="space-y-2">
+                {result.insights.map((insight, idx) => (
+                  <li key={idx} className="text-sm text-gray-600 bg-gray-50 p-2 rounded">
+                    {insight}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <button
+              onClick={handleRetry}
+              className="w-full rounded-lg border border-slate-200 bg-white py-2 text-slate-700 hover:bg-slate-50 sm:w-auto sm:px-5"
+            >
+              Configure Another Report
+            </button>
+            <button
+              onClick={handleDownload}
+              className="w-full rounded-lg bg-blue-600 py-2 text-white hover:bg-blue-700 sm:w-auto sm:px-5"
+            >
+              Download PDF
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <div className="p-6">
@@ -220,168 +424,26 @@ export default function EnergyReportPage() {
         </div>
       ) : null}
 
-      <div className="grid lg:grid-cols-2 gap-6">
+      {isCompletedView ? (
         <div className="space-y-6">
-          {viewState === "empty" && (
-            <>
-              <div className="bg-white p-4 rounded-lg border">
-                <h3 className="font-medium text-gray-900 mb-3">Date Range</h3>
-                <DateRangeSelector
-                  onRangeChange={handleRangeChange}
-                  disabled={submitting}
-                />
-              </div>
-
-              <div className="bg-white p-4 rounded-lg border">
-                <h3 className="font-medium text-gray-900 mb-3">Scope</h3>
-                <DeviceScopeSelector
-                  catalog={scopeCatalog}
-                  value={normalizedScopeSelection}
-                  onChange={setScopeSelection}
-                  disabled={submitting || !selectedTenantId}
-                  helperText={reportScopeHint}
-                  allModeTitle={getReportScopeLabel(me?.user.role)}
-                />
-                <p className="mt-3 text-sm text-gray-500">{selectedScopeSummary}</p>
-              </div>
-
-              <div className="bg-white p-4 rounded-lg border">
-                <h3 className="font-medium text-gray-900 mb-3">Group By</h3>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="groupBy"
-                      value="daily"
-                      checked={groupBy === "daily"}
-                      onChange={() => setGroupBy("daily")}
-                      disabled={submitting}
-                      className="w-4 h-4"
-                    />
-                    <span className="text-sm text-gray-700">Daily</span>
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="groupBy"
-                      value="weekly"
-                      checked={groupBy === "weekly"}
-                      onChange={() => setGroupBy("weekly")}
-                      disabled={submitting}
-                      className="w-4 h-4"
-                    />
-                    <span className="text-sm text-gray-700">Weekly</span>
-                  </label>
-                </div>
-              </div>
-
-              <button
-                onClick={handleSubmit}
-                disabled={!isFormValid || !selectedTenantId}
-                className={`w-full py-3 rounded-lg font-medium transition-colors ${
-                  isFormValid && selectedTenantId
-                    ? "bg-blue-600 text-white hover:bg-blue-700"
-                    : "bg-gray-200 text-gray-500 cursor-not-allowed"
-                }`}
-              >
-                {submitting ? "Submitting..." : "Generate Report"}
-              </button>
-            </>
-          )}
-
-          {viewState === "processing" && reportId && (
-            <ReportProgress
-              reportId={reportId}
-              tenantId={selectedTenantId ?? ""}
-              onComplete={handleComplete}
-              onError={handleError}
-            />
-          )}
-
-          {viewState === "failed" && error && (
-            <ErrorPanel
-              errorCode={error.error_code}
-              errorMessage={error.error_message}
-              onRetry={handleRetry}
-            />
-          )}
+          {completedResultPanel}
         </div>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
+          {configurationPanel}
 
-        <div className="bg-white rounded-lg border min-h-[400px] p-6">
-          {viewState === "empty" && (
-            <div className="h-full flex flex-col items-center justify-center text-gray-400">
-              <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <p>Configure your report and click Generate</p>
-            </div>
-          )}
-
-          {viewState === "completed" && result && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="bg-blue-50 p-4 rounded-lg text-center">
-                  <div className="text-2xl font-bold text-blue-600">
-                    {result.summary?.total_kwh?.toFixed(1) ?? "—"}
-                  </div>
-                  <div className="text-sm text-gray-600">Total kWh</div>
-                </div>
-                <div className="bg-green-50 p-4 rounded-lg text-center">
-                  <div className="text-2xl font-bold text-green-600">
-                    {result.summary?.peak_demand_kw != null ? result.summary.peak_demand_kw.toFixed(1) : "—"}
-                  </div>
-                  <div className="text-sm text-gray-600">Peak kW</div>
-                </div>
-                <div className="bg-purple-50 p-4 rounded-lg text-center">
-                  <div className="text-2xl font-bold text-purple-600">
-                    {result.summary?.load_factor_pct != null
-                      ? `${result.summary.load_factor_pct.toFixed(1)}%`
-                      : "—"}
-                  </div>
-                  <div className="text-sm text-gray-600">Load Factor</div>
-                </div>
-                <div className="bg-orange-50 p-4 rounded-lg text-center">
-                  <div className="text-2xl font-bold text-orange-600">
-                    {formatCurrencyCodeValue(result.summary?.total_cost, result.summary?.currency || "INR")}
-                  </div>
-                  <div className="text-sm text-gray-600">Est. Cost</div>
-                </div>
+          <div className="bg-white rounded-lg border min-h-[400px] p-6">
+            {viewState === "empty" && (
+              <div className="h-full flex flex-col items-center justify-center text-gray-400">
+                <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p>Configure your report and click Generate</p>
               </div>
-
-              {result.warnings && result.warnings.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  <h3 className="font-medium text-amber-900 mb-2">Data Notes</h3>
-                  <ul className="space-y-1">
-                    {result.warnings.slice(0, 5).map((w, i) => (
-                      <li key={i} className="text-sm text-amber-800">{w}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {result.insights && result.insights.length > 0 && (
-                <div>
-                  <h3 className="font-medium text-gray-900 mb-3">Key Insights</h3>
-                  <ul className="space-y-2">
-                    {result.insights.map((insight, idx) => (
-                      <li key={idx} className="text-sm text-gray-600 bg-gray-50 p-2 rounded">
-                        {insight}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              <button
-                onClick={handleDownload}
-                className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                Download PDF
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

@@ -11,6 +11,10 @@ from src.config import settings
 from src.database import AsyncSessionLocal
 from src.repositories.report_repository import ReportRepository
 from src.services.influx_reader import influx_reader
+from src.services.hidden_overconsumption_engine import (
+    aggregate_hidden_overconsumption_insight,
+    calculate_device_hidden_overconsumption_insight,
+)
 from src.services.overtime_engine import compute_overtime_breakdown
 from src.services.report_engine import compute_device_report
 from src.services.insights_engine import generate_report_insights
@@ -652,6 +656,7 @@ async def run_consumption_report(report_id: str, params: dict) -> None:
                 ]
 
                 per_device: list[dict[str, Any]] = []
+                hidden_overconsumption_per_device: list[dict[str, Any]] = []
 
                 for idx, device_id in enumerate(device_ids):
                     device_resp = await client.get(
@@ -767,6 +772,21 @@ async def run_consumption_report(report_id: str, params: dict) -> None:
                         # Canonical energy overlay is internal reporting metadata only.
                         # It should not be promoted into customer-facing warnings.
 
+                    daily_actual_kwh_map = {
+                        str(day.get("date")): float(day.get("energy_kwh") or 0.0)
+                        for day in device_dict.get("daily_breakdown", []) or []
+                        if day.get("date")
+                    }
+                    device_hidden_overconsumption = calculate_device_hidden_overconsumption_insight(
+                        rows=rows,
+                        start_date=start_date,
+                        end_date=end_date,
+                        daily_actual_energy_kwh=daily_actual_kwh_map,
+                        tariff_rate=tariff_rate_used,
+                        device_power_config=device_power_config,
+                    )
+                    hidden_overconsumption_per_device.append(device_hidden_overconsumption)
+
                     device_dict["kpi_basis"] = persisted_kpi.basis
                     device_dict["average_load_duration_basis"] = persisted_kpi.duration_basis
                     device_dict["total_kwh"] = persisted_kpi.total_kwh
@@ -799,6 +819,12 @@ async def run_consumption_report(report_id: str, params: dict) -> None:
                     per_device=per_device,
                     total_kwh=total_kwh,
                     duration_hours=report_window_hours,
+                )
+                hidden_overconsumption_insight = aggregate_hidden_overconsumption_insight(
+                    per_device_insights=hidden_overconsumption_per_device,
+                    start_date=start_date,
+                    end_date=end_date,
+                    tariff_rate=tariff_rate_used,
                 )
                 aggregate_demand_basis = _summary_aggregate_demand_basis(per_device)
                 peak_demand_kw = summary_kpi.peak_demand_kw
@@ -938,6 +964,7 @@ async def run_consumption_report(report_id: str, params: dict) -> None:
                     "overtime_summary": overtime_summary,
                     "overtime_rows": overtime_rows,
                     "overtime_device_summary": overtime_device_summary,
+                    "hidden_overconsumption_insight": hidden_overconsumption_insight,
                     "insights": insights,
                     "warnings": public_warnings,
                     "overall_quality": overall_quality,
@@ -993,6 +1020,7 @@ async def run_consumption_report(report_id: str, params: dict) -> None:
                     "daily_series": daily_series,
                     "devices": public_per_device,
                     "overtime": overtime_summary,
+                    "hidden_overconsumption_insight": hidden_overconsumption_insight,
                     "tariff_rate_used": tariff_rate_used,
                     "tariff_currency": tariff_currency,
                     "tariff_fetched_at": tariff_fetched_at,

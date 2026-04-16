@@ -527,6 +527,64 @@ def _report_styles() -> str:
             background: #ffffff;
         }
 
+        .hidden-record-list {
+            margin-top: 10px;
+        }
+
+        .hidden-record-card {
+            margin-top: 10px;
+            border: 1px solid #dce6f3;
+            border-radius: 16px;
+            background: #ffffff;
+            overflow: hidden;
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+
+        .hidden-record-card:first-child {
+            margin-top: 0;
+        }
+
+        .hidden-record-grid {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        .hidden-record-grid td {
+            width: 20%;
+            padding: 10px 9px;
+            border-bottom: 1px solid #e7edf5;
+            border-right: 1px solid #e7edf5;
+            vertical-align: top;
+        }
+
+        .hidden-record-grid tr:last-child td {
+            border-bottom: none;
+        }
+
+        .hidden-record-grid td:last-child {
+            border-right: none;
+        }
+
+        .hidden-record-label {
+            display: block;
+            font-size: 7.6px;
+            text-transform: uppercase;
+            letter-spacing: 0.9px;
+            color: #64748b;
+            margin-bottom: 5px;
+        }
+
+        .hidden-record-value {
+            display: block;
+            font-size: 9px;
+            font-weight: 600;
+            color: #172033;
+            line-height: 1.45;
+            word-break: break-word;
+        }
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -937,6 +995,115 @@ def get_consumption_report_template():
 
                 {% if overtime_summary.devices_without_shift > 0 %}
                 <div class="warning">{{ overtime_summary.devices_without_shift }} device(s) had no active shift configuration and were excluded from overtime charging.</div>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if hidden_overconsumption_insight %}
+            <div class="section">
+                <div class="section-kicker">Advanced Insight</div>
+                <div class="section-title-row">
+                    <h2>Hidden Overconsumption Insight (P75 Baseline)</h2>
+                    <div class="section-subtitle">Energy above daily baseline expectation</div>
+                </div>
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Hidden Overconsumption</div>
+                        <div class="kpi-value">{% if hidden_overconsumption_insight.summary and hidden_overconsumption_insight.summary.total_hidden_overconsumption_kwh is not none %}{{ hidden_overconsumption_insight.summary.total_hidden_overconsumption_kwh }} kWh{% else %}N/A{% endif %}</div>
+                        <div class="kpi-note">Only counted above baseline</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Hidden Overconsumption Cost</div>
+                        <div class="kpi-value">{% if hidden_overconsumption_insight.summary and hidden_overconsumption_insight.summary.total_hidden_overconsumption_cost is not none %}{{ currency }} {{ hidden_overconsumption_insight.summary.total_hidden_overconsumption_cost }}{% else %}N/A{% endif %}</div>
+                        <div class="kpi-note">{% if hidden_overconsumption_insight.summary and hidden_overconsumption_insight.summary.tariff_rate_used is not none %}{{ currency }} {{ hidden_overconsumption_insight.summary.tariff_rate_used }} / kWh{% else %}Tariff unavailable{% endif %}</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Baseline Energy</div>
+                        <div class="kpi-value">{% if hidden_overconsumption_insight.summary and hidden_overconsumption_insight.summary.total_baseline_energy_kwh is not none %}{{ hidden_overconsumption_insight.summary.total_baseline_energy_kwh }} kWh{% else %}N/A{% endif %}</div>
+                        <div class="kpi-note">Expected from daily P75 baseline</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Aggregate P75 Baseline</div>
+                        <div class="kpi-value">{% if hidden_overconsumption_insight.summary and hidden_overconsumption_insight.summary.aggregate_p75_baseline_reference is not none %}{{ hidden_overconsumption_insight.summary.aggregate_p75_baseline_reference }} W{% else %}N/A{% endif %}</div>
+                        <div class="kpi-note">{% if hidden_overconsumption_insight.summary and hidden_overconsumption_insight.summary.selected_days is not none %}{{ hidden_overconsumption_insight.summary.selected_days }} selected day{% if hidden_overconsumption_insight.summary.selected_days != 1 %}s{% endif %}{% else %}Selected days unavailable{% endif %}</div>
+                    </div>
+                </div>
+
+                {% set hidden_usable = namespace(count=0) %}
+                {% for row in hidden_overconsumption_insight.daily_breakdown or [] %}
+                    {% if row.p75_power_baseline_w is not none and row.baseline_energy_kwh is not none %}
+                        {% set hidden_usable.count = hidden_usable.count + 1 %}
+                    {% endif %}
+                {% endfor %}
+
+                {% if hidden_usable.count > 0 %}
+                <div class="hidden-record-list">
+                    {% for row in hidden_overconsumption_insight.daily_breakdown or [] %}
+                    {% if row.p75_power_baseline_w is not none and row.baseline_energy_kwh is not none %}
+                    {% set diff_kwh = row.actual_energy_kwh - row.baseline_energy_kwh %}
+                    <div class="hidden-record-card">
+                        <table class="hidden-record-grid">
+                            <tbody>
+                                <tr>
+                                    <td>
+                                        <span class="hidden-record-label">Date</span>
+                                        <span class="hidden-record-value">{{ row.date }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Actual Energy (kWh)</span>
+                                        <span class="hidden-record-value">{% if row.actual_energy_kwh is not none %}{{ row.actual_energy_kwh }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">P75 Baseline Power (W)</span>
+                                        <span class="hidden-record-value">{{ row.p75_power_baseline_w }} W</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Baseline Energy (kWh)</span>
+                                        <span class="hidden-record-value">{{ row.baseline_energy_kwh }}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Difference vs Baseline (kWh)</span>
+                                        <span class="hidden-record-value">{% if diff_kwh > 0 %}+{% endif %}{{ "%.4f"|format(diff_kwh) }}</span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <span class="hidden-record-label">Status</span>
+                                        <span class="hidden-record-value">
+                                            {% if diff_kwh > 0 %}
+                                            <span class="badge badge-danger">Above Baseline</span>
+                                            {% elif diff_kwh < 0 %}
+                                            <span class="badge badge-success-soft">Below Baseline</span>
+                                            {% else %}
+                                            <span class="badge badge-muted">Within Baseline</span>
+                                            {% endif %}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Hidden Overconsumption (kWh)</span>
+                                        <span class="hidden-record-value">{% if row.hidden_overconsumption_kwh is not none %}{{ row.hidden_overconsumption_kwh }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Hidden Overconsumption Cost</span>
+                                        <span class="hidden-record-value">{% if row.hidden_overconsumption_cost is not none %}{{ currency }} {{ row.hidden_overconsumption_cost }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Sample Count</span>
+                                        <span class="hidden-record-value">{% if row.sample_count is not none %}{{ row.sample_count }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                    <td>
+                                        <span class="hidden-record-label">Covered Duration (hours)</span>
+                                        <span class="hidden-record-value">{% if row.covered_duration_hours is not none %}{{ row.covered_duration_hours }}{% else %}N/A{% endif %}</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="notice">Hidden overconsumption insight is unavailable for this selection due to insufficient telemetry.</div>
                 {% endif %}
             </div>
             {% endif %}

@@ -2,6 +2,35 @@ from typing import Any
 from pydantic import BaseModel
 
 
+class HiddenOverconsumptionDailyResponse(BaseModel):
+    date: str
+    actual_energy_kwh: float
+    p75_power_baseline_w: float | None = None
+    baseline_energy_kwh: float | None = None
+    hidden_overconsumption_kwh: float
+    hidden_overconsumption_cost: float | None = None
+    sample_count: int
+    covered_duration_hours: float
+    tariff_rate_used: float | None = None
+
+
+class HiddenOverconsumptionSummaryResponse(BaseModel):
+    selected_days: int
+    total_actual_energy_kwh: float
+    aggregate_p75_baseline_reference: float | None = None
+    total_baseline_energy_kwh: float
+    total_hidden_overconsumption_kwh: float
+    total_hidden_overconsumption_cost: float | None = None
+    tariff_rate_used: float | None = None
+
+
+class HiddenOverconsumptionInsightResponse(BaseModel):
+    summary: HiddenOverconsumptionSummaryResponse
+    daily_breakdown: list[HiddenOverconsumptionDailyResponse]
+    aggregation_rule: dict[str, str]
+    insight_text: str | None = None
+
+
 class ReportResponse(BaseModel):
     report_id: str
     status: str
