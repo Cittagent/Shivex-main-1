@@ -3,6 +3,8 @@
 from app.models.device import (
     Device,
     DeviceStatus,
+    DeviceStateInterval,
+    DeviceStateIntervalType,
     DeviceHardwareInstallation,
     DeviceDashboardWidget,
     DeviceDashboardWidgetSetting,
@@ -16,6 +18,8 @@ from app.models.device import (
 __all__ = [
     "Device",
     "DeviceStatus",
+    "DeviceStateInterval",
+    "DeviceStateIntervalType",
     "DeviceHardwareInstallation",
     "DeviceDashboardWidget",
     "DeviceDashboardWidgetSetting",

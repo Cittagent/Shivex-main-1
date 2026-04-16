@@ -33,6 +33,17 @@ def resolve_runtime_status(
     return RuntimeStatus.RUNNING.value if age_seconds <= TELEMETRY_TIMEOUT_SECONDS else RuntimeStatus.STOPPED.value
 
 
+def resolve_runtime_timeout_ended_at(
+    observed_at: Optional[datetime],
+    *,
+    timeout_seconds: int = TELEMETRY_TIMEOUT_SECONDS,
+) -> Optional[datetime]:
+    normalized = normalize_utc_timestamp(observed_at)
+    if normalized is None:
+        return None
+    return normalized + timedelta(seconds=max(int(timeout_seconds), 0))
+
+
 def resolve_load_state(
     load_state: Optional[str],
     observed_at: Optional[datetime],

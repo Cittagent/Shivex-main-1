@@ -15,12 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
-from app.models.device import Device, DeviceLiveState, DeviceShift, RuntimeStatus, TELEMETRY_TIMEOUT_SECONDS
+from app.models.device import Device, DeviceLiveState, DeviceShift, DeviceStateIntervalType, RuntimeStatus, TELEMETRY_TIMEOUT_SECONDS
 from app.repositories.device import DeviceRepository
+from app.repositories.device_state_intervals import DeviceStateIntervalRepository
+from app.services.device_state_intervals import DeviceStateIntervalService
 from app.services.health_config import HealthConfigService
 from app.services.idle_running import IdleRunningService, TariffCache
 from app.services.load_thresholds import classify_current_band, resolve_device_thresholds
-from app.services.runtime_state import resolve_load_state, resolve_runtime_status
+from app.services.runtime_state import resolve_load_state, resolve_runtime_status, resolve_runtime_timeout_ended_at
 from app.services.shift import ShiftService
 from services.shared.energy_accounting import aggregate_window, split_loss_components
 from services.shared.telemetry_normalization import (
@@ -153,6 +155,8 @@ class LiveProjectionService:
             ctx or TenantContext.system("svc:device-service"),
             allow_cross_tenant=ctx is None,
         )
+        self._intervals = DeviceStateIntervalService(session)
+        self._interval_repo = DeviceStateIntervalRepository(session)
         self._health = HealthConfigService(session)
         self._shift = ShiftService(session)
 
@@ -352,6 +356,7 @@ class LiveProjectionService:
             voltage=voltage_v,
             thresholds=thresholds,
         )
+        current_band = classify_current_band(current_a, voltage_v, thresholds)
         previous_load_state = state.load_state
         previous_idle_streak_started_at = self._as_utc(state.idle_streak_started_at)
 
@@ -488,6 +493,13 @@ class LiveProjectionService:
             self._session.expire_all()
             return await self.get_device_snapshot_item(device_id, tenant_id)
 
+        await self._sync_state_intervals(
+            tenant_id=tenant_id,
+            device_id=device_id,
+            sample_ts=ts,
+            load_state=load_state,
+            current_band=current_band,
+        )
         if activation_should_write:
             await self._devices.set_first_telemetry_timestamp_if_missing(
                 device_id=device.device_id,
@@ -498,6 +510,48 @@ class LiveProjectionService:
         await self._session.commit()
         self._session.expire_all()
         return await self.get_device_snapshot_item(device_id, tenant_id)
+
+    async def _sync_state_intervals(
+        self,
+        *,
+        tenant_id: str,
+        device_id: str,
+        sample_ts: datetime,
+        load_state: str,
+        current_band: str,
+    ) -> None:
+        await self._intervals.sync_interval_state(
+            tenant_id=tenant_id,
+            device_id=device_id,
+            state_type=DeviceStateIntervalType.IDLE,
+            is_active=load_state == DeviceStateIntervalType.IDLE.value,
+            event_ts=sample_ts,
+            sample_ts=sample_ts,
+            opened_reason="load_state_idle",
+            closed_reason="load_state_exit",
+            source="live_projection",
+        )
+        await self._intervals.sync_interval_state(
+            tenant_id=tenant_id,
+            device_id=device_id,
+            state_type=DeviceStateIntervalType.OVERCONSUMPTION,
+            is_active=current_band == DeviceStateIntervalType.OVERCONSUMPTION.value,
+            event_ts=sample_ts,
+            sample_ts=sample_ts,
+            opened_reason="current_band_overconsumption",
+            closed_reason="current_band_exit",
+            source="live_projection",
+        )
+        await self._intervals.sync_interval_state(
+            tenant_id=tenant_id,
+            device_id=device_id,
+            state_type=DeviceStateIntervalType.RUNTIME_ON,
+            is_active=True,
+            event_ts=sample_ts,
+            sample_ts=sample_ts,
+            opened_reason="telemetry_running",
+            source="live_projection",
+        )
 
     async def recompute_after_configuration_change(self, device_id: str, tenant_id: str) -> dict[str, Any]:
         device = await self._session.get(Device, {"device_id": device_id, "tenant_id": tenant_id})
@@ -571,27 +625,122 @@ class LiveProjectionService:
         scanned = 0
         repaired = 0
         repaired_device_ids: list[str] = []
+        closed_intervals = 0
+        timeout_closed_device_ids: list[str] = []
         for state in rows:
             scanned += 1
             try:
                 latest = await self._fetch_latest_telemetry(state.device_id, state.tenant_id)
                 if not latest:
-                    continue
-                latest_ts = self._parse_ts(latest.get("timestamp"))
-                state_last_sample = self._as_utc(state.last_sample_ts)
-                if state_last_sample is None or latest_ts > state_last_sample:
-                    await self.apply_live_update(
-                        device_id=state.device_id,
-                        tenant_id=state.tenant_id,
-                        telemetry_payload=latest,
-                        dynamic_fields=latest,
-                    )
-                    repaired += 1
-                    repaired_device_ids.append(state.device_id)
+                    latest_ts = None
+                else:
+                    latest_ts = self._parse_ts(latest.get("timestamp"))
+                    state_last_sample = self._as_utc(state.last_sample_ts)
+                    if state_last_sample is None or latest_ts > state_last_sample:
+                        await self.apply_live_update(
+                            device_id=state.device_id,
+                            tenant_id=state.tenant_id,
+                            telemetry_payload=latest,
+                            dynamic_fields=latest,
+                        )
+                        repaired += 1
+                        repaired_device_ids.append(state.device_id)
+                timeout_summary = await self._reconcile_timed_out_intervals_for_device(
+                    tenant_id=state.tenant_id,
+                    device_id=state.device_id,
+                    authoritative_last_seen=self._as_utc(state.last_telemetry_ts),
+                )
+                closed_intervals += int(timeout_summary.get("closed_intervals", 0))
+                if int(timeout_summary.get("closed_intervals", 0)) > 0:
+                    timeout_closed_device_ids.append(state.device_id)
             except Exception:
                 continue
 
-        return {"scanned": scanned, "repaired": repaired, "repaired_device_ids": repaired_device_ids}
+        if closed_intervals > 0:
+            await self._session.commit()
+        elif repaired == 0:
+            await self._session.rollback()
+        self._session.expire_all()
+        return {
+            "scanned": scanned,
+            "repaired": repaired,
+            "repaired_device_ids": repaired_device_ids,
+            "closed_intervals": closed_intervals,
+            "timeout_closed_device_ids": timeout_closed_device_ids,
+        }
+
+    async def reconcile_open_interval_timeouts(self, max_devices: int = 500) -> dict[str, Any]:
+        """Close stale open intervals for devices that have timed out."""
+        open_intervals = await self._interval_repo.list_open_intervals(
+            tenant_id=self._ctx.tenant_id if self._ctx is not None else None,
+            state_types=[
+                DeviceStateIntervalType.RUNTIME_ON,
+                DeviceStateIntervalType.IDLE,
+                DeviceStateIntervalType.OVERCONSUMPTION,
+            ],
+        )
+
+        device_keys: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for row in open_intervals:
+            key = (row.tenant_id, row.device_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            device_keys.append(key)
+            if len(device_keys) >= max(1, max_devices):
+                break
+
+        closed_intervals = 0
+        closed_device_ids: list[str] = []
+        scanned = len(device_keys)
+        for tenant_id, device_id in device_keys:
+            state = await self._session.get(DeviceLiveState, {"device_id": device_id, "tenant_id": tenant_id})
+            authoritative_last_seen = self._as_utc(state.last_telemetry_ts) if state is not None else None
+            summary = await self._reconcile_timed_out_intervals_for_device(
+                tenant_id=tenant_id,
+                device_id=device_id,
+                authoritative_last_seen=authoritative_last_seen,
+            )
+            closed_intervals += int(summary.get("closed_intervals", 0))
+            if int(summary.get("closed_intervals", 0)) > 0:
+                closed_device_ids.append(device_id)
+
+        if closed_intervals > 0:
+            await self._session.commit()
+        else:
+            await self._session.rollback()
+        self._session.expire_all()
+        return {
+            "scanned": scanned,
+            "closed_intervals": closed_intervals,
+            "closed_device_ids": closed_device_ids,
+        }
+
+    async def _reconcile_timed_out_intervals_for_device(
+        self,
+        *,
+        tenant_id: str,
+        device_id: str,
+        authoritative_last_seen: Optional[datetime],
+        now_utc: Optional[datetime] = None,
+    ) -> dict[str, Any]:
+        timeout_ended_at = resolve_runtime_timeout_ended_at(authoritative_last_seen)
+        if timeout_ended_at is None:
+            return {"closed_intervals": 0}
+
+        if resolve_runtime_status(authoritative_last_seen, now_utc=now_utc) != RuntimeStatus.STOPPED.value:
+            return {"closed_intervals": 0}
+
+        closed_rows = await self._intervals.reconcile_timeout_closure(
+            tenant_id=tenant_id,
+            device_id=device_id,
+            ended_at=timeout_ended_at,
+            sample_ts=timeout_ended_at,
+            closed_reason="telemetry_timeout",
+            source="timeout_reconciler",
+        )
+        return {"closed_intervals": len(closed_rows)}
 
     async def backfill_first_telemetry_timestamps(self, max_devices: int = 500) -> dict[str, Any]:
         """Backfill immutable activation timestamps from historical telemetry."""

@@ -934,7 +934,6 @@ async def test_get_device_snapshot_item_includes_plant_id():
                 plant_id="PLANT-1",
                 device_name="Device Plant 1",
                 device_type="compressor",
-                plant_id="PLANT-1",
             )
         )
         await session.commit()

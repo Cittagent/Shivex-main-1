@@ -201,6 +201,38 @@ class DeviceSingleResponse(BaseModel):
     data: DeviceResponse
 
 
+class DeviceStateIntervalResponse(BaseModel):
+    """Schema for a single device state interval row."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    device_id: str
+    tenant_id: str
+    state_type: str
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+    duration_sec: Optional[int] = None
+    is_open: bool
+    opened_by_sample_ts: Optional[datetime] = None
+    closed_by_sample_ts: Optional[datetime] = None
+    opened_reason: Optional[str] = None
+    closed_reason: Optional[str] = None
+    source: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DeviceStateIntervalListResponse(BaseModel):
+    """Schema for paginated device interval list response."""
+
+    success: bool = True
+    data: list[DeviceStateIntervalResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 class DeviceDeleteResponse(BaseModel):
     """Schema for device deletion response."""
     

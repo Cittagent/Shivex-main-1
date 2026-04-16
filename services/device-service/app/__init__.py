@@ -82,7 +82,9 @@ async def _run_live_projection_reconciliation_cycle(*, refresh_fleet_snapshot: b
             async with AsyncSessionLocal() as session:
                 projection = LiveProjectionService(session, tenant_ctx)
                 summary = await projection.reconcile_recent_projections(max_devices=500)
-                if refresh_fleet_snapshot and int(summary.get("repaired", 0)) > 0:
+                if refresh_fleet_snapshot and (
+                    int(summary.get("repaired", 0)) > 0 or int(summary.get("closed_intervals", 0)) > 0
+                ):
                     dashboard = DashboardService(session, tenant_ctx)
                     await dashboard.materialize_fleet_state_snapshot()
                 logger.info(
@@ -92,7 +94,15 @@ async def _run_live_projection_reconciliation_cycle(*, refresh_fleet_snapshot: b
                         "scanned": summary.get("scanned", 0),
                         "repaired": summary.get("repaired", 0),
                         "repaired_device_ids": summary.get("repaired_device_ids", []),
-                        "fleet_snapshot_refreshed": bool(refresh_fleet_snapshot and int(summary.get("repaired", 0)) > 0),
+                        "closed_intervals": summary.get("closed_intervals", 0),
+                        "timeout_closed_device_ids": summary.get("timeout_closed_device_ids", []),
+                        "fleet_snapshot_refreshed": bool(
+                            refresh_fleet_snapshot
+                            and (
+                                int(summary.get("repaired", 0)) > 0
+                                or int(summary.get("closed_intervals", 0)) > 0
+                            )
+                        ),
                     },
                 )
         except Exception as exc:
@@ -146,6 +156,69 @@ async def _run_activation_backfill_cycle() -> None:
         except Exception as exc:
             logger.error(
                 "Activation backfill failed",
+                extra={"tenant_id": tenant_id, "error": str(exc)},
+            )
+
+
+async def _run_state_interval_retention_cycle() -> None:
+    from app.database import AsyncSessionLocal
+    from app.services.device_state_intervals import DeviceStateIntervalService
+
+    try:
+        async with AsyncSessionLocal() as session:
+            tenant_ids = await _load_active_tenant_ids(session)
+    except Exception as exc:
+        logger.error("State interval retention tenant discovery failed", extra={"error": str(exc)})
+        return
+
+    retention_days = max(1, int(settings.STATE_INTERVAL_RETENTION_DAYS))
+    batch_size = max(1, int(settings.STATE_INTERVAL_CLEANUP_BATCH_SIZE))
+    max_batches = max(1, int(settings.STATE_INTERVAL_CLEANUP_MAX_BATCHES_PER_RUN))
+    stale_open_alert_days = max(1, int(settings.STATE_INTERVAL_STALE_OPEN_ALERT_DAYS))
+
+    for tenant_id in tenant_ids:
+        try:
+            async with AsyncSessionLocal() as session:
+                service = DeviceStateIntervalService(session)
+                cleanup = await service.cleanup_closed_intervals_for_tenant(
+                    tenant_id=tenant_id,
+                    retention_days=retention_days,
+                    batch_size=batch_size,
+                    max_batches=max_batches,
+                )
+                observability = await service.collect_open_interval_observability(
+                    tenant_id=tenant_id,
+                    stale_open_alert_days=stale_open_alert_days,
+                )
+                await session.commit()
+
+                logger.info(
+                    "State interval retention cycle completed",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "retention_days": retention_days,
+                        "batch_size": batch_size,
+                        "max_batches_per_run": max_batches,
+                        "deleted": cleanup.get("deleted", 0),
+                        "batches": cleanup.get("batches", 0),
+                        "cutoff_ts": cleanup.get("cutoff_ts"),
+                        "open_total": observability.get("open_total", 0),
+                        "open_counts_by_state": observability.get("open_counts_by_state", {}),
+                        "stale_open_count": observability.get("stale_open_count", 0),
+                    },
+                )
+                if int(observability.get("stale_open_count", 0)) > 0:
+                    logger.warning(
+                        "State interval stale open rows detected",
+                        extra={
+                            "tenant_id": tenant_id,
+                            "stale_open_count": observability.get("stale_open_count", 0),
+                            "stale_open_alert_days": stale_open_alert_days,
+                        },
+                    )
+        except Exception as exc:
+            logger.error(
+                "State interval retention cycle failed",
                 extra={"tenant_id": tenant_id, "error": str(exc)},
             )
 
@@ -231,6 +304,7 @@ async def lifespan(app: FastAPI):
     trends_task = None
     dashboard_task = None
     projection_reconciler_task = None
+    state_interval_retention_task = None
 
     async def run_performance_trends_scheduler():
         from app.database import AsyncSessionLocal
@@ -430,6 +504,28 @@ async def lifespan(app: FastAPI):
             extra={"interval_seconds": settings.DASHBOARD_RECONCILE_INTERVAL_SECONDS},
         )
 
+    async def run_state_interval_retention_scheduler():
+        interval_seconds = max(300, int(settings.STATE_INTERVAL_CLEANUP_INTERVAL_SECONDS))
+        while not stop_event.is_set():
+            await _run_state_interval_retention_cycle()
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+            except asyncio.TimeoutError:
+                pass
+
+    if settings.STATE_INTERVAL_RETENTION_ENABLED and settings.STATE_INTERVAL_RETENTION_DAYS > 0:
+        state_interval_retention_task = asyncio.create_task(run_state_interval_retention_scheduler())
+        logger.info(
+            "State interval retention scheduler started",
+            extra={
+                "interval_seconds": settings.STATE_INTERVAL_CLEANUP_INTERVAL_SECONDS,
+                "retention_days": settings.STATE_INTERVAL_RETENTION_DAYS,
+                "batch_size": settings.STATE_INTERVAL_CLEANUP_BATCH_SIZE,
+                "max_batches_per_run": settings.STATE_INTERVAL_CLEANUP_MAX_BATCHES_PER_RUN,
+                "stale_open_alert_days": settings.STATE_INTERVAL_STALE_OPEN_ALERT_DAYS,
+            },
+        )
+
     yield
 
     # Shutdown
@@ -451,6 +547,12 @@ async def lifespan(app: FastAPI):
             await asyncio.wait_for(projection_reconciler_task, timeout=10)
         except asyncio.TimeoutError:
             projection_reconciler_task.cancel()
+    if state_interval_retention_task:
+        stop_event.set()
+        try:
+            await asyncio.wait_for(state_interval_retention_task, timeout=10)
+        except asyncio.TimeoutError:
+            state_interval_retention_task.cancel()
     logger.info("Shutting down Device Service - closing database connections")
     await fleet_stream_broadcaster.stop()
     await engine.dispose()

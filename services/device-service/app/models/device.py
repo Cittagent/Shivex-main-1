@@ -4,8 +4,9 @@ from datetime import datetime, time, timezone, timedelta, date
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import String, DateTime, Text, Integer, ForeignKey, ForeignKeyConstraint, Time, Float, Boolean, UniqueConstraint, Numeric, BigInteger, Index, Date, Enum as SAEnum, event
+from sqlalchemy import String, DateTime, Text, Integer, ForeignKey, ForeignKeyConstraint, Time, Float, Boolean, UniqueConstraint, Numeric, BigInteger, Index, Date, Enum as SAEnum, event, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 from app.database import Base
 
@@ -61,6 +62,35 @@ class DeviceIdClass(str, Enum):
     ACTIVE = "active"
     TEST = "test"
     VIRTUAL = "virtual"
+
+
+class DeviceStateIntervalType(str, Enum):
+    """Durable interval states emitted by the live projection/runtime pipeline."""
+
+    IDLE = "idle"
+    OVERCONSUMPTION = "overconsumption"
+    RUNTIME_ON = "runtime_on"
+
+
+def _normalize_aware_utc(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+class AwareTimestamp(TypeDecorator):
+    """Timezone-safe timestamp type that normalizes all values to UTC."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        return _normalize_aware_utc(value)
+
+    def process_result_value(self, value, dialect):
+        return _normalize_aware_utc(value)
 
 
 class DeviceIdSequence(Base):
@@ -651,6 +681,79 @@ class IdleRunningLog(Base):
 
     def __repr__(self) -> str:
         return f"<IdleRunningLog(device_id={self.device_id}, period_start={self.period_start})>"
+
+
+class DeviceStateInterval(Base):
+    """Durable per-device interval log for idle, overconsumption, and runtime_on."""
+
+    __tablename__ = "device_state_intervals"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False)
+    device_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    state_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(AwareTimestamp(), nullable=False)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(AwareTimestamp(), nullable=True)
+    duration_sec: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    is_open: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    opened_by_sample_ts: Mapped[Optional[datetime]] = mapped_column(AwareTimestamp(), nullable=True)
+    closed_by_sample_ts: Mapped[Optional[datetime]] = mapped_column(AwareTimestamp(), nullable=True)
+    opened_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    closed_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        AwareTimestamp(),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        AwareTimestamp(),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    device: Mapped["Device"] = relationship("Device", lazy="selectin")
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["device_id", "tenant_id"],
+            ["devices.device_id", "devices.tenant_id"],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "state_type IN ('idle', 'overconsumption', 'runtime_on')",
+            name="ck_device_state_intervals_state_type",
+        ),
+        Index(
+            "ix_device_state_intervals_device_state_started",
+            "tenant_id",
+            "device_id",
+            "state_type",
+            "started_at",
+        ),
+        Index(
+            "ix_device_state_intervals_device_open",
+            "tenant_id",
+            "device_id",
+            "is_open",
+        ),
+        Index(
+            "ix_device_state_intervals_tenant_started",
+            "tenant_id",
+            "started_at",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<DeviceStateInterval(device_id={self.device_id}, state_type={self.state_type}, "
+            f"started_at={self.started_at}, is_open={self.is_open})>"
+        )
 
 
 class DeviceLiveState(Base):

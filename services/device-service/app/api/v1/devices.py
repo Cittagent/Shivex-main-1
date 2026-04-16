@@ -47,6 +47,7 @@ from app.schemas.device import (
     FleetStreamEvent,
     DashboardWidgetConfigUpdateRequest,
     DashboardWidgetConfigResponse,
+    DeviceStateIntervalListResponse,
     HardwareUnitCreate,
     HardwareUnitUpdate,
     HardwareUnitListResponse,
@@ -58,6 +59,7 @@ from app.schemas.device import (
     DeviceHardwareMappingListResponse,
     DeviceHardwareMappingResponse,
 )
+from app.repositories.device_state_intervals import DeviceStateIntervalRepository
 from app.services.device import DeviceService
 from app.services.device_errors import (
     DeviceAlreadyExistsError,
@@ -2623,6 +2625,57 @@ async def device_heartbeat(
 # =====================================================
 # Idle Running Endpoints
 # =====================================================
+
+@router.get(
+    "/{device_id}/state-intervals",
+    response_model=DeviceStateIntervalListResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid filter range"},
+        404: {"model": ErrorResponse, "description": "Device not found"},
+    },
+)
+async def get_device_state_intervals(
+    device_id: str,
+    request: Request,
+    start_time: Optional[datetime] = Query(default=None, description="Inclusive range start timestamp"),
+    end_time: Optional[datetime] = Query(default=None, description="Inclusive range end timestamp"),
+    state_type: Optional[str] = Query(default=None, pattern="^(idle|overconsumption|runtime_on)$"),
+    is_open: Optional[bool] = Query(default=None, description="Filter by open/closed interval state"),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> DeviceStateIntervalListResponse:
+    if start_time is not None and end_time is not None and start_time > end_time:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"success": False, "message": "start_time must be less than or equal to end_time"},
+        )
+    if await _resolve_scoped_device(request, db, device_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"success": False, "message": f"Device '{device_id}' not found"},
+        )
+
+    tenant_id = get_required_tenant_id(request)
+    repository = DeviceStateIntervalRepository(db)
+    rows, total = await repository.list_device_intervals(
+        tenant_id=tenant_id,
+        device_id=device_id,
+        start_time=start_time,
+        end_time=end_time,
+        state_type=state_type,
+        is_open=is_open,
+        limit=limit,
+        offset=offset,
+    )
+    return DeviceStateIntervalListResponse(
+        success=True,
+        data=rows,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
 
 @router.get(
     "/{device_id}/idle-config",
