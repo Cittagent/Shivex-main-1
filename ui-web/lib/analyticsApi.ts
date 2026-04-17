@@ -261,6 +261,9 @@ export interface AnalyticsJobListItem {
   job_id: string;
   status: string;
   progress?: number | null;
+  phase?: string | null;
+  phase_label?: string | null;
+  phase_progress?: number | null;
   message?: string | null;
   error_message?: string | null;
   error_code?: string | null;
@@ -271,6 +274,8 @@ export interface AnalyticsJobListItem {
   attempt?: number | null;
   worker_lease_expires_at?: string | null;
   estimated_wait_seconds?: number | null;
+  estimated_completion_seconds?: number | null;
+  estimate_quality?: "low" | "medium" | "high" | null;
 }
 
 export async function runAnalytics(payload: RunAnalyticsRequest) {
@@ -301,6 +306,13 @@ export async function getAnalyticsStatus(jobId: string) {
     status: string;
     progress: number;
     message: string;
+    phase?: string | null;
+    phase_label?: string | null;
+    phase_progress?: number | null;
+    queue_position?: number | null;
+    estimated_wait_seconds?: number | null;
+    estimated_completion_seconds?: number | null;
+    estimate_quality?: "low" | "medium" | "high" | null;
     error_message?: string;
     error_code?: string;
   }>(`${ANALYTICS_SERVICE_BASE}/api/v1/analytics/status/${jobId}`);

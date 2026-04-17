@@ -1,21 +1,19 @@
 from datetime import datetime, date
-from uuid import uuid4
-import asyncio
 import hashlib
 import json
+from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import settings
-from src.database import get_db, AsyncSessionLocal
+from src.database import get_db
+from src.queue import ReportJob, get_report_queue
 from src.schemas.requests import ConsumptionReportRequest
 from src.schemas.responses import ReportResponse
 from src.repositories.report_repository import ReportRepository
 from src.services.device_scope import ReportingDeviceScopeService
 from src.services.tenant_scope import build_service_tenant_context, normalize_tenant_id
-from src.tasks.report_task import run_consumption_report
 from services.shared.tenant_context import TenantContext, resolve_request_tenant_id
 
 router = APIRouter(tags=["energy-reports"])
@@ -38,24 +36,6 @@ def resolve_submission_tenant_id(app_request: Request, body_tenant_id: str | Non
             },
         )
     return resolved
-
-
-async def _run_consumption_report_with_timeout(report_id: str, task_params: dict) -> None:
-    try:
-        await asyncio.wait_for(
-            run_consumption_report(report_id, task_params),
-            timeout=max(1, settings.REPORT_JOB_TIMEOUT_SECONDS),
-        )
-    except asyncio.TimeoutError:
-        async with AsyncSessionLocal() as db:
-            repo = ReportRepository(db)
-            await repo.update_report(
-                report_id,
-                status="failed",
-                progress=100,
-                error_code="JOB_TIMEOUT",
-                error_message=f"Report exceeded timeout ({settings.REPORT_JOB_TIMEOUT_SECONDS}s)",
-            )
 
 
 async def resolve_all_devices(ctx: TenantContext) -> list[str]:
@@ -158,7 +138,6 @@ async def validate_device_for_reporting(device_id: str, ctx: TenantContext) -> d
 async def create_energy_consumption_report(
     request: ConsumptionReportRequest,
     app_request: Request,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     import logging
@@ -250,7 +229,7 @@ async def create_energy_consumption_report(
         dup_status = duplicate.status.value if hasattr(duplicate.status, "value") else str(duplicate.status)
         return ReportResponse(
             report_id=duplicate.report_id,
-            status=dup_status,
+            status="processing" if dup_status == "pending" else dup_status,
             created_at=duplicate.created_at.isoformat() if duplicate.created_at else datetime.utcnow().isoformat(),
             estimated_completion_seconds=15,
         )
@@ -269,16 +248,13 @@ async def create_energy_consumption_report(
         report_type="consumption",
         params=params
     )
-
-    task_params = {
-        "tenant_id": tenant_id,
-        "device_id": request_device_id.upper() if request_device_id.upper() == "ALL" else request_device_id,
-        "resolved_device_ids": device_ids,
-        "start_date": str(request.start_date),
-        "end_date": str(request.end_date),
-        "report_name": request.report_name,
-    }
-    background_tasks.add_task(_run_consumption_report_with_timeout, report_id, task_params)
+    await get_report_queue().enqueue(
+        ReportJob(
+            report_id=report_id,
+            tenant_id=tenant_id,
+            report_type="consumption",
+        )
+    )
     
     return ReportResponse(
         report_id=report_id,

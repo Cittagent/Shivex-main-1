@@ -130,6 +130,26 @@ class NotificationDeliveryLogRepository(TenantScopedRepository[NotificationDeliv
             metadata_json=metadata_json,
         )
 
+    async def mark_attempted(
+        self,
+        log_id: str,
+        *,
+        attempted_at: Optional[datetime] = None,
+        metadata_json: Optional[dict[str, Any]] = None,
+    ) -> Optional[NotificationDeliveryLog]:
+        row = await self.get_by_id(log_id)
+        if row is None:
+            return None
+        now = attempted_at or datetime.now(timezone.utc)
+        row.attempted_at = now
+        return await self._transition_row_status(
+            row=row,
+            target_status=NotificationDeliveryStatus.ATTEMPTED.value,
+            when=now,
+            billable_units=0,
+            metadata_json=metadata_json,
+        )
+
     async def mark_delivered(
         self,
         log_id: str,

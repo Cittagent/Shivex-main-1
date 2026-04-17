@@ -4,6 +4,10 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
+from tests._bootstrap import bootstrap_paths
+
+bootstrap_paths()
+
 from src.models import DeviceMetadata
 from src.services.dlq_retry_service import DLQRetryService
 from src.utils.validation import TelemetryValidator
@@ -49,6 +53,16 @@ class FakeDLQRepository:
     def fetch_pending_retries(self, **kwargs):
         self.fetch_kwargs = kwargs
         return list(self.rows)
+
+    def retryable_error_types(self):
+        return (
+            "invalid_numeric_fields",
+            "influxdb_write_error",
+            "outbox_enqueue_error",
+            "parse_error",
+            "processing_error",
+            "unexpected_error",
+        )
 
     def mark_retry_reprocessed(self, **kwargs):
         self.retry_reprocessed_kwargs = kwargs

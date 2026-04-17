@@ -45,10 +45,17 @@ class EnergyReport(Base):
     error_code = Column(String(100), nullable=True)
     error_message = Column(Text, nullable=True)
     progress = Column(Integer, default=0, nullable=False)
+    enqueued_at = Column(DateTime, nullable=True)
+    processing_started_at = Column(DateTime, nullable=True)
+    worker_id = Column(String(128), nullable=True)
+    retry_count = Column(Integer, default=0, nullable=False)
+    timeout_count = Column(Integer, default=0, nullable=False)
+    last_attempt_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("ix_energy_reports_tenant_status", "tenant_id", "status"),
         Index("ix_energy_reports_tenant_type_created", "tenant_id", "report_type", "created_at"),
+        Index("ix_energy_reports_status_processing_started", "status", "processing_started_at"),
     )

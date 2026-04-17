@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     REPORTING_SERVICE_BASE_URL: str | None = os.getenv("REPORTING_SERVICE_BASE_URL", None)
     ENERGY_SERVICE_BASE_URL: str | None = os.getenv("ENERGY_SERVICE_BASE_URL", None)
     ENERGY_SERVICE_TIMEOUT_SECONDS: float = 2.5
+    PROJECTION_BATCH_CHUNK_SIZE: int = 25
 
     # Performance trends
     PERFORMANCE_TRENDS_ENABLED: bool = True
@@ -159,8 +160,8 @@ def validate_dependency_dns(*, log_failures: bool = True) -> dict[str, dict[str,
     return results
 
 
-def get_dependency_dns_status() -> dict[str, dict[str, Any]]:
-    if not _dependency_dns_status:
+def get_dependency_dns_status(*, force_refresh: bool = False) -> dict[str, dict[str, Any]]:
+    if force_refresh or not _dependency_dns_status:
         return validate_dependency_dns(log_failures=False)
     return dict(_dependency_dns_status)
 

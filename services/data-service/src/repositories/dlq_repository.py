@@ -18,10 +18,23 @@ from src.utils import get_logger
 logger = get_logger(__name__)
 
 
+def _normalized_error_types(error_types: Sequence[str] | None) -> tuple[str, ...]:
+    if not error_types:
+        return ()
+    normalized = [str(value).strip().lower() for value in error_types if str(value).strip()]
+    return tuple(dict.fromkeys(normalized))
+
+
 class DLQBackend(Protocol):
     """Protocol for DLQ backend implementations."""
 
-    def send(self, entry: DLQEntry) -> bool:
+    def send(
+        self,
+        entry: DLQEntry,
+        *,
+        initial_status: str = "pending",
+        dead_reason: Optional[str] = None,
+    ) -> bool:
         """Send entry to DLQ."""
         ...
 
@@ -74,6 +87,15 @@ class DLQBackend(Protocol):
 
     def purge_expired(self, *, created_before: datetime, batch_size: int) -> int:
         """Purge DLQ rows past the configured retention boundary."""
+        ...
+
+    def reclassify_non_retryable_pending(
+        self,
+        *,
+        retryable_error_types: Sequence[str],
+        batch_size: int,
+    ) -> int:
+        """Mark non-retryable pending rows as dead to keep retry backlog bounded."""
         ...
 
     def close(self) -> None:
@@ -135,7 +157,13 @@ class FileBasedDLQBackend:
             except OSError as exc:
                 logger.error("Failed to remove old DLQ file", file=str(file_path), error=str(exc))
 
-    def send(self, entry: DLQEntry) -> bool:
+    def send(
+        self,
+        entry: DLQEntry,
+        *,
+        initial_status: str = "pending",
+        dead_reason: Optional[str] = None,
+    ) -> bool:
         with self._lock:
             try:
                 self._rotate_if_needed()
@@ -197,6 +225,14 @@ class FileBasedDLQBackend:
         return "dead"
 
     def purge_expired(self, *, created_before: datetime, batch_size: int) -> int:
+        return 0
+
+    def reclassify_non_retryable_pending(
+        self,
+        *,
+        retryable_error_types: Sequence[str],
+        batch_size: int,
+    ) -> int:
         return 0
 
     def close(self) -> None:
@@ -267,10 +303,19 @@ class MySQLDLQBackend:
                     # Index already exists.
                     pass
 
-    def send(self, entry: DLQEntry) -> bool:
+    def send(
+        self,
+        entry: DLQEntry,
+        *,
+        initial_status: str = "pending",
+        dead_reason: Optional[str] = None,
+    ) -> bool:
         payload = entry.model_dump()
         payload_json = json.dumps(payload["original_payload"], default=str)
         timestamp = entry.timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+        normalized_status = str(initial_status or "pending").strip().lower()
+        if normalized_status not in {"pending", "dead", "reprocessed"}:
+            normalized_status = "pending"
         with self._lock:
             try:
                 with self._engine.begin() as conn:
@@ -279,7 +324,7 @@ class MySQLDLQBackend:
                         INSERT INTO {self.TABLE_NAME}
                           (timestamp, error_type, error_message, retry_count, original_payload, status, last_retry_at, dead_reason)
                         VALUES
-                          (%s, %s, %s, %s, %s, 'pending', NULL, NULL)
+                          (%s, %s, %s, %s, %s, %s, NULL, %s)
                         """,
                         (
                             timestamp,
@@ -287,6 +332,8 @@ class MySQLDLQBackend:
                             entry.error_message,
                             entry.retry_count,
                             payload_json,
+                            normalized_status,
+                            dead_reason if normalized_status == "dead" else None,
                         ),
                     )
                 self._entries_written += 1
@@ -423,22 +470,54 @@ class MySQLDLQBackend:
             "entries_written": self._entries_written,
             "write_failures": self._write_failures,
             "backlog_count": None,
+            "pending_total_count": None,
+            "pending_retryable_count": None,
+            "pending_non_retryable_count": None,
             "oldest_pending_created_at": None,
+            "oldest_pending_retryable_created_at": None,
+            "retryable_error_types": list(DLQRepository.retryable_error_types()),
         }
         try:
             with self._engine.connect() as conn:
-                result = conn.execute(
+                pending_result = conn.execute(
                     text(
                         f"""
-                        SELECT COUNT(*) AS backlog_count, MIN(created_at) AS oldest_pending_created_at
+                        SELECT COUNT(*) AS pending_total_count, MIN(created_at) AS oldest_pending_created_at
                         FROM {self.TABLE_NAME}
                         WHERE status='pending'
                         """
                     )
                 )
-                row = result.mappings().one_or_none() or {}
-                stats["backlog_count"] = row.get("backlog_count", 0)
-                stats["oldest_pending_created_at"] = row.get("oldest_pending_created_at")
+                pending_row = pending_result.mappings().one_or_none() or {}
+                pending_total = int(pending_row.get("pending_total_count") or 0)
+                stats["pending_total_count"] = pending_total
+                stats["oldest_pending_created_at"] = pending_row.get("oldest_pending_created_at")
+
+                retryable_types = DLQRepository.retryable_error_types()
+                if retryable_types:
+                    placeholders = ", ".join(f":error_type_{index}" for index in range(len(retryable_types)))
+                    params = {f"error_type_{index}": value for index, value in enumerate(retryable_types)}
+                    retryable_result = conn.execute(
+                        text(
+                            f"""
+                            SELECT COUNT(*) AS pending_retryable_count, MIN(created_at) AS oldest_pending_retryable_created_at
+                            FROM {self.TABLE_NAME}
+                            WHERE status='pending'
+                              AND LOWER(error_type) IN ({placeholders})
+                            """
+                        ),
+                        params,
+                    )
+                    retryable_row = retryable_result.mappings().one_or_none() or {}
+                    pending_retryable = int(retryable_row.get("pending_retryable_count") or 0)
+                    stats["oldest_pending_retryable_created_at"] = retryable_row.get("oldest_pending_retryable_created_at")
+                else:
+                    pending_retryable = 0
+                    stats["oldest_pending_retryable_created_at"] = None
+
+                stats["pending_retryable_count"] = pending_retryable
+                stats["pending_non_retryable_count"] = max(0, pending_total - pending_retryable)
+                stats["backlog_count"] = pending_retryable
         except Exception as exc:
             logger.warning("Failed to query MySQL DLQ operational stats", error=str(exc))
         return stats
@@ -459,6 +538,58 @@ class MySQLDLQBackend:
                 ),
                 {"created_before": cutoff, "limit": limit},
             )
+        return int(result.rowcount or 0)
+
+    def reclassify_non_retryable_pending(
+        self,
+        *,
+        retryable_error_types: Sequence[str],
+        batch_size: int,
+    ) -> int:
+        normalized_retryable = _normalized_error_types(retryable_error_types)
+        limit = max(1, int(batch_size))
+        with self._engine.begin() as conn:
+            if normalized_retryable:
+                placeholders = ", ".join(f":error_type_{index}" for index in range(len(normalized_retryable)))
+                params: dict[str, Any] = {
+                    "limit": limit,
+                    "dead_reason": "non_retryable_pending_reclassified",
+                }
+                for index, value in enumerate(normalized_retryable):
+                    params[f"error_type_{index}"] = value
+                result = conn.execute(
+                    text(
+                        f"""
+                        UPDATE {self.TABLE_NAME}
+                        SET status = 'dead',
+                            dead_reason = COALESCE(dead_reason, :dead_reason),
+                            last_retry_at = COALESCE(last_retry_at, UTC_TIMESTAMP(6))
+                        WHERE status = 'pending'
+                          AND LOWER(error_type) NOT IN ({placeholders})
+                        ORDER BY created_at ASC
+                        LIMIT :limit
+                        """
+                    ),
+                    params,
+                )
+            else:
+                result = conn.execute(
+                    text(
+                        f"""
+                        UPDATE {self.TABLE_NAME}
+                        SET status = 'dead',
+                            dead_reason = COALESCE(dead_reason, :dead_reason),
+                            last_retry_at = COALESCE(last_retry_at, UTC_TIMESTAMP(6))
+                        WHERE status = 'pending'
+                        ORDER BY created_at ASC
+                        LIMIT :limit
+                        """
+                    ),
+                    {
+                        "dead_reason": "non_retryable_pending_reclassified",
+                        "limit": limit,
+                    },
+                )
         return int(result.rowcount or 0)
 
     def close(self) -> None:
@@ -488,24 +619,42 @@ class DLQRepository:
         error_type: str,
         error_message: str,
         retry_count: int = 0,
+        *,
+        initial_status: str | None = None,
+        dead_reason: Optional[str] = None,
     ) -> bool:
+        resolved_error_type = str(error_type).strip()
+        normalized_error_type = resolved_error_type.lower()
+        resolved_initial_status = initial_status
+        resolved_dead_reason = dead_reason
+        if resolved_initial_status is None:
+            if normalized_error_type in self.retryable_error_types():
+                resolved_initial_status = "pending"
+            else:
+                resolved_initial_status = "dead"
+                if not resolved_dead_reason:
+                    resolved_dead_reason = error_message
         entry = DLQEntry(
             original_payload=original_payload,
-            error_type=error_type,
+            error_type=resolved_error_type,
             error_message=error_message,
             retry_count=retry_count,
         )
-        success = self.backend.send(entry)
+        success = self.backend.send(
+            entry,
+            initial_status=resolved_initial_status,
+            dead_reason=resolved_dead_reason,
+        )
         if success:
             logger.info(
                 "Message sent to DLQ",
-                error_type=error_type,
+                error_type=resolved_error_type,
                 device_id=original_payload.get("device_id", "unknown"),
             )
         else:
             logger.error(
                 "Failed to send message to DLQ",
-                error_type=error_type,
+                error_type=resolved_error_type,
                 device_id=original_payload.get("device_id", "unknown"),
             )
         return success
@@ -576,6 +725,16 @@ class DLQRepository:
             created_before=created_before,
             batch_size=batch_size,
         )
+
+    def reclassify_non_retryable_pending(self, *, batch_size: int) -> int:
+        return self.backend.reclassify_non_retryable_pending(
+            retryable_error_types=self.retryable_error_types(),
+            batch_size=batch_size,
+        )
+
+    @staticmethod
+    def retryable_error_types() -> tuple[str, ...]:
+        return _normalized_error_types(settings.dlq_retryable_error_types)
 
     def close(self) -> None:
         self.backend.close()

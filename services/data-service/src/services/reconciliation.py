@@ -117,6 +117,7 @@ class ReconciliationService:
             influx_ts = latest_point.timestamp if latest_point is not None else None
             drift_seconds, action_taken = await self._evaluate_device(
                 device_id=device_id,
+                tenant_id=str(device.get("tenant_id") or "").strip(),
                 influx_ts=influx_ts,
                 mysql_ts=mysql_ts,
                 checked_at=checked_at,
@@ -137,6 +138,7 @@ class ReconciliationService:
         self,
         *,
         device_id: str,
+        tenant_id: str,
         influx_ts: datetime | None,
         mysql_ts: datetime | None,
         checked_at: datetime,
@@ -164,9 +166,12 @@ class ReconciliationService:
             )
 
         if drift_seconds > resync_seconds and latest_payload is not None:
+            payload = dict(latest_payload)
+            if tenant_id:
+                payload.setdefault("tenant_id", tenant_id)
             await self.outbox_repository.enqueue_telemetry(
                 device_id=device_id,
-                telemetry_payload=latest_payload,
+                telemetry_payload=payload,
                 targets=self._targets(),
                 max_retries=settings.outbox_max_retries,
             )
@@ -209,7 +214,13 @@ class ReconciliationService:
                     return list(self._last_mysql_state)
                 response.raise_for_status()
                 payload = response.json()
-                batch = payload.get("devices") or []
+                raw_batch = payload.get("devices") or []
+                batch = []
+                for item in raw_batch:
+                    if isinstance(item, dict):
+                        annotated = dict(item)
+                        annotated.setdefault("tenant_id", tenant_id)
+                        batch.append(annotated)
                 devices.extend(batch)
                 total_pages = int(payload.get("total_pages") or 1)
                 if page >= total_pages:

@@ -1,6 +1,5 @@
 """Analytics API endpoints."""
 
-import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -14,7 +13,6 @@ from src.api.dependencies import get_job_queue, get_result_repository
 from src.config.settings import get_settings
 from src.infrastructure.database import async_session_maker
 from src.infrastructure.mysql_repository import MySQLResultRepository
-from src.infrastructure.s3_client import S3Client
 from src.models.database import WorkerHeartbeat, FailureEventLabel, AccuracyEvaluation
 from src.models.schemas import (
     AnalyticsJobResponse,
@@ -26,21 +24,46 @@ from src.models.schemas import (
     JobStatusResponse,
     SupportedModelsResponse,
 )
-from src.services.result_formatter import ResultFormatter
 from src.services.result_repository import ResultRepository
-from src.services.readiness_orchestrator import ensure_device_ready
 from src.utils.exceptions import JobNotFoundError
 from src.workers.job_queue import QueueBackend
 from services.shared.job_context import BoundJobPayload
 
-from src.services.dataset_service import DatasetService
 from src.services.analytics.accuracy_evaluator import AccuracyEvaluator
 from src.services.device_scope import AnalyticsDeviceScopeService
+from src.services.job_status_estimator import JobStatusEstimator
+from src.services.scaling_policy import AnalyticsScalingPolicy
 from services.shared.tenant_context import resolve_request_tenant_id
 
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+
+async def _build_status_response(job_id: str, job) -> JobStatusResponse:
+    async with async_session_maker() as session:
+        estimate = await JobStatusEstimator(session).estimate(job)
+
+    return JobStatusResponse(
+        job_id=job_id,
+        status=JobStatus(job.status),
+        progress=job.progress,
+        message=job.message,
+        error_message=job.error_message,
+        error_code=job.error_code,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        queue_position=estimate.queue_position if estimate.queue_position is not None else job.queue_position,
+        attempt=job.attempt,
+        worker_lease_expires_at=job.worker_lease_expires_at,
+        estimated_wait_seconds=estimate.estimated_wait_seconds,
+        estimated_completion_seconds=estimate.estimated_completion_seconds,
+        estimate_quality=estimate.estimate_quality,
+        phase=getattr(job, "phase", None),
+        phase_label=getattr(job, "phase_label", None),
+        phase_progress=getattr(job, "phase_progress", None),
+    )
 
 
 def get_tenant_id(request: Request) -> str | None:
@@ -92,6 +115,39 @@ async def check_worker_alive() -> bool:
     return count > 0
 
 
+def _record_admission_rejection(app_request: Request, category: str) -> None:
+    counters = getattr(app_request.app.state, "analytics_rejections", None)
+    if isinstance(counters, dict):
+        counters[category] = int(counters.get(category, 0) or 0) + 1
+
+
+async def _enforce_admission_policy(
+    *,
+    app_request: Request,
+    result_repository: ResultRepository,
+    tenant_id: str | None,
+    requested_jobs: int = 1,
+) -> int:
+    settings = get_settings()
+    decision = await AnalyticsScalingPolicy(settings, result_repository).evaluate_submission(
+        tenant_id=tenant_id,
+        requested_jobs=requested_jobs,
+    )
+    if decision.allowed:
+        return decision.queue_position
+
+    category = "tenant_cap" if decision.status_code == status.HTTP_429_TOO_MANY_REQUESTS else "overloaded"
+    _record_admission_rejection(app_request, category)
+    raise HTTPException(
+        status_code=decision.status_code,
+        detail={
+            "error": decision.error_code,
+            "message": decision.message,
+            **(decision.details or {}),
+        },
+    )
+
+
 @router.post(
     "/run",
     response_model=AnalyticsJobResponse,
@@ -127,6 +183,12 @@ async def run_analytics(
         )
     normalized_device_ids = await AnalyticsDeviceScopeService(ctx).normalize_requested_device_ids([request.device_id])
     request.device_id = normalized_device_ids[0]
+    queue_position = await _enforce_admission_policy(
+        app_request=app_request,
+        result_repository=result_repository,
+        tenant_id=tenant_id,
+        requested_jobs=1,
+    )
     job_id = str(uuid4())
 
     logger.info(
@@ -155,7 +217,7 @@ async def run_analytics(
         job_id=job_id,
         attempt=1,
         queue_enqueued_at=datetime.now(timezone.utc),
-        queue_position=max(0, int(getattr(job_queue, "size", lambda: 0)() or 0)),
+        queue_position=max(0, int(queue_position)),
     )
 
     raw_payload = _build_job_payload(
@@ -187,278 +249,6 @@ def _default_model_for(analysis_type: str) -> str:
     return "failure_ensemble"
 
 
-async def _update_parent_progress(parent_job_id: str, progress: float, message: str) -> None:
-    async with async_session_maker() as session:
-        repo = MySQLResultRepository(session)
-        await repo.update_job_progress(parent_job_id, progress=progress, message=message)
-
-
-async def _fail_parent_job(parent_job_id: str, message: str, details: Dict[str, object]) -> None:
-    async with async_session_maker() as session:
-        repo = MySQLResultRepository(session)
-        await repo.save_results(
-            job_id=parent_job_id,
-            results={
-                "formatted": {
-                    "analysis_type": "fleet",
-                    "job_id": parent_job_id,
-                    "fleet_health_score": 0.0,
-                    "worst_device_id": None,
-                    "worst_device_health": 0.0,
-                    "critical_devices": [],
-                    "source_analysis_type": details.get("analysis_type", "prediction"),
-                    "device_summaries": [],
-                    "execution_metadata": {
-                        "data_readiness": "not_ready",
-                        "devices_failed": details.get("devices_failed", []),
-                        "reason": message,
-                    },
-                }
-            },
-            accuracy_metrics={},
-            execution_time_seconds=0,
-        )
-        await repo.update_job_status(
-            job_id=parent_job_id,
-            status=JobStatus.FAILED,
-            completed_at=datetime.now(timezone.utc),
-            message=message,
-            error_message=message,
-        )
-
-
-async def _monitor_fleet(
-    parent_job_id: str,
-    child_jobs: Dict[str, str],
-    analysis_type: str,
-    skipped_devices: List[Dict[str, str]],
-    total_selected: int,
-) -> None:
-    formatter = ResultFormatter()
-    while True:
-        await asyncio.sleep(2)
-        async with async_session_maker() as session:
-            repo = MySQLResultRepository(session)
-            completed: List[dict] = []
-            failed: List[dict] = []
-            running_count = 0
-
-            for device_id, child_id in child_jobs.items():
-                job = await repo.get_job(child_id)
-                if job.status == JobStatus.COMPLETED.value:
-                    completed.append({"device_id": device_id, "job_id": child_id, "results": job.results or {}})
-                elif job.status == JobStatus.FAILED.value:
-                    failed.append(
-                        {
-                            "device_id": device_id,
-                            "job_id": child_id,
-                            "message": job.error_message or job.message or "Job failed",
-                        }
-                    )
-                else:
-                    running_count += 1
-
-            total = len(child_jobs)
-            done = len(completed)
-            progress = 35.0 + (done / max(1, total)) * 60.0
-            await repo.update_job_progress(
-                parent_job_id,
-                progress=min(95.0, progress),
-                message=f"Running analytics for fleet ({done}/{total} completed)",
-            )
-
-            if running_count == 0 and (done + len(failed) == total):
-                device_formatted = []
-                for item in completed:
-                    formatted = (item["results"] or {}).get("formatted")
-                    if formatted:
-                        device_formatted.append(formatted)
-                fleet_formatted = formatter.format_fleet_results(
-                    job_id=parent_job_id,
-                    analysis_type=analysis_type,
-                    device_results=device_formatted,
-                    child_job_map=child_jobs,
-                )
-                failed_devices = [
-                    {"device_id": str(f["device_id"]), "reason": "child_job_failed", "message": str(f["message"])}
-                    for f in failed
-                ]
-                coverage_pct = round((len(completed) / max(1, total_selected)) * 100, 1)
-                fleet_formatted["execution_metadata"] = {
-                    "fleet_policy": "best_effort_exact",
-                    "children_count": total,
-                    "devices_ready": [str(item["device_id"]) for item in completed],
-                    "devices_failed": failed_devices,
-                    "devices_skipped": skipped_devices,
-                    "skipped_reasons": {
-                        str(item.get("device_id")): str(item.get("reason"))
-                        for item in skipped_devices
-                    },
-                    "coverage_pct": coverage_pct,
-                    "selected_device_count": total_selected,
-                }
-                await repo.save_results(
-                    job_id=parent_job_id,
-                    results={
-                        "children": child_jobs,
-                        "failed_children": failed,
-                        "skipped_children": skipped_devices,
-                        "formatted": fleet_formatted,
-                    },
-                    accuracy_metrics={},
-                    execution_time_seconds=0,
-                )
-                if len(completed) > 0:
-                    message = f"Fleet analysis completed ({len(completed)}/{total_selected} devices analyzed)"
-                    if skipped_devices or failed:
-                        message += f"; skipped/failed: {len(skipped_devices) + len(failed)}"
-                    final_status = JobStatus.COMPLETED
-                    error_message = None
-                else:
-                    message = "No devices produced successful analytics results"
-                    final_status = JobStatus.FAILED
-                    error_message = "All fleet child jobs were skipped or failed"
-                await repo.update_job_status(
-                    parent_job_id,
-                    status=final_status,
-                    completed_at=datetime.now(timezone.utc),
-                    progress=100.0,
-                    message=message,
-                    error_message=error_message,
-                )
-                return
-
-
-async def _run_fleet_job(
-    parent_job_id: str,
-    req: FleetAnalyticsRequest,
-    app,
-    *,
-    tenant_id: str | None,
-    initiated_by_user_id: str,
-    initiated_by_role: str,
-) -> None:
-    try:
-        settings = get_settings()
-        s3_client = S3Client()
-        dataset_service = DatasetService(s3_client)
-        device_ids = [str(device_id) for device_id in req.device_ids]
-        if not device_ids:
-            await _fail_parent_job(
-                parent_job_id,
-                "No devices available for fleet analysis",
-                {"analysis_type": req.analysis_type, "devices_failed": []},
-            )
-            return
-
-        await _update_parent_progress(parent_job_id, 10.0, f"Checking data readiness for {len(device_ids)} devices")
-
-        readiness_limit = max(1, int(settings.data_readiness_max_concurrency))
-        readiness_semaphore = asyncio.Semaphore(readiness_limit)
-
-        async def _bounded_ready_check(device_id: str):
-            async with readiness_semaphore:
-                return await ensure_device_ready(
-                    s3_client=s3_client,
-                    dataset_service=dataset_service,
-                    device_id=device_id,
-                    start_time=req.start_time,
-                    end_time=req.end_time,
-                    tenant_id=tenant_id,
-                )
-
-        checks = await asyncio.gather(*[_bounded_ready_check(device_id) for device_id in device_ids])
-        ready_keys: Dict[str, str] = {}
-        skipped_devices: List[Dict[str, str]] = []
-        for device_id, key, meta in checks:
-            if key:
-                ready_keys[str(device_id)] = str(key)
-                continue
-            reason = str((meta or {}).get("reason") or "dataset_not_ready")
-            skipped_devices.append(
-                {
-                    "device_id": str(device_id),
-                    "reason": reason,
-                    "message": {
-                        "dataset_not_ready": "Exact-range dataset is not ready yet",
-                        "export_timeout": "Export timed out while preparing exact-range dataset",
-                        "device_not_found": "Device not found in export pipeline",
-                        "no_telemetry_in_range": "No telemetry found in selected date range",
-                    }.get(reason, "Data readiness check did not pass"),
-                }
-            )
-
-        logger.info(
-            "fleet_data_readiness_summary",
-            parent_job_id=parent_job_id,
-            total_devices=len(device_ids),
-            ready_devices=len(ready_keys),
-            skipped_devices=len(skipped_devices),
-            strict_exact_mode=bool(settings.ml_require_exact_dataset_range),
-        )
-
-        await _update_parent_progress(parent_job_id, 30.0, "Submitting device analytics jobs")
-        child_jobs: Dict[str, str] = {}
-        model_name = req.model_name or _default_model_for(req.analysis_type)
-        for device_id, dataset_key in ready_keys.items():
-            child_id = str(uuid4())
-            child_request = AnalyticsRequest(
-                device_id=device_id,
-                dataset_key=dataset_key,
-                analysis_type=AnalyticsType(req.analysis_type),
-                model_name=model_name,
-                parameters=req.parameters or {},
-            )
-            async with async_session_maker() as session:
-                repo = MySQLResultRepository(session)
-                await repo.create_job(
-                    job_id=child_id,
-                    device_id=device_id,
-                    analysis_type=req.analysis_type,
-                    model_name=model_name,
-                    date_range_start=req.start_time,
-                    date_range_end=req.end_time,
-                    parameters=req.parameters or {},
-                )
-                await repo.update_job_queue_metadata(
-                    job_id=child_id,
-                    attempt=1,
-                    queue_enqueued_at=datetime.now(timezone.utc),
-                )
-            child_raw_payload = _build_job_payload(
-                job_type="fleet_child_analytics",
-                tenant_id=tenant_id,
-                device_id=device_id,
-                initiated_by_user_id=initiated_by_user_id,
-                initiated_by_role=initiated_by_role,
-                payload=child_request.model_dump(mode="json"),
-            )
-            await app.state.job_queue.submit_job(job_id=child_id, raw_payload=child_raw_payload, attempt=1)
-            child_jobs[device_id] = child_id
-
-        if not child_jobs:
-            await _fail_parent_job(
-                parent_job_id,
-                "No devices have exact-range datasets ready for the selected window.",
-                {"analysis_type": req.analysis_type, "devices_failed": skipped_devices},
-            )
-            return
-
-        await _monitor_fleet(
-            parent_job_id=parent_job_id,
-            child_jobs=child_jobs,
-            analysis_type=req.analysis_type,
-            skipped_devices=skipped_devices,
-            total_selected=len(device_ids),
-        )
-    except Exception as exc:
-        await _fail_parent_job(
-            parent_job_id,
-            f"Fleet orchestration failed: {exc}",
-            {"analysis_type": req.analysis_type, "devices_failed": []},
-        )
-
-
 @router.post(
     "/run-fleet",
     response_model=AnalyticsJobResponse,
@@ -467,6 +257,7 @@ async def _run_fleet_job(
 async def run_fleet_analytics(
     request: FleetAnalyticsRequest,
     app_request: Request,
+    job_queue: QueueBackend = Depends(get_job_queue),
     result_repo: ResultRepository = Depends(get_result_repository),
 ) -> AnalyticsJobResponse:
     """
@@ -502,6 +293,12 @@ async def run_fleet_analytics(
         )
 
     request.device_ids = normalized_device_ids
+    await _enforce_admission_policy(
+        app_request=app_request,
+        result_repository=result_repo,
+        tenant_id=tenant_id,
+        requested_jobs=len(normalized_device_ids),
+    )
     parent_job_id = str(uuid4())
     request.parameters = {**(request.parameters or {}), **({"tenant_id": tenant_id} if tenant_id else {})}
 
@@ -520,31 +317,32 @@ async def run_fleet_analytics(
     )
     await result_repo.update_job_status(
         job_id=parent_job_id,
-        status=JobStatus.RUNNING,
-        started_at=datetime.now(timezone.utc),
-        progress=1.0,
-        message="Fleet job accepted",
+        status=JobStatus.PENDING,
+        progress=0.0,
+        message="Fleet job queued",
+        phase="queued",
+        phase_label="Queued",
+        phase_progress=0.0,
     )
-
-    task = asyncio.create_task(
-        _run_fleet_job(
-            parent_job_id,
-            request,
-            app_request.app,
-            tenant_id=tenant_id,
-            initiated_by_user_id=ctx.user_id,
-            initiated_by_role=ctx.role,
-        )
+    await result_repo.update_job_queue_metadata(
+        job_id=parent_job_id,
+        attempt=1,
+        queue_enqueued_at=datetime.now(timezone.utc),
     )
-    if not hasattr(app_request.app.state, "fleet_tasks"):
-        app_request.app.state.fleet_tasks = set()
-    app_request.app.state.fleet_tasks.add(task)
-    task.add_done_callback(app_request.app.state.fleet_tasks.discard)
+    raw_payload = _build_job_payload(
+        job_type="fleet_parent_analytics",
+        tenant_id=tenant_id,
+        device_id="ALL",
+        initiated_by_user_id=ctx.user_id,
+        initiated_by_role=ctx.role,
+        payload=request.model_dump(mode="json"),
+    )
+    await job_queue.submit_job(job_id=parent_job_id, raw_payload=raw_payload, attempt=1)
 
     return AnalyticsJobResponse(
         job_id=parent_job_id,
-        status=JobStatus.RUNNING,
-        message="Fleet job started",
+        status=JobStatus.PENDING,
+        message="Fleet job queued",
     )
 
 
@@ -566,21 +364,7 @@ async def get_job_status(
             tenant_id=tenant_id,
             accessible_device_ids=accessible_device_ids,
         )
-        return JobStatusResponse(
-            job_id=job_id,
-            status=JobStatus(job.status),
-            progress=job.progress,
-            message=job.message,
-            error_message=job.error_message,
-            error_code=job.error_code,
-            created_at=job.created_at,
-            started_at=job.started_at,
-            completed_at=job.completed_at,
-            queue_position=job.queue_position,
-            attempt=job.attempt,
-            worker_lease_expires_at=job.worker_lease_expires_at,
-            estimated_wait_seconds=max(0, int((job.queue_position or 0) * 5)),
-        )
+        return await _build_status_response(job_id, job)
     except JobNotFoundError:
         pending_jobs = getattr(app_request.app.state, "pending_jobs", {})
         pending = pending_jobs.get(job_id)
@@ -591,6 +375,10 @@ async def get_job_status(
                 progress=0,
                 message=pending.get("message") or "Job queued successfully",
                 created_at=pending.get("created_at"),
+                phase="queued",
+                phase_label="Queued",
+                phase_progress=0.0,
+                estimate_quality="low",
             )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -736,24 +524,7 @@ async def list_jobs(
         offset=offset,
     )
 
-    return [
-        JobStatusResponse(
-            job_id=job.job_id,
-            status=JobStatus(job.status),
-            progress=job.progress,
-            message=job.message,
-            error_message=job.error_message,
-            error_code=job.error_code,
-            created_at=job.created_at,
-            started_at=job.started_at,
-            completed_at=job.completed_at,
-            queue_position=job.queue_position,
-            attempt=job.attempt,
-            worker_lease_expires_at=job.worker_lease_expires_at,
-            estimated_wait_seconds=max(0, int((job.queue_position or 0) * 5)),
-        )
-        for job in jobs
-    ]
+    return [await _build_status_response(job.job_id, job) for job in jobs]
 
 
 @router.get("/ops/queue")
@@ -762,22 +533,49 @@ async def get_queue_ops_snapshot(
     result_repo: ResultRepository = Depends(get_result_repository),
 ) -> Dict[str, object]:
     """Operational queue snapshot for SRE dashboards."""
-    pending = await result_repo.list_jobs(status=JobStatus.PENDING.value, limit=5000, offset=0)
-    running = await result_repo.list_jobs(status=JobStatus.RUNNING.value, limit=5000, offset=0)
-    failed = await result_repo.list_jobs(status=JobStatus.FAILED.value, limit=5000, offset=0)
     settings = get_settings()
+    pending_count = await result_repo.count_jobs(statuses=[JobStatus.PENDING.value])
+    running_count = await result_repo.count_jobs(statuses=[JobStatus.RUNNING.value])
+    failed_count = await result_repo.count_jobs(statuses=[JobStatus.FAILED.value])
+    retry_count = await result_repo.count_jobs(attempts_gte=2)
+    top_tenants = await result_repo.list_tenant_job_counts(
+        statuses=[JobStatus.RUNNING.value],
+        limit=settings.ops_top_tenants_limit,
+    )
     active_workers = 0
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(10, settings.worker_heartbeat_ttl_seconds))
     async with async_session_maker() as session:
         rows = await session.execute(select(WorkerHeartbeat).where(WorkerHeartbeat.last_heartbeat_at >= cutoff))
         active_workers = len(list(rows.scalars().all()))
+    job_queue = getattr(app_request.app.state, "job_queue", None)
+    queue_metrics_fetcher = getattr(job_queue, "metrics", None)
+    queue_metrics = await queue_metrics_fetcher() if callable(queue_metrics_fetcher) else {}
+    rejection_counters = getattr(app_request.app.state, "analytics_rejections", {}) or {}
 
     return {
-        "queue_depth": len(pending),
-        "consumer_lag_estimate": len(pending),
-        "failed_job_count": len(failed),
+        "queue_depth": pending_count,
+        "consumer_lag_estimate": pending_count,
+        "failed_job_count": failed_count,
         "active_workers": active_workers,
-        "running_jobs": len(running),
+        "running_jobs": running_count,
+        "retry_count": retry_count,
+        "dead_letter_jobs": int(queue_metrics.get("dead_letter_messages", 0)),
+        "claimed_messages": int(queue_metrics.get("claimed_messages", 0)),
+        "stream_depth": int(queue_metrics.get("queued_messages", 0)),
+        "top_tenants_by_active_jobs": top_tenants,
+        "rejected_submissions": {
+            "tenant_cap": int(rejection_counters.get("tenant_cap", 0) or 0),
+            "overloaded": int(rejection_counters.get("overloaded", 0) or 0),
+        },
+        "capacity_policy": {
+            "max_concurrent_jobs_per_worker": settings.max_concurrent_jobs,
+            "global_active_job_limit": settings.global_active_job_limit,
+            "queue_backlog_reject_threshold": settings.queue_backlog_reject_threshold,
+            "tenant_max_queued_jobs": settings.tenant_max_queued_jobs,
+            "tenant_max_active_jobs": settings.tenant_max_active_jobs,
+            "queue_max_attempts": settings.queue_max_attempts,
+            "stale_scan_interval_seconds": settings.stale_scan_interval_seconds,
+        },
         "queue_backend": getattr(app_request.app.state, "queue_backend", "unknown"),
     }
 

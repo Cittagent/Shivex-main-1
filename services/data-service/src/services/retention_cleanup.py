@@ -67,6 +67,10 @@ class RetentionCleanupService:
 
     async def run_once(self) -> dict[str, int]:
         now = datetime.now(timezone.utc)
+        dlq_reclassified = await asyncio.to_thread(
+            self.dlq_repository.reclassify_non_retryable_pending,
+            batch_size=self.batch_size,
+        )
         outbox_counts = await self.outbox_repository.purge_retained_rows(
             delivered_before=now - timedelta(days=max(1, settings.outbox_delivered_retention_days)),
             dead_before=now - timedelta(days=max(1, settings.outbox_dead_retention_days)),
@@ -79,7 +83,11 @@ class RetentionCleanupService:
             created_before=dlq_cutoff,
             batch_size=self.batch_size,
         )
-        counts = {**outbox_counts, "dlq_messages": int(dlq_deleted)}
+        counts = {
+            **outbox_counts,
+            "dlq_reclassified_non_retryable": int(dlq_reclassified),
+            "dlq_messages": int(dlq_deleted),
+        }
         if any(counts.values()):
             logger.info("retention_cleanup_completed", **counts)
         return counts

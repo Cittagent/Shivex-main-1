@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse
 
 
 LOCAL_DEV_ORIGINS = [
@@ -29,3 +30,12 @@ def build_allowed_origins(frontend_base_url: str) -> list[str]:
         if candidate:
             origins.add(candidate)
     return sorted(origins)
+
+
+def build_allowed_origin_hosts(frontend_base_url: str) -> set[str]:
+    hosts: set[str] = set()
+    for origin in build_allowed_origins(frontend_base_url):
+        parsed = urlparse(origin)
+        if parsed.scheme and parsed.netloc:
+            hosts.add(f"{parsed.scheme}://{parsed.netloc}")
+    return hosts

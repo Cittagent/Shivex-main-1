@@ -8,9 +8,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import settings
 from src.database import AsyncSessionLocal
+from src.queue import ReportJob, get_report_queue
 from src.repositories.report_repository import ReportRepository
 from src.repositories.scheduled_repository import ScheduledRepository
-from src.tasks.report_task import run_consumption_report
 from src.tasks.notification_stub import notify_report_ready
 from src.services.tenant_scope import build_service_tenant_context
 from src.utils.downloads import build_report_download_path
@@ -89,10 +89,8 @@ async def process_schedule(
         
         logger.info(f"Created report {report_id} for schedule {schedule_id}")
         
-        if report_type == "consumption":
-            await run_consumption_report(report_id, params)
-        else:
-            logger.warning(f"Comparison reports not yet implemented in scheduler, skipping {schedule_id}")
+        if report_type not in {"consumption", "comparison"}:
+            logger.warning(f"Unsupported scheduled report type {report_type}, skipping {schedule_id}")
             await scheduled_repo.update_schedule(
                 schedule_id,
                 last_status="skipped",
@@ -101,6 +99,14 @@ async def process_schedule(
                 processing_started_at=None,
             )
             return
+
+        await get_report_queue().enqueue(
+            ReportJob(
+                report_id=report_id,
+                tenant_id=tenant_id,
+                report_type=report_type,
+            )
+        )
         
         await wait_for_report_completion(report_id, tenant_id=tenant_id, max_wait=600)
         

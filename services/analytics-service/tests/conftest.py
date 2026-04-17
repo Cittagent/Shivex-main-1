@@ -78,6 +78,8 @@ def mock_result_repository():
     repo.update_job_progress = AsyncMock()
     repo.save_results = AsyncMock()
     repo.list_jobs = AsyncMock(return_value=[])
+    repo.count_jobs = AsyncMock(return_value=0)
+    repo.list_tenant_job_counts = AsyncMock(return_value=[])
     repo.get_model_artifact = AsyncMock(return_value=None)
     repo.upsert_model_artifact = AsyncMock()
     return repo

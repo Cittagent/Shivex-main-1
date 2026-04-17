@@ -19,6 +19,16 @@ class DevicePlantRequiredError(DeviceCreateError):
     """Raised when a device create or update would leave the device without a plant."""
 
 
+class InvalidDeviceMetadataError(ValueError):
+    """Raised when persisted device metadata violates the public contract."""
+
+    def __init__(self, device_id: str, field_name: str, message: str) -> None:
+        super().__init__(message)
+        self.device_id = device_id
+        self.field_name = field_name
+        self.message = message
+
+
 class HardwareInventoryError(Exception):
     """Base class for hardware inventory workflow failures."""
 

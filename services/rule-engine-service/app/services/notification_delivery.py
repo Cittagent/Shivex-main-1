@@ -97,6 +97,47 @@ class NotificationDeliveryAuditService:
             billable_units=0,
         )
 
+    async def create_queued_intent(
+        self,
+        *,
+        channel: str,
+        raw_recipient: str,
+        provider_name: str,
+        event_type: str,
+        rule_id: Optional[str] = None,
+        alert_id: Optional[str] = None,
+        device_id: Optional[str] = None,
+        attempted_at: Optional[datetime] = None,
+        metadata_json: Optional[dict[str, Any]] = None,
+    ) -> NotificationDeliveryLog:
+        return await self._repository.create_send_attempt(
+            alert_id=alert_id,
+            rule_id=rule_id,
+            device_id=device_id,
+            event_type=event_type,
+            channel=channel,
+            recipient_masked=mask_recipient(channel, raw_recipient),
+            recipient_hash=hash_recipient(raw_recipient),
+            provider_name=provider_name,
+            attempted_at=attempted_at,
+            metadata_json=metadata_json,
+            status=NotificationDeliveryStatus.QUEUED,
+            billable_units=0,
+        )
+
+    async def mark_attempted(
+        self,
+        log_id: str,
+        *,
+        attempted_at: Optional[datetime] = None,
+        metadata_json: Optional[dict[str, Any]] = None,
+    ) -> Optional[NotificationDeliveryLog]:
+        return await self._repository.mark_attempted(
+            log_id,
+            attempted_at=attempted_at,
+            metadata_json=metadata_json,
+        )
+
     async def mark_provider_accepted(
         self,
         log_id: str,
@@ -236,6 +277,21 @@ class NotificationDeliveryAuditService:
             billable_units=0,
             failure_code=failure_code,
             failure_message=failure_message,
+        )
+
+    async def mark_skipped_log(
+        self,
+        log_id: str,
+        *,
+        failure_code: Optional[str] = None,
+        failure_message: Optional[str] = None,
+        metadata_json: Optional[dict[str, Any]] = None,
+    ) -> Optional[NotificationDeliveryLog]:
+        return await self._repository.mark_skipped(
+            log_id,
+            failure_code=failure_code,
+            failure_message=failure_message,
+            metadata_json=metadata_json,
         )
 
     async def summarize_month(

@@ -43,6 +43,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("EMAIL_FROM_ADDRESS", "EMAIL_SENDER", "EMAIL_SMTP_USERNAME"),
     )
     FRONTEND_BASE_URL: str = "http://localhost:3000"
+    AUTH_ALLOWED_ORIGINS: str = ""
+    REFRESH_COOKIE_NAME: str = "refresh_token"
+    REFRESH_COOKIE_DOMAIN: str | None = None
+    REFRESH_COOKIE_PATH: str = "/backend/auth/api/v1/auth"
+    REFRESH_COOKIE_SAMESITE: str = "lax"
     BOOTSTRAP_SUPER_ADMIN_EMAIL: str = "manash.ray@cittagent.com"
     BOOTSTRAP_SUPER_ADMIN_PASSWORD: str = "Shivex@2706"
     BOOTSTRAP_SUPER_ADMIN_FULL_NAME: str = "Shivex Super-Admin"
@@ -60,6 +65,10 @@ class Settings(BaseSettings):
             self.EMAIL_SMTP_USERNAME = self.EMAIL_FROM_ADDRESS
         self.EMAIL_SMTP_PASSWORD = self.EMAIL_SMTP_PASSWORD.replace(" ", "")
         return self
+
+    @property
+    def refresh_cookie_secure(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
 
     @property
     def SMTP_SERVER(self) -> str:

@@ -1,41 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
-import sys
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import types
 
-ROOT = Path(__file__).resolve().parents[4]
-for path in (ROOT, ROOT / "services", ROOT / "services/analytics-service"):
-    resolved = str(path)
-    if resolved not in sys.path:
-        sys.path.insert(0, resolved)
+from tests._bootstrap import bootstrap_test_imports
 
-if "aioboto3" not in sys.modules:
-    fake_aioboto3 = types.ModuleType("aioboto3")
-
-    class _FakeSession:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    fake_aioboto3.Session = _FakeSession
-    sys.modules["aioboto3"] = fake_aioboto3
-
-shared_tenant_context = importlib.import_module("shared.tenant_context")
-services_pkg = sys.modules.setdefault("services", types.ModuleType("services"))
-services_shared_pkg = sys.modules.setdefault("services.shared", types.ModuleType("services.shared"))
-services_pkg.shared = services_shared_pkg
-services_shared_pkg.tenant_context = shared_tenant_context
-sys.modules["services.shared.tenant_context"] = shared_tenant_context
-shared_job_context = importlib.import_module("shared.job_context")
-services_shared_pkg.job_context = shared_job_context
-sys.modules["services.shared.job_context"] = shared_job_context
+bootstrap_test_imports()
 
 from shared.tenant_context import TenantContext
 from src.api.routes import analytics
@@ -143,11 +117,15 @@ async def test_run_fleet_analytics_normalizes_device_scope_before_enqueuing(monk
         plant_ids=["plant-a"],
         is_super_admin=False,
     )
-    app = SimpleNamespace(state=SimpleNamespace(fleet_tasks=set()))
+    app = SimpleNamespace(state=SimpleNamespace())
     app_request = SimpleNamespace(app=app, state=SimpleNamespace(tenant_context=ctx))
     result_repo = MagicMock()
     result_repo.create_job = AsyncMock()
     result_repo.update_job_status = AsyncMock()
+    result_repo.update_job_queue_metadata = AsyncMock()
+    result_repo.count_jobs = AsyncMock(return_value=0)
+    job_queue = MagicMock()
+    job_queue.submit_job = AsyncMock()
 
     recorded = {}
 
@@ -155,34 +133,26 @@ async def test_run_fleet_analytics_normalizes_device_scope_before_enqueuing(monk
         recorded["requested_device_ids"] = list(requested_device_ids)
         return ["dev-a", "dev-b"]
 
-    async def fake_run_fleet_job(parent_job_id, req, app, **kwargs):
-        recorded["job_device_ids"] = list(req.device_ids)
-        recorded["job_kwargs"] = kwargs
-
-    def fake_create_task(coro):
-        task = asyncio.get_running_loop().create_task(coro)
-        return task
-
     monkeypatch.setattr(analytics, "check_worker_alive", AsyncMock(return_value=True))
     monkeypatch.setattr(
         "src.api.routes.analytics.AnalyticsDeviceScopeService.normalize_requested_device_ids",
         fake_normalize,
     )
-    monkeypatch.setattr("src.api.routes.analytics._run_fleet_job", fake_run_fleet_job)
-    monkeypatch.setattr("src.api.routes.analytics.asyncio.create_task", fake_create_task)
 
-    response = await analytics.run_fleet_analytics(request, app_request, result_repo)
-    await asyncio.sleep(0)
+    response = await analytics.run_fleet_analytics(request, app_request, job_queue, result_repo)
 
-    assert response.status.value == "running"
+    assert response.status.value == "pending"
     assert recorded["requested_device_ids"] == []
     assert request.device_ids == ["dev-a", "dev-b"]
     create_call = result_repo.create_job.await_args.kwargs
     assert create_call["parameters"]["device_ids"] == ["dev-a", "dev-b"]
-    assert recorded["job_device_ids"] == ["dev-a", "dev-b"]
-    assert recorded["job_kwargs"]["tenant_id"] == "SH00000001"
-    assert recorded["job_kwargs"]["initiated_by_user_id"] == "user-1"
-    assert recorded["job_kwargs"]["initiated_by_role"] == "plant_manager"
+    result_repo.update_job_queue_metadata.assert_awaited_once()
+    status_call = result_repo.update_job_status.await_args.kwargs
+    assert status_call["phase"] == "queued"
+    submit_call = job_queue.submit_job.await_args.kwargs
+    assert submit_call["job_id"] == response.job_id
+    assert "\"job_type\":\"fleet_parent_analytics\"" in submit_call["raw_payload"]
+    assert "\"device_ids\":[\"dev-a\",\"dev-b\"]" in submit_call["raw_payload"]
 
 
 @pytest.mark.asyncio
@@ -207,6 +177,7 @@ async def test_run_analytics_normalizes_single_device_scope_before_enqueuing(mon
     result_repo = MagicMock()
     result_repo.create_job = AsyncMock()
     result_repo.update_job_queue_metadata = AsyncMock()
+    result_repo.count_jobs = AsyncMock(return_value=0)
     job_queue = MagicMock()
     job_queue.submit_job = AsyncMock()
     job_queue.size = MagicMock(return_value=0)
@@ -256,6 +227,7 @@ async def test_run_analytics_rejects_out_of_scope_single_device(monkeypatch):
     result_repo = MagicMock()
     result_repo.create_job = AsyncMock()
     result_repo.update_job_queue_metadata = AsyncMock()
+    result_repo.count_jobs = AsyncMock(return_value=0)
     job_queue = MagicMock()
     job_queue.submit_job = AsyncMock()
     job_queue.size = MagicMock(return_value=0)
@@ -283,3 +255,17 @@ async def test_run_analytics_rejects_out_of_scope_single_device(monkeypatch):
     assert exc_info.value.detail["error"] == "ANALYTICS_SCOPE_FORBIDDEN"
     result_repo.create_job.assert_not_awaited()
     job_queue.submit_job.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_super_admin_normalize_uses_requested_devices_without_full_scope_fetch():
+    ctx = TenantContext(
+        tenant_id="SH00000001",
+        user_id="super-user",
+        role="super_admin",
+        plant_ids=[],
+        is_super_admin=True,
+    )
+    service = AnalyticsDeviceScopeService(ctx)
+    normalized = await service.normalize_requested_device_ids(["dev-a", "dev-a", "dev-b"])
+    assert normalized == ["dev-a", "dev-b"]

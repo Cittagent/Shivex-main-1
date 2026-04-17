@@ -77,6 +77,20 @@ CALENDAR_COST_SNAPSHOT_AGE_SECONDS = Gauge(
     "calendar_cost_snapshot_age_seconds",
     "Age of monthly calendar INR cost snapshot in seconds",
 )
+DEVICE_LIVE_UPDATE_BATCH_DURATION_SECONDS = Histogram(
+    "device_live_update_batch_duration_seconds",
+    "Duration of device live-update batch requests in seconds",
+    ["outcome"],
+)
+DEVICE_LIVE_UPDATE_BATCH_ROWS = Histogram(
+    "device_live_update_batch_rows",
+    "Number of rows in each device live-update batch request",
+)
+DEVICE_LIVE_UPDATE_BATCH_ITEMS_TOTAL = Counter(
+    "device_live_update_batch_items_total",
+    "Per-item outcomes for device live-update batch requests",
+    ["outcome"],
+)
 
 
 def metrics_payload() -> tuple[bytes, str]:

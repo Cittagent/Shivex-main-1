@@ -35,5 +35,21 @@ class EnergyBroadcaster:
         }
         await self._redis.publish(self._channel, json.dumps(message, separators=(",", ":")))
 
+    async def publish_many(self, event: str, payloads: list[dict[str, Any]]) -> None:
+        if not payloads:
+            return
+        if not self._redis or not self._channel:
+            return
+        created_at = datetime.now(timezone.utc).isoformat()
+        pipeline = self._redis.pipeline(transaction=False)
+        for payload in payloads:
+            message = {
+                "event": event,
+                "payload": payload,
+                "created_at": created_at,
+            }
+            pipeline.publish(self._channel, json.dumps(message, separators=(",", ":")))
+        await pipeline.execute()
+
 
 energy_broadcaster = EnergyBroadcaster()

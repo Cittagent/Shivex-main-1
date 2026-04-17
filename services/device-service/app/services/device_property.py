@@ -1,10 +1,11 @@
 """Device property service - handles dynamic property discovery from telemetry."""
 
+from collections import defaultdict
 from typing import Optional, List, Dict, Set
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, and_, false
+from sqlalchemy import select, delete, and_, false, tuple_
 from sqlalchemy.orm import selectinload
 
 from app.models.device import (
@@ -217,6 +218,78 @@ class DevicePropertyService:
             List of updated/created properties
         """
         return await self.discover_properties(device_id, telemetry_values, tenant_id)
+
+    async def sync_from_telemetry_batch(
+        self,
+        *,
+        tenant_id: str,
+        telemetry_by_device: Dict[str, Dict[str, object]],
+    ) -> Dict[str, List[DeviceProperty]]:
+        """Batch-sync numeric properties discovered from telemetry.
+
+        This path is safe to coalesce by device because property discovery is
+        additive and last-seen based; it does not carry ordered event semantics.
+        """
+
+        discovered_by_device: dict[str, dict[str, tuple[bool, str]]] = {}
+        all_pairs: list[tuple[str, str]] = []
+        for device_id, telemetry_data in telemetry_by_device.items():
+            discovered_fields: dict[str, tuple[bool, str]] = {}
+            for key, value in telemetry_data.items():
+                if key in self.EXCLUDED_FIELDS:
+                    continue
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, (int, float)):
+                    data_type = "float" if isinstance(value, float) else "integer"
+                    discovered_fields[key] = (True, data_type)
+                elif isinstance(value, str):
+                    discovered_fields[key] = (False, "string")
+            if not discovered_fields:
+                continue
+            discovered_by_device[device_id] = discovered_fields
+            all_pairs.extend((device_id, property_name) for property_name in discovered_fields)
+
+        if not all_pairs:
+            return {}
+
+        result = await self._session.execute(
+            select(DeviceProperty).where(
+                DeviceProperty.tenant_id == tenant_id,
+                tuple_(DeviceProperty.device_id, DeviceProperty.property_name).in_(all_pairs),
+            )
+        )
+        existing_rows = {
+            (str(row.device_id), str(row.property_name)): row
+            for row in result.scalars().all()
+        }
+
+        now = datetime.utcnow()
+        updated_by_device: dict[str, list[DeviceProperty]] = defaultdict(list)
+        for device_id, discovered_fields in discovered_by_device.items():
+            for field_name, (is_numeric, data_type) in discovered_fields.items():
+                key = (device_id, field_name)
+                existing = existing_rows.get(key)
+                if existing is not None:
+                    existing.last_seen_at = now
+                    existing.is_numeric = is_numeric
+                    existing.data_type = data_type
+                    updated_by_device[device_id].append(existing)
+                    continue
+                new_property = DeviceProperty(
+                    device_id=device_id,
+                    tenant_id=tenant_id,
+                    property_name=field_name,
+                    is_numeric=is_numeric,
+                    data_type=data_type,
+                    discovered_at=now,
+                    last_seen_at=now,
+                )
+                self._session.add(new_property)
+                updated_by_device[device_id].append(new_property)
+
+        await self._session.flush()
+        return dict(updated_by_device)
     
     async def cleanup_stale_properties(self, days: int = 30) -> int:
         """Remove properties not seen in specified days.

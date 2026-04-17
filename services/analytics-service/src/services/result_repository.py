@@ -48,6 +48,9 @@ class ResultRepository(ABC):
         progress: Optional[float] = None,
         message: Optional[str] = None,
         error_message: Optional[str] = None,
+        phase: Optional[str] = None,
+        phase_label: Optional[str] = None,
+        phase_progress: Optional[float] = None,
     ) -> None:
         pass
 
@@ -57,6 +60,9 @@ class ResultRepository(ABC):
         job_id: str,
         progress: float,
         message: str,
+        phase: Optional[str] = None,
+        phase_label: Optional[str] = None,
+        phase_progress: Optional[float] = None,
     ) -> None:
         pass
 
@@ -102,6 +108,33 @@ class ResultRepository(ABC):
     @abstractmethod
     async def rollback(self) -> None:
         """Rollback current transaction."""
+        pass
+
+    @abstractmethod
+    async def count_jobs(
+        self,
+        statuses: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
+        attempts_gte: Optional[int] = None,
+    ) -> int:
+        """Return count of jobs matching the given filters."""
+        pass
+
+    @abstractmethod
+    async def list_tenant_job_counts(
+        self,
+        statuses: Optional[list[str]] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Return top tenants by job volume for the given statuses."""
+        pass
+
+    @abstractmethod
+    async def list_jobs_for_parent(
+        self,
+        parent_job_id: str,
+    ) -> List[Any]:
+        """Return child jobs for a fleet parent ordered by creation time."""
         pass
 
     @abstractmethod

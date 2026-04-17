@@ -12,7 +12,9 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
 from app.config import settings
-from app.database import engine
+from app.database import AsyncSessionLocal, engine
+from app.queue import get_notification_queue
+from app.repositories.notification_outbox import NotificationOutboxRepository
 from shared.auth_middleware import AuthMiddleware
 from shared.feature_entitlements import require_feature
 from services.shared.startup_contract import validate_startup_contract
@@ -37,6 +39,8 @@ async def lifespan(app: FastAPI):
             "environment": settings.ENVIRONMENT,
         }
     )
+    if settings.QUEUE_BACKEND == "redis":
+        await get_notification_queue().metrics()
     
     yield
     
@@ -119,6 +123,8 @@ async def readiness_check():
         from sqlalchemy import text
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
+        if settings.QUEUE_BACKEND == "redis":
+            await get_notification_queue().metrics()
         
         return JSONResponse(
             content={
@@ -137,3 +143,19 @@ async def readiness_check():
             },
             status_code=503
         )
+
+
+@app.get("/metrics", tags=["health"])
+async def metrics():
+    async with AsyncSessionLocal() as session:
+        repo = NotificationOutboxRepository(session)
+        outbox_counts = await repo.count_by_status_and_channel()
+        runtime_counters = await repo.aggregate_runtime_counters()
+    queue_metrics = await get_notification_queue().metrics()
+    return {
+        "queue_depth": queue_metrics.get("queue_depth", 0),
+        "pending_messages": queue_metrics.get("pending_messages", 0),
+        "dead_letter_count": queue_metrics.get("dead_letter_count", 0),
+        "retry_count": runtime_counters.get("retry_count", 0),
+        "by_channel": outbox_counts,
+    }

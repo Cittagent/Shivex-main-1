@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 
 from src.models import EnergyReport, ReportType, ReportStatus
 from src.services.report_scope import report_visible_to_scope
@@ -53,7 +53,8 @@ class ReportRepository(TenantScopedRepository[EnergyReport]):
             report_type=ReportType(report_type),
             status="pending",
             params=params,
-            created_at=datetime.utcnow()
+            enqueued_at=datetime.utcnow(),
+            created_at=datetime.utcnow(),
         )
         report = await self.create(report)
         await self.db.commit()
@@ -83,6 +84,8 @@ class ReportRepository(TenantScopedRepository[EnergyReport]):
         **kwargs
     ) -> None:
         update_values = {k: v for k, v in kwargs.items() if v is not None}
+        if not update_values:
+            return
         # report_id is globally unique, so updating by report_id alone avoids
         # taking an additional tenant secondary-index lock. That secondary lock
         # caused deadlocks when multiple reports for the same tenant advanced
@@ -148,3 +151,164 @@ class ReportRepository(TenantScopedRepository[EnergyReport]):
             if params.get("dedup_signature") == dedup_signature:
                 return report
         return None
+
+    async def claim_report_for_processing(
+        self,
+        report_id: str,
+        worker_id: str,
+        stale_after: timedelta,
+        tenant_id: str | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        now = now or datetime.utcnow()
+        stale_cutoff = now - stale_after
+        statement = (
+            update(EnergyReport)
+            .where(EnergyReport.report_id == report_id)
+            .where(
+                or_(
+                    EnergyReport.status == ReportStatus.pending,
+                    (
+                        (EnergyReport.status == ReportStatus.processing)
+                        & (EnergyReport.processing_started_at.is_not(None))
+                        & (EnergyReport.processing_started_at < stale_cutoff)
+                    ),
+                )
+            )
+            .values(
+                status=ReportStatus.processing,
+                worker_id=worker_id,
+                processing_started_at=now,
+                last_attempt_at=now,
+                error_code=None,
+                error_message=None,
+                completed_at=None,
+            )
+        )
+        if self._effective_tenant_id(tenant_id) is not None:
+            statement = statement.where(EnergyReport.tenant_id == self._effective_tenant_id(tenant_id))
+        result = await self.db.execute(statement)
+        await self.db.commit()
+        return bool(result.rowcount)
+
+    async def requeue_report(
+        self,
+        report_id: str,
+        *,
+        tenant_id: str | None = None,
+        error_code: str,
+        error_message: str,
+        increment_retry: bool = True,
+        increment_timeout: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        now = now or datetime.utcnow()
+        values = {
+            "status": ReportStatus.pending,
+            "progress": 0,
+            "worker_id": None,
+            "processing_started_at": None,
+            "enqueued_at": now,
+            "completed_at": None,
+            "error_code": error_code,
+            "error_message": error_message,
+        }
+        if increment_retry:
+            values["retry_count"] = EnergyReport.retry_count + 1
+        if increment_timeout:
+            values["timeout_count"] = EnergyReport.timeout_count + 1
+        statement = update(EnergyReport).where(EnergyReport.report_id == report_id).values(**values)
+        if self._effective_tenant_id(tenant_id) is not None:
+            statement = statement.where(EnergyReport.tenant_id == self._effective_tenant_id(tenant_id))
+        result = await self.db.execute(statement)
+        await self.db.commit()
+        return bool(result.rowcount)
+
+    async def fail_report(
+        self,
+        report_id: str,
+        *,
+        tenant_id: str | None = None,
+        error_code: str,
+        error_message: str,
+        increment_retry: bool = False,
+        increment_timeout: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        now = now or datetime.utcnow()
+        values = {
+            "status": ReportStatus.failed,
+            "progress": 100,
+            "worker_id": None,
+            "processing_started_at": None,
+            "completed_at": now,
+            "error_code": error_code,
+            "error_message": error_message,
+        }
+        if increment_retry:
+            values["retry_count"] = EnergyReport.retry_count + 1
+        if increment_timeout:
+            values["timeout_count"] = EnergyReport.timeout_count + 1
+        statement = update(EnergyReport).where(EnergyReport.report_id == report_id).values(**values)
+        if self._effective_tenant_id(tenant_id) is not None:
+            statement = statement.where(EnergyReport.tenant_id == self._effective_tenant_id(tenant_id))
+        result = await self.db.execute(statement)
+        await self.db.commit()
+        return bool(result.rowcount)
+
+    async def clear_processing_claim(
+        self,
+        report_id: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> bool:
+        statement = (
+            update(EnergyReport)
+            .where(EnergyReport.report_id == report_id)
+            .values(
+                worker_id=None,
+                processing_started_at=None,
+            )
+        )
+        if self._effective_tenant_id(tenant_id) is not None:
+            statement = statement.where(EnergyReport.tenant_id == self._effective_tenant_id(tenant_id))
+        result = await self.db.execute(statement)
+        await self.db.commit()
+        return bool(result.rowcount)
+
+    async def load_report_for_worker(
+        self,
+        report_id: str,
+        tenant_id: str | None = None,
+    ) -> Optional[EnergyReport]:
+        query = self._scope_select(select(EnergyReport).where(EnergyReport.report_id == report_id), tenant_id=tenant_id)
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
+
+    async def count_by_status(self, tenant_id: str | None = None) -> dict[str, int]:
+        query = self._scope_select(
+            select(EnergyReport.status, func.count())
+            .group_by(EnergyReport.status),
+            tenant_id=tenant_id,
+        )
+        result = await self.db.execute(query)
+        counts: dict[str, int] = {}
+        for status, count in result.all():
+            status_value = status.value if hasattr(status, "value") else str(status)
+            counts[status_value] = int(count)
+        return counts
+
+    async def aggregate_runtime_counters(self, tenant_id: str | None = None) -> dict[str, int]:
+        query = self._scope_select(
+            select(
+                func.coalesce(func.sum(EnergyReport.retry_count), 0),
+                func.coalesce(func.sum(EnergyReport.timeout_count), 0),
+            ),
+            tenant_id=tenant_id,
+        )
+        result = await self.db.execute(query)
+        retry_count, timeout_count = result.one()
+        return {
+            "retry_count": int(retry_count or 0),
+            "timeout_count": int(timeout_count or 0),
+        }

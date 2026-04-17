@@ -13,4 +13,5 @@ prometheus-client==0.20.0
 redis==5.0.8
 pytest==7.4.4
 pytest-asyncio==0.23.3
+aiosqlite==0.20.0
 minio==7.2.15

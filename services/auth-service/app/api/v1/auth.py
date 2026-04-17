@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.config import settings
+from app.cors import build_allowed_origin_hosts
 from app.database import get_db
 from app.dependencies import require_any_authenticated
 from app.models.auth import UserRole
@@ -27,18 +28,57 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 auth_svc = AuthService()
 user_repo = UserRepository()
 org_repo = OrgRepository()
+_ALLOWED_ORIGIN_HOSTS = build_allowed_origin_hosts(settings.FRONTEND_BASE_URL)
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
     response.set_cookie(
-        key="refresh_token",
+        key=settings.REFRESH_COOKIE_NAME,
         value=refresh_token,
         httponly=True,
-        samesite="lax",
-        secure=settings.ENVIRONMENT == "production",
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+        secure=settings.refresh_cookie_secure,
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-        path="/api/v1/auth",
+        path=settings.REFRESH_COOKIE_PATH,
+        domain=settings.REFRESH_COOKIE_DOMAIN,
     )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        path=settings.REFRESH_COOKIE_PATH,
+        domain=settings.REFRESH_COOKIE_DOMAIN,
+        httponly=True,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+        secure=settings.refresh_cookie_secure,
+    )
+
+
+def _browser_token_response(token_response: TokenResponse) -> TokenResponse:
+    return TokenResponse(
+        access_token=token_response.access_token,
+        refresh_token=None,
+        token_type=token_response.token_type,
+        expires_in=token_response.expires_in,
+    )
+
+
+def _get_refresh_token(request: Request, body: RefreshRequest | LogoutRequest | None) -> str | None:
+    if body and body.refresh_token:
+        return body.refresh_token
+    return request.cookies.get(settings.REFRESH_COOKIE_NAME)
+
+
+def _assert_cookie_request_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+    if origin.rstrip("/") not in _ALLOWED_ORIGIN_HOSTS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "INVALID_ORIGIN", "message": "Cross-site auth request blocked"},
+        )
 
 
 @router.post("/login", response_model=TokenResponse, status_code=status.HTTP_200_OK)
@@ -46,7 +86,7 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
 async def login(request: Request, body: LoginRequest, response: Response, db=Depends(get_db)) -> TokenResponse:
     _, token_response = await auth_svc.login(db, body.email, body.password)
     _set_refresh_cookie(response, token_response.refresh_token)
-    return token_response
+    return _browser_token_response(token_response)
 
 
 @router.post("/refresh", response_model=TokenResponse, status_code=status.HTTP_200_OK)
@@ -56,16 +96,18 @@ async def refresh(
     body: RefreshRequest | None = None,
     db=Depends(get_db),
 ) -> TokenResponse:
-    raw_token = (body.refresh_token if body and body.refresh_token else request.cookies.get("refresh_token"))
+    raw_token = _get_refresh_token(request, body)
     if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "MISSING_REFRESH_TOKEN", "message": "No refresh token provided"},
         )
+    if request.cookies.get(settings.REFRESH_COOKIE_NAME):
+        _assert_cookie_request_origin(request)
 
     token_response = await auth_svc.refresh(db, raw_token)
     _set_refresh_cookie(response, token_response.refresh_token)
-    return token_response
+    return _browser_token_response(token_response)
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
@@ -75,8 +117,10 @@ async def logout(
     body: LogoutRequest | None = None,
     db=Depends(get_db),
 ) -> dict:
-    raw_token = (body.refresh_token if body and body.refresh_token else request.cookies.get("refresh_token"))
+    raw_token = _get_refresh_token(request, body)
     access_claims = None
+    if request.cookies.get(settings.REFRESH_COOKIE_NAME):
+        _assert_cookie_request_origin(request)
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         bearer_token = auth_header.split(" ", 1)[1].strip()
@@ -86,7 +130,7 @@ async def logout(
             access_claims = None
     if raw_token or access_claims is not None:
         await auth_svc.logout(db, raw_token, access_claims)
-    response.delete_cookie(key="refresh_token", path="/api/v1/auth")
+    _clear_refresh_cookie(response)
     return {"message": "Logged out successfully"}
 
 

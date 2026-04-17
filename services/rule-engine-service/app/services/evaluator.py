@@ -8,14 +8,13 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.rule import CooldownMode, NotificationDeliveryStatus, Rule, RuleType
+from app.models.rule import CooldownMode, Rule, RuleType
 from app.schemas.rule import EvaluationResult, TelemetryPayload
 from app.schemas.telemetry import TelemetryIn
 from app.services.rule import RuleService, AlertService
-from app.services.notification_delivery import NotificationDeliveryAuditService
 from app.services.device_metadata import DeviceMetadataService
+from app.services.notification_outbox import NotificationContent, NotificationOutboxService
 from app.repositories.rule import RuleRepository, AlertRepository
-from app.notifications.adapter import NotificationAdapter
 from app.config import settings
 from app.utils.timezone import format_platform_datetime
 from services.shared.tenant_context import TenantContext
@@ -36,8 +35,7 @@ class RuleEvaluator:
         self._rule_repository = RuleRepository(session, ctx)
         self._alert_repository = AlertRepository(session, ctx)
         self._device_metadata_service = DeviceMetadataService(ctx)
-        self._notification_audit_service = NotificationDeliveryAuditService(session, ctx)
-        self._notification_adapter = NotificationAdapter(audit_service=self._notification_audit_service)
+        self._notification_outbox_service = NotificationOutboxService(session, ctx)
 
     def _require_rule_tenant(self, rule: Rule) -> str:
         tenant_id = self._ctx.require_tenant()
@@ -123,7 +121,7 @@ class RuleEvaluator:
                 )
                 self._record_alert(device_id, now)
 
-                await self._send_notifications(rule, device_id, result, alert_id=str(created_alert.alert_id))
+                await self._enqueue_notifications(rule, device_id, result, alert_id=str(created_alert.alert_id))
 
         await self._session.commit()
 
@@ -318,7 +316,7 @@ class RuleEvaluator:
         else:
             return "low"
 
-    async def _send_notifications(
+    async def _enqueue_notifications(
         self,
         rule: Rule,
         device_id: str,
@@ -371,68 +369,16 @@ class RuleEvaluator:
             "actual_value": actual_value_label,
             "triggered_at": triggered_at_label,
         }
-
-        for channel in rule.notification_channels:
-            try:
-                dispatch_result = await self._notification_adapter.dispatch(
-                    channel=channel,
-                    message=message,
-                    rule=rule,
-                    device_id=device_id,
-                    alert_id=alert_id,
-                    alert_context=alert_context,
-                )
-                sent_count = sum(
-                    1
-                    for recipient_result in dispatch_result.recipient_results
-                    if recipient_result.status in {
-                        NotificationDeliveryStatus.PROVIDER_ACCEPTED.value,
-                        NotificationDeliveryStatus.DELIVERED.value,
-                    }
-                )
-                skipped_count = sum(
-                    1
-                    for recipient_result in dispatch_result.recipient_results
-                    if recipient_result.status == NotificationDeliveryStatus.SKIPPED.value
-                )
-                if sent_count > 0:
-                    logger.info(
-                        "Notification sent",
-                        extra={
-                            "channel": channel,
-                            "rule_id": str(rule.rule_id),
-                            "device_id": device_id,
-                            "sent_count": sent_count,
-                        },
-                    )
-                elif skipped_count > 0:
-                    logger.warning(
-                        "Notification skipped",
-                        extra={
-                            "channel": channel,
-                            "rule_id": str(rule.rule_id),
-                            "device_id": device_id,
-                            "skipped_count": skipped_count,
-                        },
-                    )
-                else:
-                    logger.error(
-                        "Notification failed",
-                        extra={
-                            "channel": channel,
-                            "rule_id": str(rule.rule_id),
-                            "device_id": device_id,
-                        },
-                    )
-            except Exception as e:
-                logger.error(
-                    "Failed to send notification",
-                    extra={
-                        "channel": channel,
-                        "rule_id": str(rule.rule_id),
-                        "error": str(e),
-                    },
-                )
+        await self._notification_outbox_service.enqueue_alert_notifications(
+            rule=rule,
+            device_id=device_id,
+            alert_id=alert_id or "",
+            content=NotificationContent(
+                subject=f"Alert: {rule.rule_name}",
+                message=message,
+                alert_context=alert_context,
+            ),
+        )
 
     @staticmethod
     def _describe_rule_condition(rule: Rule) -> str:

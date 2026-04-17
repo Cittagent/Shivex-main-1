@@ -679,7 +679,7 @@ async def health_check():
             "status": "healthy",
             "service": "device-service",
             "version": settings.APP_VERSION,
-            "dependency_dns": get_dependency_dns_status(),
+            "dependency_dns": get_dependency_dns_status(force_refresh=True),
         },
         status_code=200
     )

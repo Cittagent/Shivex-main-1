@@ -1,6 +1,11 @@
 import json
+import asyncio
 
 from sqlalchemy.exc import OperationalError
+
+from tests._bootstrap import bootstrap_test_imports
+
+bootstrap_test_imports()
 
 from services.shared.job_context import BoundJobPayload
 from src.models.schemas import AnalyticsType
@@ -228,3 +233,23 @@ async def test_worker_timeout_marks_job_failed_and_dead_letters(monkeypatch):
     assert final_status["status"].value == "failed"
     assert final_status["message"] == "Analytics job timed out before completion."
     assert _FakeRepo.queue_updates[-1]["error_code"] == "JOB_EXECUTION_TIMEOUT"
+
+
+async def test_worker_processing_respects_bounded_concurrency(monkeypatch):
+    worker = JobWorker(_DummyQueue(), max_concurrent=2)
+    worker._semaphore = asyncio.Semaphore(worker._max_concurrent)
+
+    inflight = {"current": 0, "max_seen": 0}
+
+    async def fake_process(_job):
+        inflight["current"] += 1
+        inflight["max_seen"] = max(inflight["max_seen"], inflight["current"])
+        await asyncio.sleep(0.01)
+        inflight["current"] -= 1
+
+    monkeypatch.setattr(worker, "_process_job", fake_process)
+
+    jobs = [Job(job_id=f"job-{idx}", raw_payload="{}", attempt=1) for idx in range(5)]
+    await asyncio.gather(*(worker._process_job_with_semaphore(job) for job in jobs))
+
+    assert inflight["max_seen"] == 2

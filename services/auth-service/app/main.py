@@ -2,6 +2,7 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 from contextlib import suppress
+from typing import Any
 
 from fastapi import FastAPI, Request, status as http_status
 from fastapi.encoders import jsonable_encoder
@@ -23,6 +24,53 @@ from services.shared.startup_contract import validate_startup_contract
 
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
 logger = logging.getLogger("auth-service")
+
+_SENSITIVE_FIELD_NAMES = {
+    "authorization",
+    "password",
+    "confirm_password",
+    "refresh_token",
+    "access_token",
+    "token",
+}
+
+
+def _redact_sensitive_data(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            if key.lower() in _SENSITIVE_FIELD_NAMES:
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = _redact_sensitive_data(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_sensitive_data(item) for item in value]
+    return value
+
+
+def _sanitize_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for error in errors:
+        clean = {key: value for key, value in error.items() if key != "input"}
+        if "ctx" in clean:
+            clean["ctx"] = _redact_sensitive_data(clean["ctx"])
+        sanitized.append(clean)
+    return sanitized
+
+
+class SensitiveDataFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        for key, value in list(record.__dict__.items()):
+            if key.lower() in _SENSITIVE_FIELD_NAMES:
+                record.__dict__[key] = "[REDACTED]"
+            elif isinstance(value, (dict, list)):
+                record.__dict__[key] = _redact_sensitive_data(value)
+        return True
+
+
+for _logger_name in ("auth-service", "auth-service.auth", "auth-service.mailer"):
+    logging.getLogger(_logger_name).addFilter(SensitiveDataFilter())
 
 
 def validate_auth_email_contract() -> None:
@@ -108,8 +156,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "code": "VALIDATION_ERROR",
-            "message": str(exc),
-            "details": jsonable_encoder(exc.errors(), custom_encoder={ValueError: str}),
+            "message": "Request validation failed",
+            "details": jsonable_encoder(
+                _sanitize_validation_errors(exc.errors()),
+                custom_encoder={ValueError: str},
+            ),
         },
     )
 

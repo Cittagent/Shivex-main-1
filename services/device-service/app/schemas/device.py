@@ -40,6 +40,29 @@ HARDWARE_ROLE_COMPATIBILITY = {
 }
 
 MANUAL_DEVICE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,49}$")
+LEGACY_PHASE_TYPE_ALIASES = {
+    "single_phase": "single",
+    "single-phase": "single",
+    "three_phase": "three",
+    "three-phase": "three",
+}
+
+
+def normalize_phase_type(
+    value: str | None,
+    *,
+    allow_legacy_aliases: bool,
+) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return None
+    if normalized in ("single", "three"):
+        return normalized
+    if allow_legacy_aliases and normalized in LEGACY_PHASE_TYPE_ALIASES:
+        return LEGACY_PHASE_TYPE_ALIASES[normalized]
+    raise ValueError("phase_type must be 'single', 'three', or null")
 
 
 class DeviceBase(BaseModel):
@@ -61,11 +84,14 @@ class DeviceBase(BaseModel):
     energy_flow_mode: str = Field("consumption_only", description="Power flow mode: 'consumption_only' or 'bidirectional'")
     polarity_mode: str = Field("normal", description="Telemetry polarity mode: 'normal' or 'inverted'")
     
+    @field_validator("phase_type", mode="before")
+    @classmethod
+    def validate_phase_type_field(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_phase_type(value, allow_legacy_aliases=False)
+
     @model_validator(mode='after')
     def validate_phase_type(self) -> 'DeviceBase':
         """Validate phase_type field."""
-        if self.phase_type is not None and self.phase_type not in ('single', 'three'):
-            raise ValueError("phase_type must be 'single', 'three', or null")
         if self.data_source_type not in ("metered", "sensor"):
             raise ValueError("data_source_type must be 'metered' or 'sensor'")
         if self.energy_flow_mode not in ("consumption_only", "bidirectional"):
@@ -172,6 +198,11 @@ class DeviceResponse(DeviceBase):
     # Runtime status - computed dynamically based on telemetry
     runtime_status: str = "stopped"
     last_seen_timestamp: Optional[datetime] = None
+
+    @field_validator("phase_type", mode="before")
+    @classmethod
+    def normalize_response_phase_type(cls, value: Optional[str]) -> Optional[str]:
+        return normalize_phase_type(value, allow_legacy_aliases=True)
     
     @field_validator("first_telemetry_timestamp", mode="after")
     @classmethod

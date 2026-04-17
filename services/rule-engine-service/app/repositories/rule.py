@@ -104,21 +104,31 @@ class RuleRepository(TenantScopedRepository[Rule]):
         Returns:
             List of active rules applicable to the device
         """
-        query = select(Rule).where(
-            and_(
-                Rule.status == RuleStatus.ACTIVE,
-                Rule.deleted_at.is_(None),
-                or_(
-                    Rule.scope == "all_devices",
-                    (func.json_contains(Rule.device_ids, func.json_quote(device_id)) == 1)
+        dialect_name = getattr(getattr(self._session.bind, "dialect", None), "name", "")
+        if dialect_name == "sqlite":
+            query = select(Rule).where(
+                and_(
+                    Rule.status == RuleStatus.ACTIVE,
+                    Rule.deleted_at.is_(None),
                 )
-            )
-        ).limit(200)
-        
-        query = self._apply_tenant_scope_select(query)
-        
-        result = await self._session.execute(query)
-        rules = list(result.scalars().all())
+            ).limit(200)
+            query = self._apply_tenant_scope_select(query)
+            result = await self._session.execute(query)
+            rules = [rule for rule in result.scalars().all() if rule.applies_to_device(device_id)]
+        else:
+            query = select(Rule).where(
+                and_(
+                    Rule.status == RuleStatus.ACTIVE,
+                    Rule.deleted_at.is_(None),
+                    or_(
+                        Rule.scope == "all_devices",
+                        (func.json_contains(Rule.device_ids, func.json_quote(device_id)) == 1)
+                    )
+                )
+            ).limit(200)
+            query = self._apply_tenant_scope_select(query)
+            result = await self._session.execute(query)
+            rules = list(result.scalars().all())
         logger.debug("rules_fetched", extra={"device_id": device_id, "count": len(rules)})
         return rules
     

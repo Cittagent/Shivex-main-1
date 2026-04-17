@@ -22,6 +22,7 @@ from app.services.load_thresholds import (
     classify_load_state,
     resolve_device_thresholds,
 )
+from app.services.runtime_state import resolve_runtime_status
 from services.shared.energy_accounting import aggregate_window
 from services.shared.telemetry_normalization import normalize_telemetry_sample
 from services.shared.tariff_client import fetch_tenant_tariff
@@ -494,12 +495,7 @@ class IdleRunningService:
         now_utc = datetime.now(timezone.utc)
         authoritative_ts = projection_ts or latest_ts
         stale = authoritative_ts is None or (now_utc - authoritative_ts).total_seconds() > TELEMETRY_TIMEOUT_SECONDS
-        runtime_status = live_state.runtime_status if live_state is not None else device.get_runtime_status()
-        state = (
-            live_state.load_state
-            if live_state is not None and runtime_status == "running" and not stale
-            else "unknown"
-        )
+        runtime_status = resolve_runtime_status(authoritative_ts, now_utc=now_utc)
         current_value = (
             float(live_state.last_current_a)
             if live_state is not None and live_state.last_current_a is not None
@@ -513,6 +509,11 @@ class IdleRunningService:
         timestamp = authoritative_ts.isoformat() if authoritative_ts is not None else (latest.get("timestamp") if latest else None)
         current_band = (
             self.detect_current_band(current_value, voltage_value, thresholds)
+            if runtime_status == "running" and not stale
+            else "unknown"
+        )
+        state = (
+            self.detect_device_state_with_thresholds(current_value, voltage_value, thresholds)
             if runtime_status == "running" and not stale
             else "unknown"
         )

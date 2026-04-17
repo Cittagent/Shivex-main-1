@@ -128,9 +128,10 @@ async def lifespan(app: FastAPI):
             dead_letter_stream=settings.redis_dead_letter_stream,
             consumer_group=settings.redis_consumer_group,
             consumer_name=settings.redis_consumer_name,
+            maxsize=settings.queue_max_length,
         )
     else:
-        job_queue = InMemoryJobQueue()
+        job_queue = InMemoryJobQueue(maxsize=settings.queue_max_length)
 
     job_worker = None
     worker_task = None
@@ -138,6 +139,10 @@ async def lifespan(app: FastAPI):
     app.state.fleet_tasks = set()
     app.state.pending_jobs = {}
     app.state.queue_backend = settings.queue_backend
+    app.state.analytics_rejections = {
+        "tenant_cap": 0,
+        "overloaded": 0,
+    }
 
     if settings.app_role == "worker":
         from src.workers.job_worker import JobWorker

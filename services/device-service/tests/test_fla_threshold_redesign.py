@@ -86,7 +86,7 @@ def test_threshold_derivation_uses_custom_pct():
     assert thresholds.derived_overconsumption_threshold_a == pytest.approx(20.0)
 
 
-def test_current_band_logic_preserves_public_running_state():
+def test_current_band_logic_exposes_overconsumption_state_explicitly():
     thresholds = resolve_device_thresholds(SimpleNamespace(full_load_current_a=20.0, idle_threshold_pct_of_fla=0.25))
 
     assert IdleRunningService.detect_device_state_with_thresholds(0.0, 230.0, thresholds) == "unloaded"
@@ -98,7 +98,7 @@ def test_current_band_logic_preserves_public_running_state():
     assert IdleRunningService.detect_device_state_with_thresholds(10.0, 230.0, thresholds) == "running"
     assert classify_current_band(10.0, 230.0, thresholds) == "in_load"
 
-    assert IdleRunningService.detect_device_state_with_thresholds(25.0, 230.0, thresholds) == "running"
+    assert IdleRunningService.detect_device_state_with_thresholds(25.0, 230.0, thresholds) == "overconsumption"
     assert classify_current_band(25.0, 230.0, thresholds) == "overconsumption"
 
 
@@ -227,7 +227,7 @@ async def test_current_state_exposes_additive_overconsumption_band(session_facto
 
         payload = await service.get_current_state("BAND-DEVICE", "TENANT-A")
 
-        assert payload["state"] == "running"
+        assert payload["state"] == "overconsumption"
         assert payload["current_band"] == "overconsumption"
         assert payload["derived_idle_threshold_a"] == pytest.approx(5.0)
         assert payload["derived_overconsumption_threshold_a"] == pytest.approx(20.0)
@@ -286,7 +286,7 @@ async def test_live_projection_uses_derived_thresholds_for_loss_booking(session_
             dynamic_fields={"current": 25.0, "voltage": 230.0, "energy_kwh": 100.2},
         )
 
-        assert item["load_state"] == "running"
+        assert item["load_state"] == "overconsumption"
         assert item["current_band"] == "overconsumption"
 
         live_state = await session.get(DeviceLiveState, {"device_id": "FLA-PROJECTION", "tenant_id": "TENANT-A"})

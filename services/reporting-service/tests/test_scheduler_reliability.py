@@ -176,11 +176,12 @@ async def test_process_schedule_failure_increments_retry_once(session_factory, m
             async def get_report(self, report_id, tenant_id=None):
                 return None
 
-        async def _boom(*args, **kwargs):
-            raise RuntimeError("synthetic failure")
+        class _FakeQueue:
+            async def enqueue(self, job):
+                raise RuntimeError("synthetic failure")
 
         monkeypatch.setattr(scheduler_module, "ReportRepository", _FakeReportRepo)
-        monkeypatch.setattr(scheduler_module, "run_consumption_report", _boom)
+        monkeypatch.setattr(scheduler_module, "get_report_queue", lambda: _FakeQueue())
 
         await scheduler_module.process_schedule(schedule, scheduled_repo, report_repo)
         refreshed = await scheduled_repo.get_schedule("sched-fail")

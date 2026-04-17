@@ -1,6 +1,7 @@
 import test, { afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 
+import { clearAccessToken, setAccessToken } from "../../lib/browserSession.ts";
 import { apiFetch, configureApiFetchAuthRecovery } from "../../lib/apiFetch.ts";
 
 class SessionStorageMock {
@@ -23,8 +24,6 @@ class SessionStorageMock {
   }
 }
 
-const ACCESS_TOKEN_KEY = "factoryops_access_token";
-const REFRESH_TOKEN_KEY = "factoryops_refresh_token";
 const TENANT_KEY = "factoryops_selected_tenant";
 
 function base64UrlEncode(value: object): string {
@@ -50,6 +49,7 @@ function installWindow(): SessionStorageMock {
 }
 
 afterEach(() => {
+  clearAccessToken();
   configureApiFetchAuthRecovery(null);
   mock.restoreAll();
   Reflect.deleteProperty(globalThis, "window");
@@ -57,11 +57,7 @@ afterEach(() => {
 
 test("protected API fetch refreshes token on first 401 and retries once", async () => {
   const storage = installWindow();
-  storage.setItem(
-    ACCESS_TOKEN_KEY,
-    makeToken({ role: "org_admin", tenant_id: "SH00000001", exp: Math.floor(Date.now() / 1000) + 3600 }),
-  );
-  storage.setItem(REFRESH_TOKEN_KEY, "refresh-1");
+  setAccessToken(makeToken({ role: "org_admin", tenant_id: "SH00000001", exp: Math.floor(Date.now() / 1000) + 3600 }));
 
   const seenHeaders: Array<{ auth: string | null; tenant: string | null }> = [];
   let callCount = 0;
@@ -80,15 +76,14 @@ test("protected API fetch refreshes token on first 401 and retries once", async 
   configureApiFetchAuthRecovery({
     refreshAccessToken: async () => {
       refreshCount += 1;
-      storage.setItem(
-        ACCESS_TOKEN_KEY,
-        makeToken({ role: "org_admin", tenant_id: "SH00000001", exp: Math.floor(Date.now() / 1000) + 3600 }),
-      );
-      return storage.getItem(ACCESS_TOKEN_KEY);
+      const freshToken = makeToken({ role: "org_admin", tenant_id: "SH00000001", exp: Math.floor(Date.now() / 1000) + 3600 });
+      setAccessToken(freshToken);
+      return freshToken;
     },
     clearSession: () => {
       clearCount += 1;
       storage.clear();
+      clearAccessToken();
     },
   });
 
@@ -105,11 +100,8 @@ test("protected API fetch refreshes token on first 401 and retries once", async 
 });
 
 test("protected API fetch omits tenant header when tenant_id is absent", async () => {
-  const storage = installWindow();
-  storage.setItem(
-    ACCESS_TOKEN_KEY,
-    makeToken({ role: "org_admin", exp: Math.floor(Date.now() / 1000) + 3600 }),
-  );
+  installWindow();
+  setAccessToken(makeToken({ role: "org_admin", exp: Math.floor(Date.now() / 1000) + 3600 }));
 
   let seenTenantHeader: string | null = null;
   mock.method(globalThis, "fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -126,8 +118,7 @@ test("protected API fetch omits tenant header when tenant_id is absent", async (
 
 test("concurrent 401 responses trigger only one refresh", async () => {
   const storage = installWindow();
-  storage.setItem(ACCESS_TOKEN_KEY, "stale-token");
-  storage.setItem(REFRESH_TOKEN_KEY, "refresh-1");
+  setAccessToken("stale-token");
 
   const seenAuthHeaders: string[] = [];
   mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -145,11 +136,12 @@ test("concurrent 401 responses trigger only one refresh", async () => {
     refreshAccessToken: async () => {
       refreshCount += 1;
       await new Promise((resolve) => setTimeout(resolve, 10));
-      storage.setItem(ACCESS_TOKEN_KEY, "fresh-token");
+      setAccessToken("fresh-token");
       return "fresh-token";
     },
     clearSession: () => {
       storage.clear();
+      clearAccessToken();
     },
   });
 
@@ -171,11 +163,7 @@ test("concurrent 401 responses trigger only one refresh", async () => {
 
 test("failed refresh clears session cleanly after protected 401", async () => {
   const storage = installWindow();
-  storage.setItem(
-    ACCESS_TOKEN_KEY,
-    makeToken({ role: "org_admin", tenant_id: "SH00000001", exp: Math.floor(Date.now() / 1000) + 3600 }),
-  );
-  storage.setItem(REFRESH_TOKEN_KEY, "refresh-1");
+  setAccessToken(makeToken({ role: "org_admin", tenant_id: "SH00000001", exp: Math.floor(Date.now() / 1000) + 3600 }));
 
   mock.method(globalThis, "fetch", async () => new Response(null, { status: 401 }));
 
@@ -185,6 +173,7 @@ test("failed refresh clears session cleanly after protected 401", async () => {
     clearSession: () => {
       clearCount += 1;
       storage.clear();
+      clearAccessToken();
     },
   });
 
@@ -192,16 +181,12 @@ test("failed refresh clears session cleanly after protected 401", async () => {
 
   assert.equal(response.status, 401);
   assert.equal(clearCount, 1);
-  assert.equal(storage.getItem(ACCESS_TOKEN_KEY), null);
-  assert.equal(storage.getItem(REFRESH_TOKEN_KEY), null);
+  assert.equal(storage.getItem(TENANT_KEY), null);
 });
 
 test("super-admin tenant selection headers remain correct after refresh retry", async () => {
   const storage = installWindow();
-  storage.setItem(
-    ACCESS_TOKEN_KEY,
-    makeToken({ role: "super_admin", tenant_id: null, exp: Math.floor(Date.now() / 1000) + 3600 }),
-  );
+  setAccessToken(makeToken({ role: "super_admin", tenant_id: null, exp: Math.floor(Date.now() / 1000) + 3600 }));
   storage.setItem(TENANT_KEY, "SH00000042");
 
   const seenHeaders: Array<{ targetTenant: string | null; tenant: string | null }> = [];
@@ -218,14 +203,13 @@ test("super-admin tenant selection headers remain correct after refresh retry", 
 
   configureApiFetchAuthRecovery({
     refreshAccessToken: async () => {
-      storage.setItem(
-        ACCESS_TOKEN_KEY,
-        makeToken({ role: "super_admin", tenant_id: null, exp: Math.floor(Date.now() / 1000) + 3600 }),
-      );
-      return storage.getItem(ACCESS_TOKEN_KEY);
+      const freshToken = makeToken({ role: "super_admin", tenant_id: null, exp: Math.floor(Date.now() / 1000) + 3600 });
+      setAccessToken(freshToken);
+      return freshToken;
     },
     clearSession: () => {
       storage.clear();
+      clearAccessToken();
     },
   });
 

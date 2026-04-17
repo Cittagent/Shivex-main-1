@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -72,7 +73,7 @@ class OutboxRelayService:
     async def start(self) -> None:
         await self.outbox_repository.ensure_schema()
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=10.0)
+            self._http_client = self._build_http_client()
         self._stopped.clear()
         self._task = asyncio.create_task(self._run(), name="telemetry-outbox-relay")
         logger.info("Outbox relay started")
@@ -93,18 +94,29 @@ class OutboxRelayService:
 
     async def run_once(self) -> int:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=10.0)
+            self._http_client = self._build_http_client()
             self._owns_http_client = True
-        async with self.outbox_repository.session_factory() as session:
-            async with session.begin():
-                messages = await self.outbox_repository.claim_pending_batch(
-                    session=session,
-                    batch_size=max(1, settings.outbox_batch_size),
-                    backoff_base_seconds=max(1, int(settings.outbox_poll_interval_sec)),
-                )
-                for message in messages:
-                    await self._deliver_claimed_message(session=session, message=message)
-                return len(messages)
+        processed_total = 0
+        max_batches = max(1, int(settings.outbox_max_batches_per_run))
+        for _ in range(max_batches):
+            async with self.outbox_repository.session_factory() as session:
+                async with session.begin():
+                    messages = await self.outbox_repository.claim_pending_batch(
+                        session=session,
+                        batch_size=max(1, settings.outbox_batch_size),
+                        backoff_base_seconds=max(1, int(settings.outbox_poll_interval_sec)),
+                    )
+                    if not messages:
+                        return processed_total
+                    energy_messages = [message for message in messages if message.target == OutboxTarget.ENERGY_SERVICE]
+                    other_messages = [message for message in messages if message.target != OutboxTarget.ENERGY_SERVICE]
+                    if energy_messages:
+                        await self._deliver_claimed_energy_messages(session=session, messages=energy_messages)
+                    for message in other_messages:
+                        await self._deliver_claimed_message(session=session, message=message)
+                    await session.flush()
+                    processed_total += len(messages)
+        return processed_total
 
     async def _run(self) -> None:
         while True:
@@ -123,34 +135,23 @@ class OutboxRelayService:
         telemetry_payload = dict(message.telemetry_json or {})
         tenant_id = _tenant_id_from_payload(telemetry_payload)
         if tenant_id is None:
-            error_message = "MISSING_TENANT_ID"
-            await self.outbox_repository.mark_dead_without_retry_increment(
+            await self._mark_terminal_failure(
                 session=session,
                 message=message,
-                error_message=error_message,
+                error_message="MISSING_TENANT_ID",
                 attempted_at=attempted_at,
+                increment_retry=False,
             )
-            await self._write_dead_letter(message=message, error_message=error_message)
             return
         try:
             response = await self._post_to_target(message=message, tenant_id=tenant_id)
         except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError) as exc:
-            next_retry_count = int(message.retry_count or 0) + 1
-            if next_retry_count >= int(message.max_retries or settings.outbox_max_retries):
-                await self.outbox_repository.mark_dead(
-                    session=session,
-                    message=message,
-                    error_message=str(exc),
-                    attempted_at=attempted_at,
-                )
-                await self._write_dead_letter(message=message, error_message=str(exc))
-            else:
-                await self.outbox_repository.mark_retryable_failure(
-                    session=session,
-                    message=message,
-                    error_message=str(exc),
-                    attempted_at=attempted_at,
-                )
+            await self._mark_retryable_failure(
+                session=session,
+                message=message,
+                error_message=str(exc),
+                attempted_at=attempted_at,
+            )
             return
 
         if 200 <= response.status_code < 300:
@@ -158,37 +159,138 @@ class OutboxRelayService:
                 session=session,
                 message=message,
                 delivered_at=attempted_at,
+                flush=False,
             )
             return
 
         error_message = f"HTTP {response.status_code}: {response.text[:512]}"
         if 400 <= response.status_code < 500:
-            await self.outbox_repository.mark_dead_without_retry_increment(
+            await self._mark_terminal_failure(
                 session=session,
                 message=message,
                 error_message=error_message,
                 attempted_at=attempted_at,
+                increment_retry=False,
             )
-            await self._write_dead_letter(message=message, error_message=error_message)
             return
 
-        next_retry_count = int(message.retry_count or 0) + 1
-        if next_retry_count >= int(message.max_retries or settings.outbox_max_retries):
-            await self.outbox_repository.mark_dead(
-                session=session,
-                message=message,
-                error_message=error_message,
-                attempted_at=attempted_at,
-            )
-            await self._write_dead_letter(message=message, error_message=error_message)
-            return
-
-        await self.outbox_repository.mark_retryable_failure(
+        await self._mark_retryable_failure(
             session=session,
             message=message,
             error_message=error_message,
             attempted_at=attempted_at,
         )
+
+    async def _deliver_claimed_energy_messages(self, *, session, messages: list[OutboxMessage]) -> None:
+        grouped: dict[str, list[OutboxMessage]] = defaultdict(list)
+        for message in messages:
+            tenant_id = _tenant_id_from_payload(dict(message.telemetry_json or {}))
+            if tenant_id is None:
+                await self._mark_terminal_failure(
+                    session=session,
+                    message=message,
+                    error_message="MISSING_TENANT_ID",
+                    attempted_at=datetime.now(timezone.utc),
+                    increment_retry=False,
+                )
+                continue
+            grouped[tenant_id].append(message)
+
+        batch_size = max(1, int(settings.outbox_energy_delivery_batch_size))
+        for tenant_id, tenant_messages in grouped.items():
+            for start in range(0, len(tenant_messages), batch_size):
+                batch = tenant_messages[start:start + batch_size]
+                await self._deliver_energy_batch(session=session, tenant_id=tenant_id, messages=batch)
+
+    async def _deliver_energy_batch(self, *, session, tenant_id: str, messages: list[OutboxMessage]) -> None:
+        attempted_at = datetime.now(timezone.utc)
+        try:
+            response = await self._post_energy_batch(messages=messages, tenant_id=tenant_id)
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPError) as exc:
+            await self.outbox_repository.mark_retryable_failure_many(
+                session=session,
+                message_ids=[int(message.id) for message in messages],
+                error_message=str(exc),
+                attempted_at=attempted_at,
+                flush=False,
+            )
+            return
+
+        if response.status_code >= 500:
+            error_message = f"HTTP {response.status_code}: {response.text[:512]}"
+            await self.outbox_repository.mark_retryable_failure_many(
+                session=session,
+                message_ids=[int(message.id) for message in messages],
+                error_message=error_message,
+                attempted_at=attempted_at,
+                flush=False,
+            )
+            return
+
+        if response.status_code >= 400:
+            error_message = f"HTTP {response.status_code}: {response.text[:512]}"
+            for message in messages:
+                await self._mark_terminal_failure(
+                    session=session,
+                    message=message,
+                    error_message=error_message,
+                    attempted_at=attempted_at,
+                    increment_retry=False,
+                )
+            return
+
+        payload = response.json() if response.content else {}
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list) or len(results) != len(messages):
+            await self.outbox_repository.mark_retryable_failure_many(
+                session=session,
+                message_ids=[int(message.id) for message in messages],
+                error_message="ENERGY_BATCH_INVALID_RESPONSE",
+                attempted_at=attempted_at,
+                flush=False,
+            )
+            return
+
+        delivered_ids: list[int] = []
+        for message, item in zip(messages, results, strict=False):
+            if not isinstance(item, dict):
+                await self._mark_retryable_failure(
+                    session=session,
+                    message=message,
+                    error_message="ENERGY_BATCH_INVALID_ITEM",
+                    attempted_at=attempted_at,
+                )
+                continue
+            if item.get("success"):
+                delivered_ids.append(int(message.id))
+                continue
+
+            error_code = str(item.get("error_code") or "ENERGY_BATCH_ITEM_FAILED")
+            error_message = str(item.get("error") or error_code)
+            retryable = bool(item.get("retryable", True))
+            if retryable:
+                await self._mark_retryable_failure(
+                    session=session,
+                    message=message,
+                    error_message=f"{error_code}: {error_message}",
+                    attempted_at=attempted_at,
+                )
+            else:
+                await self._mark_terminal_failure(
+                    session=session,
+                    message=message,
+                    error_message=f"{error_code}: {error_message}",
+                    attempted_at=attempted_at,
+                    increment_retry=False,
+                )
+
+        if delivered_ids:
+            await self.outbox_repository.mark_delivered_many(
+                session=session,
+                message_ids=delivered_ids,
+                delivered_at=attempted_at,
+                flush=False,
+            )
 
     async def _post_to_target(self, *, message: OutboxMessage, tenant_id: str | None) -> httpx.Response:
         assert self._http_client is not None
@@ -196,25 +298,30 @@ class OutboxRelayService:
         device_id = message.device_id
         if tenant_id is None:
             raise ValueError("tenant_id is None")
-        normalized_fields = await self._build_normalized_fields(
-            device_id=device_id,
-            telemetry_payload=telemetry_payload,
-            tenant_id=tenant_id,
-        )
-        payload = {
-            "telemetry": telemetry_payload,
-            "dynamic_fields": _dynamic_fields(telemetry_payload),
-            "normalized_fields": normalized_fields,
-            "tenant_id": tenant_id,
-        }
         if message.target == OutboxTarget.DEVICE_SERVICE:
             base_url = (settings.device_service_url or "http://device-service:8000").rstrip("/")
             url = f"{base_url}/api/v1/devices/{device_id}/live-update"
             breaker = self.device_circuit_breaker
+            normalized_fields = await self._build_normalized_fields(
+                device_id=device_id,
+                telemetry_payload=telemetry_payload,
+                tenant_id=tenant_id,
+            )
+            payload = {
+                "telemetry": telemetry_payload,
+                "dynamic_fields": _dynamic_fields(telemetry_payload),
+                "normalized_fields": normalized_fields,
+                "tenant_id": tenant_id,
+            }
         else:
             base_url = (settings.energy_service_url or "http://energy-service:8010").rstrip("/")
             url = f"{base_url}/api/v1/energy/live-update"
             breaker = self.energy_circuit_breaker
+            payload = {
+                "telemetry": telemetry_payload,
+                "dynamic_fields": _dynamic_fields(telemetry_payload),
+                "tenant_id": tenant_id,
+            }
 
         async def _request():
             response = await self._http_client.post(
@@ -233,6 +340,102 @@ class OutboxRelayService:
                 request=httpx.Request("POST", url),
             )
         return response
+
+    @staticmethod
+    def _build_http_client() -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            timeout=max(1.0, float(settings.outbox_http_timeout_seconds)),
+            limits=httpx.Limits(
+                max_keepalive_connections=max(1, int(settings.outbox_http_max_keepalive_connections)),
+                max_connections=max(1, int(settings.outbox_http_max_connections)),
+            ),
+        )
+
+    async def _post_energy_batch(self, *, messages: list[OutboxMessage], tenant_id: str) -> httpx.Response:
+        assert self._http_client is not None
+        base_url = (settings.energy_service_url or "http://energy-service:8010").rstrip("/")
+        url = f"{base_url}/api/v1/energy/live-update/batch"
+        payload = {
+            "tenant_id": tenant_id,
+            "updates": [
+                {
+                    "telemetry": dict(message.telemetry_json or {}),
+                    "dynamic_fields": _dynamic_fields(dict(message.telemetry_json or {})),
+                }
+                for message in messages
+            ],
+        }
+
+        async def _request():
+            response = await self._http_client.post(
+                url,
+                json=payload,
+                headers=build_internal_headers("data-service", tenant_id),
+            )
+            if response.status_code >= 500:
+                response.raise_for_status()
+            return response
+
+        success, response = await self.energy_circuit_breaker.call(_request)
+        if not success or response is None:
+            raise httpx.RequestError(
+                "energy-service circuit open or downstream unavailable",
+                request=httpx.Request("POST", url),
+            )
+        return response
+
+    async def _mark_retryable_failure(
+        self,
+        *,
+        session,
+        message: OutboxMessage,
+        error_message: str,
+        attempted_at: datetime,
+    ) -> None:
+        next_retry_count = int(message.retry_count or 0) + 1
+        if next_retry_count >= int(message.max_retries or settings.outbox_max_retries):
+            await self._mark_terminal_failure(
+                session=session,
+                message=message,
+                error_message=error_message,
+                attempted_at=attempted_at,
+                increment_retry=True,
+            )
+            return
+        await self.outbox_repository.mark_retryable_failure(
+            session=session,
+            message=message,
+            error_message=error_message,
+            attempted_at=attempted_at,
+            flush=False,
+        )
+
+    async def _mark_terminal_failure(
+        self,
+        *,
+        session,
+        message: OutboxMessage,
+        error_message: str,
+        attempted_at: datetime,
+        increment_retry: bool,
+    ) -> None:
+        if increment_retry:
+            await self.outbox_repository.mark_dead(
+                session=session,
+                message=message,
+                error_message=error_message,
+                attempted_at=attempted_at,
+                flush=False,
+            )
+        else:
+            await self.outbox_repository.mark_dead_without_retry_increment(
+                session=session,
+                message=message,
+                error_message=error_message,
+                attempted_at=attempted_at,
+                flush=False,
+            )
+        await self._write_dead_letter(message=message, error_message=error_message)
 
     async def _build_normalized_fields(
         self,
@@ -280,4 +483,6 @@ class OutboxRelayService:
             error_type="outbox_delivery_dead",
             error_message=error_message,
             retry_count=int(message.retry_count or 0),
+            initial_status="dead",
+            dead_reason=error_message,
         )

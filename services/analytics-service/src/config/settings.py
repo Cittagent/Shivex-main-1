@@ -53,9 +53,16 @@ class Settings(BaseSettings):
     )
 
     max_concurrent_jobs: int = Field(default=3)
+    global_active_job_limit: int = Field(default=48)
+    queue_max_length: int = Field(default=10000)
+    queue_backlog_reject_threshold: int = Field(default=500)
+    tenant_max_queued_jobs: int = Field(default=25)
+    tenant_max_active_jobs: int = Field(default=8)
+    ops_top_tenants_limit: int = Field(default=10)
     job_timeout_seconds: int = Field(default=3600)
     job_lease_seconds: int = Field(default=1800)
     job_heartbeat_seconds: int = Field(default=30)
+    stale_scan_interval_seconds: int = Field(default=30)
 
     queue_backend: str = Field(default="redis")
     redis_url: str = Field(default="redis://redis:6379/0")

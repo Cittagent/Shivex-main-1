@@ -1,14 +1,14 @@
 from datetime import datetime, date
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
+from src.queue import ReportJob, get_report_queue
 from src.schemas.requests import ComparisonReportRequest
 from src.schemas.responses import ReportResponse
 from src.repositories.report_repository import ReportRepository
-from src.tasks.report_task import run_comparison_report
 from src.services.tenant_scope import build_service_tenant_context, normalize_tenant_id
 from src.handlers.energy_reports import (
     resolve_submission_tenant_id,
@@ -39,7 +39,6 @@ def convert_dates_to_str(obj):
 async def create_comparison_report(
     request: ComparisonReportRequest,
     app_request: Request,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
     tenant_id = normalize_tenant_id(resolve_submission_tenant_id(app_request, request.tenant_id))
@@ -103,24 +102,16 @@ async def create_comparison_report(
         report_type="comparison",
         params=params
     )
-    
-    task_params = {
-        "tenant_id": tenant_id,
-        "comparison_type": request.comparison_type,
-        "machine_a_id": request.machine_a_id,
-        "machine_b_id": request.machine_b_id,
-        "start_date": str(request.start_date) if request.start_date else None,
-        "end_date": str(request.end_date) if request.end_date else None,
-        "device_id": request.device_id,
-        "period_a_start": str(request.period_a_start) if request.period_a_start else None,
-        "period_a_end": str(request.period_a_end) if request.period_a_end else None,
-        "period_b_start": str(request.period_b_start) if request.period_b_start else None,
-        "period_b_end": str(request.period_b_end) if request.period_b_end else None,
-    }
-    background_tasks.add_task(run_comparison_report, report_id, task_params)
+    await get_report_queue().enqueue(
+        ReportJob(
+            report_id=report_id,
+            tenant_id=tenant_id,
+            report_type="comparison",
+        )
+    )
     
     return ReportResponse(
         report_id=report_id,
-        status="pending",
+        status="processing",
         created_at=datetime.utcnow().isoformat()
     )

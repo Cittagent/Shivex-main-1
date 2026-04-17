@@ -1,7 +1,7 @@
 """Device metadata enrichment service."""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -68,6 +68,8 @@ class EnrichmentService:
         self.base_url = base_url or settings.device_service_url
         self.timeout = timeout or settings.device_service_timeout
         self.max_retries = settings.device_service_max_retries
+        self._metadata_cache_ttl = timedelta(seconds=60)
+        self._metadata_cache: dict[tuple[str, str], tuple[datetime, DeviceMetadata]] = {}
 
         # Create async HTTP client
         self.client = httpx.AsyncClient(
@@ -109,7 +111,7 @@ class EnrichmentService:
             if payload.tenant_id is None:
                 payload.tenant_id = await self._resolve_tenant_id_from_catalog(payload.device_id)
 
-            device_metadata = await self._fetch_device_metadata(payload.device_id, payload.tenant_id)
+            device_metadata = await self._get_cached_device_metadata(payload.device_id, payload.tenant_id)
 
             payload.device_metadata = device_metadata
             if payload.tenant_id is None and getattr(device_metadata, "tenant_id", None):
@@ -141,6 +143,23 @@ class EnrichmentService:
             payload.enrichment_status = EnrichmentStatus.FAILED
 
         return payload
+
+    async def _get_cached_device_metadata(
+        self,
+        device_id: str,
+        tenant_id: Optional[str],
+    ) -> DeviceMetadata:
+        cache_key = (str(tenant_id or "").strip(), device_id)
+        now = datetime.now(timezone.utc)
+        cached = self._metadata_cache.get(cache_key)
+        if cached is not None:
+            expires_at, metadata = cached
+            if now < expires_at:
+                return metadata
+
+        metadata = await self._fetch_device_metadata(device_id, tenant_id)
+        self._metadata_cache[cache_key] = (now + self._metadata_cache_ttl, metadata)
+        return metadata
 
     async def _resolve_tenant_id_from_catalog(self, device_id: str) -> Optional[str]:
         """Resolve tenant_id directly from the shared MySQL device catalog.

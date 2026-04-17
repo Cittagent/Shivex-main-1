@@ -94,6 +94,8 @@ def classify_load_state(
         return "unloaded"
     if band == "idle":
         return "idle"
-    if band in {"in_load", "overconsumption"}:
+    if band == "overconsumption":
+        return "overconsumption"
+    if band == "in_load":
         return "running"
     return "unknown"

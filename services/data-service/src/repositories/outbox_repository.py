@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from src.config import settings
@@ -105,6 +105,54 @@ class OutboxRepository:
             if own_session:
                 await active_session.close()
 
+    async def enqueue_telemetry_batch(
+        self,
+        *,
+        entries: Iterable[tuple[str, dict[str, Any], Iterable[OutboxTarget]]],
+        max_retries: int | None = None,
+        session: AsyncSession | None = None,
+    ) -> list[OutboxMessage]:
+        prepared: list[tuple[str, dict[str, Any], list[OutboxTarget]]] = []
+        for device_id, telemetry_payload, targets in entries:
+            target_list = list(targets)
+            if target_list:
+                prepared.append((device_id, telemetry_payload, target_list))
+        if not prepared:
+            return []
+        own_session = session is None
+        active_session = session or self.session_factory()
+        try:
+            if own_session:
+                await active_session.begin()
+            rows: list[OutboxMessage] = []
+            # Fast path: bulk insert mappings to minimize ORM object/flush overhead under burst.
+            mappings: list[dict[str, Any]] = []
+            effective_max_retries = max_retries or settings.outbox_max_retries
+            for device_id, telemetry_payload, targets in prepared:
+                for target in targets:
+                    mappings.append(
+                        {
+                            "device_id": device_id,
+                            "telemetry_json": telemetry_payload,
+                            "target": target.value if isinstance(target, OutboxTarget) else str(target),
+                            "status": OutboxStatus.PENDING.value,
+                            "retry_count": 0,
+                            "max_retries": effective_max_retries,
+                        }
+                    )
+            if mappings:
+                await active_session.execute(OutboxMessage.__table__.insert(), mappings)
+            if own_session:
+                await active_session.commit()
+            return rows
+        except Exception:
+            if own_session:
+                await active_session.rollback()
+            raise
+        finally:
+            if own_session:
+                await active_session.close()
+
     async def claim_pending_batch(
         self,
         *,
@@ -148,12 +196,38 @@ class OutboxRepository:
         session: AsyncSession,
         message: OutboxMessage,
         delivered_at: datetime | None = None,
+        flush: bool = True,
     ) -> None:
         message.status = OutboxStatus.DELIVERED
         message.delivered_at = _utc_naive(delivered_at or datetime.now(timezone.utc))
         message.last_attempted_at = message.delivered_at
         message.error_message = None
-        await session.flush()
+        if flush:
+            await session.flush()
+
+    async def mark_delivered_many(
+        self,
+        *,
+        session: AsyncSession,
+        message_ids: list[int],
+        delivered_at: datetime | None = None,
+        flush: bool = True,
+    ) -> None:
+        if not message_ids:
+            return
+        attempted = _utc_naive(delivered_at or datetime.now(timezone.utc))
+        await session.execute(
+            update(OutboxMessage)
+            .where(OutboxMessage.id.in_(message_ids))
+            .values(
+                status=OutboxStatus.DELIVERED,
+                delivered_at=attempted,
+                last_attempted_at=attempted,
+                error_message=None,
+            )
+        )
+        if flush:
+            await session.flush()
 
     async def mark_retryable_failure(
         self,
@@ -162,12 +236,39 @@ class OutboxRepository:
         message: OutboxMessage,
         error_message: str,
         attempted_at: datetime | None = None,
+        flush: bool = True,
     ) -> None:
         message.retry_count = int(message.retry_count or 0) + 1
         message.status = OutboxStatus.FAILED
         message.last_attempted_at = _utc_naive(attempted_at or datetime.now(timezone.utc))
         message.error_message = error_message[:4096]
-        await session.flush()
+        if flush:
+            await session.flush()
+
+    async def mark_retryable_failure_many(
+        self,
+        *,
+        session: AsyncSession,
+        message_ids: list[int],
+        error_message: str,
+        attempted_at: datetime | None = None,
+        flush: bool = True,
+    ) -> None:
+        if not message_ids:
+            return
+        attempted = _utc_naive(attempted_at or datetime.now(timezone.utc))
+        await session.execute(
+            update(OutboxMessage)
+            .where(OutboxMessage.id.in_(message_ids))
+            .values(
+                status=OutboxStatus.FAILED,
+                retry_count=OutboxMessage.retry_count + 1,
+                last_attempted_at=attempted,
+                error_message=error_message[:4096],
+            )
+        )
+        if flush:
+            await session.flush()
 
     async def mark_dead(
         self,
@@ -176,12 +277,14 @@ class OutboxRepository:
         message: OutboxMessage,
         error_message: str,
         attempted_at: datetime | None = None,
+        flush: bool = True,
     ) -> None:
         message.retry_count = int(message.retry_count or 0) + 1
         message.status = OutboxStatus.DEAD
         message.last_attempted_at = _utc_naive(attempted_at or datetime.now(timezone.utc))
         message.error_message = error_message[:4096]
-        await session.flush()
+        if flush:
+            await session.flush()
 
     async def mark_dead_without_retry_increment(
         self,
@@ -190,11 +293,13 @@ class OutboxRepository:
         message: OutboxMessage,
         error_message: str,
         attempted_at: datetime | None = None,
+        flush: bool = True,
     ) -> None:
         message.status = OutboxStatus.DEAD
         message.last_attempted_at = _utc_naive(attempted_at or datetime.now(timezone.utc))
         message.error_message = error_message[:4096]
-        await session.flush()
+        if flush:
+            await session.flush()
 
     async def insert_reconciliation_log(
         self,
@@ -233,6 +338,25 @@ class OutboxRepository:
 
     async def count_messages(self, *, status: OutboxStatus | None = None) -> int:
         return len(await self.list_messages(status=status))
+
+    async def get_status_counts(self) -> dict[str, int]:
+        async with self.session_factory() as session:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT status, COUNT(*) AS count
+                    FROM telemetry_outbox
+                    GROUP BY status
+                    """
+                )
+            )
+            counts = {str(row[0]): int(row[1]) for row in result.all()}
+        return {
+            "pending": counts.get(OutboxStatus.PENDING.value, 0),
+            "failed": counts.get(OutboxStatus.FAILED.value, 0),
+            "delivered": counts.get(OutboxStatus.DELIVERED.value, 0),
+            "dead": counts.get(OutboxStatus.DEAD.value, 0),
+        }
 
     async def purge_retained_rows(
         self,

@@ -1,11 +1,5 @@
+import { getAccessToken, getAccessTokenClaims } from "./browserSession.ts";
 import { initializeTenantStore, tenantStore } from "./tenantStore.js";
-
-const ACCESS_TOKEN_KEY = "factoryops_access_token";
-
-type AccessTokenClaims = {
-  role?: string;
-  tenant_id?: string | null;
-};
 
 type ApiFetchOptions = RequestInit & {
   bypassTenantCheck?: boolean;
@@ -30,28 +24,7 @@ export function configureApiFetchAuthRecovery(hooks: AuthRecoveryHooks | null): 
   authRecoveryHooks = hooks;
 }
 
-function decodeTokenClaims(token: string | null): AccessTokenClaims | null {
-  if (!token || typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) {
-      return null;
-    }
-    return JSON.parse(atob(parts[1])) as AccessTokenClaims;
-  } catch {
-    return null;
-  }
-}
-
-function getAccessToken(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  return window.sessionStorage.getItem(ACCESS_TOKEN_KEY);
-}
+type AccessTokenClaims = ReturnType<typeof getAccessTokenClaims>;
 
 function getClaimTenantId(claims: AccessTokenClaims | null): string | null {
   return claims?.tenant_id ?? null;
@@ -114,7 +87,7 @@ async function performApiFetch(url: string, options: ApiFetchOptions = {}): Prom
   initializeTenantStore();
 
   const token = getAccessToken();
-  const claims = decodeTokenClaims(token);
+  const claims = getAccessTokenClaims();
   const headers = new Headers(options.headers);
 
   if (token) {

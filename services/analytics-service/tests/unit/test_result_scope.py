@@ -2,24 +2,14 @@ from __future__ import annotations
 
 import importlib
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import types
 
-ROOT = Path(__file__).resolve().parents[4]
-for path in (ROOT, ROOT / "services", ROOT / "services/analytics-service"):
-    resolved = str(path)
-    if resolved not in sys.path:
-        sys.path.insert(0, resolved)
+from tests._bootstrap import bootstrap_test_imports
 
-shared_tenant_context = importlib.import_module("shared.tenant_context")
-services_pkg = sys.modules.setdefault("services", types.ModuleType("services"))
-services_shared_pkg = sys.modules.setdefault("services.shared", types.ModuleType("services.shared"))
-services_pkg.shared = services_shared_pkg
-services_shared_pkg.tenant_context = shared_tenant_context
-sys.modules["services.shared.tenant_context"] = shared_tenant_context
+bootstrap_test_imports()
 
 from src.infrastructure.mysql_repository import MySQLResultRepository
 from src.utils.exceptions import JobNotFoundError

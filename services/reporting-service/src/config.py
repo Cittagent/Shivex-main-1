@@ -47,6 +47,19 @@ class Settings(BaseSettings):
     DEMAND_WINDOW_MINUTES: int = 15
     REPORT_JOB_TIMEOUT_SECONDS: int = 600
     SERVICE_NAME: str = "reporting-service"
+    APP_ROLE: str = "api"
+    QUEUE_BACKEND: str = "redis"
+    REDIS_URL: str | None = os.getenv("REDIS_URL", None)
+    REPORT_QUEUE_STREAM: str = "reporting:jobs"
+    REPORT_QUEUE_DEAD_LETTER_STREAM: str = "reporting:jobs:dead"
+    REPORT_QUEUE_CONSUMER_GROUP: str = "reporting-workers"
+    REPORT_QUEUE_CONSUMER_NAME: str = os.getenv("REPORT_QUEUE_CONSUMER_NAME", f"{SERVICE_NAME}-worker")
+    REPORT_WORKER_CONCURRENCY: int = 2
+    REPORT_QUEUE_MAXLEN: int = 10000
+    REPORT_JOB_MAX_RETRIES: int = 3
+    REPORT_QUEUE_CLAIM_IDLE_MS: int = 30000
+    REPORT_QUEUE_READ_BLOCK_MS: int = 5000
+    REPORT_METRICS_CACHE_SECONDS: int = 5
 
 
 settings = Settings()
@@ -61,6 +74,7 @@ for _name in (
     "MINIO_EXTERNAL_URL",
     "MINIO_ACCESS_KEY",
     "MINIO_SECRET_KEY",
+    "REDIS_URL",
 ):
     if getattr(settings, _name) is None:
         logger.warning("Missing environment variable for reporting-service setting: %s", _name)

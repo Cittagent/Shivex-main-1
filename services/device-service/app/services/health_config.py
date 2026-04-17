@@ -1,6 +1,7 @@
 """Health configuration service layer - business logic for parameter health management and scoring."""
 
 from dataclasses import dataclass
+from collections import defaultdict
 from typing import Optional, List, Dict, Any, Mapping
 from datetime import datetime
 
@@ -185,6 +186,33 @@ class HealthConfigService:
         
         result = await self._session.execute(query)
         return list(result.scalars().all())
+
+    async def get_active_health_configs_by_devices(
+        self,
+        device_ids: list[str],
+        tenant_id: Optional[str] = None,
+    ) -> dict[str, list[ParameterHealthConfig]]:
+        if not device_ids:
+            return {}
+
+        query = select(ParameterHealthConfig).where(
+            ParameterHealthConfig.device_id.in_(device_ids),
+            ParameterHealthConfig.is_active.is_(True),
+        )
+        if tenant_id:
+            query = query.where(ParameterHealthConfig.tenant_id == tenant_id)
+        query = query.order_by(
+            ParameterHealthConfig.device_id,
+            ParameterHealthConfig.canonical_parameter_name,
+            ParameterHealthConfig.parameter_name,
+            ParameterHealthConfig.id,
+        )
+
+        result = await self._session.execute(query)
+        grouped: dict[str, list[ParameterHealthConfig]] = defaultdict(list)
+        for config in result.scalars().all():
+            grouped[str(config.device_id)].append(config)
+        return dict(grouped)
     
     async def get_health_config(
         self,
@@ -608,7 +636,43 @@ class HealthConfigService:
         
         configs = await self.get_health_configs_by_device(device_id, tenant_id)
         active_configs = [c for c in configs if c.is_active]
-        
+
+        return self.calculate_health_score_from_configs(
+            device_id=device_id,
+            telemetry_values=telemetry_values,
+            machine_state=machine_state,
+            active_configs=active_configs,
+        )
+
+    def calculate_health_score_from_configs(
+        self,
+        *,
+        device_id: str,
+        telemetry_values: Dict[str, float],
+        machine_state: str = "RUNNING",
+        active_configs: list[ParameterHealthConfig],
+    ) -> dict:
+        machine_state = self.normalize_machine_state(machine_state)
+
+        if machine_state not in self._SCORABLE_MACHINE_STATES:
+            standby_message = (
+                f"Machine is {machine_state}. Health scoring disabled for this state."
+                if machine_state not in self._STANDBY_MACHINE_STATES
+                else f"Machine is {machine_state}. Health scoring not calculated in this state."
+            )
+            return {
+                "device_id": device_id,
+                "health_score": None,
+                "status": "Standby",
+                "status_color": "⚪",
+                "message": standby_message,
+                "machine_state": machine_state,
+                "parameter_scores": [],
+                "total_weight_configured": 0.0,
+                "parameters_included": 0,
+                "parameters_skipped": 0,
+            }
+
         if not active_configs:
             return {
                 "device_id": device_id,
@@ -623,16 +687,15 @@ class HealthConfigService:
                 "parameters_skipped": 0
             }
 
-        weight_validation = await self.validate_weights(device_id, tenant_id)
-        total_weight_configured = weight_validation["total_weight"]
-        
-        if not weight_validation["is_valid"]:
+        total_weight_configured = round(sum(config.weight for config in active_configs), 2)
+
+        if abs(total_weight_configured - 100.0) >= 0.01:
             return {
                 "device_id": device_id,
                 "health_score": None,
                 "status": "Invalid Configuration",
                 "status_color": "⚪",
-                "message": f"Weight validation failed: {weight_validation['message']}",
+                "message": f"Weight validation failed: Weights sum to {total_weight_configured}%, must equal 100%",
                 "machine_state": machine_state,
                 "parameter_scores": [],
                 "total_weight_configured": total_weight_configured,

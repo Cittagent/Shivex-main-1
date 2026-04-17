@@ -46,6 +46,14 @@ class _FakeCircuitBreaker:
         return "CLOSED"
 
 
+class _OpenCircuitBreaker:
+    async def call(self, fn):  # noqa: ANN001
+        return False, None
+
+    def get_state(self) -> str:
+        return "OPEN"
+
+
 def _payload(*, tenant_id: str | None, metadata_tenant_id: str | None = None) -> TelemetryPayload:
     metadata = None
     if metadata_tenant_id is not None:
@@ -109,4 +117,37 @@ async def test_rule_engine_client_rejects_mismatched_payload_and_device_tenants(
     await client.evaluate_rules(_payload(tenant_id="ORG-A", metadata_tenant_id="ORG-B"))
 
     assert fake_http.calls == []
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_rule_engine_circuit_open_writes_dead_dlq_entry() -> None:
+    class _FakeDLQRepository:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def send(self, **kwargs):  # noqa: ANN003, ANN201
+            self.calls.append(kwargs)
+            return True
+
+    dlq_repository = _FakeDLQRepository()
+    client = RuleEngineClient(
+        base_url="http://rule-engine",
+        timeout=1.0,
+        max_retries=1,
+        retry_delay=0.1,
+        dlq_repository=dlq_repository,  # type: ignore[arg-type]
+    )
+    fake_http = _FakeHttpClient()
+    client.client = fake_http
+    client.circuit_breaker = _OpenCircuitBreaker()
+
+    await client.evaluate_rules(_payload(tenant_id="ORG-A", metadata_tenant_id="ORG-A"))
+
+    assert fake_http.calls == []
+    assert len(dlq_repository.calls) == 1
+    call = dlq_repository.calls[0]
+    assert call["error_type"] == "rule_engine_circuit_open"
+    assert call["initial_status"] == "dead"
+    assert call["dead_reason"] == "rule_engine_circuit_open"
     await client.close()

@@ -1,11 +1,16 @@
 """Unit tests for job runner."""
 
+import time
 import pytest
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch
 
 import pandas as pd
+
+from tests._bootstrap import bootstrap_test_imports
+
+bootstrap_test_imports()
 
 from src.models.schemas import AnalyticsRequest, AnalyticsType, JobStatus
 from src.services.job_runner import JobRunner
@@ -90,6 +95,51 @@ class TestJobRunner:
         assert len(progress_calls) > 0
 
     @pytest.mark.asyncio
+    async def test_run_job_long_phase_reports_in_phase_progress_not_early_90(
+        self, job_runner, mock_result_repository, sample_telemetry_data
+    ):
+        """Long model phase should emit progressive updates and avoid jumping near 90% early."""
+        job_runner._dataset_service.load_dataset = AsyncMock(return_value=sample_telemetry_data)
+
+        class _SlowAnomalyEnsemble:
+            def run(self, df, params):
+                time.sleep(2.2)
+                n = min(25, len(df))
+                return {
+                    "is_anomaly": [False] * n,
+                    "anomaly_score": [0.1] * n,
+                }
+
+        request = AnalyticsRequest(
+            device_id="D1",
+            start_time=datetime.now() - timedelta(days=7),
+            end_time=datetime.now(),
+            analysis_type=AnalyticsType.ANOMALY,
+            model_name="anomaly_ensemble",
+        )
+
+        with patch(
+            "src.services.job_runner.AnomalyEnsemble",
+            return_value=_SlowAnomalyEnsemble(),
+        ), patch(
+            "src.services.job_runner.get_settings",
+            return_value=MagicMock(
+                app_env="test",
+                ml_require_exact_dataset_range=False,
+                ml_data_readiness_gate_enabled=False,
+                ml_formatted_results_enabled=False,
+            ),
+        ):
+            await job_runner.run_job("test-job-long-phase", request)
+
+        model_phase_calls = [
+            call for call in mock_result_repository.update_job_progress.call_args_list
+            if call.kwargs.get("phase") == "model_execution"
+        ]
+        assert len(model_phase_calls) >= 2
+        assert max(float(call.kwargs.get("progress", 0.0)) for call in model_phase_calls) <= 85.0
+
+    @pytest.mark.asyncio
     async def test_run_job_falls_back_to_direct_data_when_readiness_unavailable(
         self, job_runner, mock_result_repository, sample_telemetry_data
     ):
@@ -150,3 +200,14 @@ class TestJobRunner:
             await job_runner.run_job("test-job-tenant-readiness", request)
 
         assert readiness_mock.await_args.kwargs["tenant_id"] == "ORG-A"
+
+    def test_model_phase_time_estimate_scales_with_dataset_size(self, job_runner):
+        small = job_runner._estimate_model_phase_seconds(
+            analysis_type=AnalyticsType.ANOMALY,
+            current_rows=500,
+        )
+        large = job_runner._estimate_model_phase_seconds(
+            analysis_type=AnalyticsType.ANOMALY,
+            current_rows=50000,
+        )
+        assert large > small

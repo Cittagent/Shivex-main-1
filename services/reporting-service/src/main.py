@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
 from sqlalchemy import text
 
 from fastapi import Depends, FastAPI, Request, HTTPException
@@ -11,8 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.config import settings
-from src.database import engine
+from src.database import AsyncSessionLocal, engine
 from src.handlers import energy_router, comparison_router, tariffs_router, common_router, settings_router
+from src.queue import get_report_queue
+from src.repositories.report_repository import ReportRepository
 from src.services.influx_reader import influx_reader
 from src.tasks.scheduler import start_scheduler, stop_scheduler
 from src.storage.minio_client import minio_client
@@ -28,28 +29,6 @@ logger.info("="*60)
 logger.info("REPORTING SERVICE VERSION: DIAGNOSTIC_BUILD_03")
 logger.info("="*60)
 
-
-async def fail_stale_reports_on_startup() -> None:
-    cutoff = datetime.utcnow() - timedelta(minutes=10)
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(
-                """
-                UPDATE energy_reports
-                SET
-                    status = 'failed',
-                    progress = 100,
-                    error_code = 'SERVICE_RESTARTED',
-                    error_message = 'Service restarted',
-                    completed_at = :now
-                WHERE
-                    status IN ('pending', 'processing')
-                    AND created_at < :cutoff
-                """
-            ),
-            {"now": datetime.utcnow(), "cutoff": cutoff},
-        )
-
 app = FastAPI(
     title="Reporting Service",
     redirect_slashes=False
@@ -64,8 +43,6 @@ async def lifespan(app: FastAPI):
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         logger.info("Database connection verified")
-        await fail_stale_reports_on_startup()
-        logger.info("Stale reporting jobs cleanup complete")
     except Exception as e:
         logger.error(f"Database connection failed: {e}")
         raise
@@ -83,6 +60,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"MinIO bucket initialization failed: {e}")
         raise
+
+    if settings.QUEUE_BACKEND == "redis":
+        try:
+            await get_report_queue().metrics()
+            logger.info("Redis report queue connection verified")
+        except Exception as e:
+            logger.error(f"Redis queue initialization failed: {e}")
+            raise
     
     try:
         scheduler = start_scheduler()
@@ -177,6 +162,7 @@ class ReadyResponse(BaseModel):
     db: str
     influx: str
     minio: str
+    queue: str
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -189,6 +175,7 @@ async def ready():
     db_status = "connected"
     influx_status = "connected"
     minio_status = "connected"
+    queue_status = "connected"
     
     try:
         async with engine.connect() as conn:
@@ -206,7 +193,13 @@ async def ready():
     except Exception:
         minio_status = "disconnected"
 
-    if "disconnected" in {db_status, influx_status, minio_status}:
+    if settings.QUEUE_BACKEND == "redis":
+        try:
+            await get_report_queue().metrics()
+        except Exception:
+            queue_status = "disconnected"
+
+    if "disconnected" in {db_status, influx_status, minio_status, queue_status}:
         raise HTTPException(
             status_code=503,
             detail={
@@ -214,6 +207,7 @@ async def ready():
                 "db": db_status,
                 "influx": influx_status,
                 "minio": minio_status,
+                "queue": queue_status,
             },
         )
     
@@ -221,8 +215,29 @@ async def ready():
         status="ready",
         db=db_status,
         influx=influx_status,
-        minio=minio_status
+        minio=minio_status,
+        queue=queue_status,
     )
+
+
+@app.get("/metrics")
+async def metrics():
+    async with AsyncSessionLocal() as db:
+        repo = ReportRepository(db)
+        status_counts = await repo.count_by_status()
+        runtime_counters = await repo.aggregate_runtime_counters()
+    queue_metrics = await get_report_queue().metrics()
+    return {
+        "queue_depth": queue_metrics.get("queue_depth", 0),
+        "queued_job_count": status_counts.get("pending", 0),
+        "processing_job_count": status_counts.get("processing", 0),
+        "failed_job_count": status_counts.get("failed", 0),
+        "completed_job_count": status_counts.get("completed", 0),
+        "pending_message_count": queue_metrics.get("pending_messages", 0),
+        "dead_letter_count": queue_metrics.get("dead_letter_count", 0),
+        "retry_count": runtime_counters.get("retry_count", 0),
+        "timeout_count": runtime_counters.get("timeout_count", 0),
+    }
 
 
 app.include_router(energy_router, prefix="/api/reports/energy", tags=["Energy Reports"], dependencies=[Depends(require_feature("reports"))])

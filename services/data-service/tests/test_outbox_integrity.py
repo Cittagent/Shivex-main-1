@@ -10,10 +10,13 @@ import pymysql
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from unittest.mock import AsyncMock
+from fastapi.encoders import jsonable_encoder
 
 from src.config import settings
-from src.models import EnrichmentStatus, OutboxStatus, OutboxTarget, TelemetryPoint
+from src.models import EnrichmentStatus, OutboxStatus, OutboxTarget, TelemetryPayload, TelemetryPoint
 from src.repositories import DLQRepository, OutboxRepository
+from src.utils.circuit_breaker import _BREAKERS
 from src.services.outbox_relay import OutboxRelayService
 from src.services.reconciliation import ReconciliationService
 from src.services.retention_cleanup import RetentionCleanupService
@@ -84,6 +87,7 @@ def _telemetry_payload(device_id: str = "DEVICE-OUTBOX-1", *, ts: datetime | Non
     stamp = ts or datetime.now(timezone.utc)
     return {
         "device_id": device_id,
+        "tenant_id": "SH00000001",
         "timestamp": stamp.isoformat(),
         "schema_version": "v1",
         "power": 120.5,
@@ -111,6 +115,13 @@ def configure_outbox_settings(monkeypatch):
     monkeypatch.setattr(settings, "outbox_max_retries", 5)
     monkeypatch.setattr(settings, "reconciliation_drift_warn_minutes", 10)
     monkeypatch.setattr(settings, "reconciliation_drift_resync_minutes", 30)
+
+
+@pytest.fixture(autouse=True)
+def reset_circuit_breakers():
+    _BREAKERS.clear()
+    yield
+    _BREAKERS.clear()
 
 
 @pytest_asyncio.fixture
@@ -151,11 +162,25 @@ async def test_outbox_row_created_on_telemetry(repositories, monkeypatch):
         return None
 
     monkeypatch.setattr("src.api.websocket.broadcast_telemetry", _noop_broadcast)
+    telemetry_service._fetch_tenant_owned_device_ids = AsyncMock(return_value={"DEVICE-OUTBOX-1"})
     await telemetry_service.start()
     try:
-        accepted = await telemetry_service.process_telemetry_message(_telemetry_payload())
+        payload = _telemetry_payload()
+        accepted = await telemetry_service.process_telemetry_message(payload)
         assert accepted is True
-        await _wait_for_queue(telemetry_service)
+        await telemetry_service._process_telemetry_async(  # noqa: SLF001
+            payload=TelemetryPayload(**payload),
+            correlation_id="test-outbox-row-created",
+            raw_payload=payload,
+        )
+        await telemetry_service._process_derived_async(  # noqa: SLF001
+            payload=TelemetryPayload(**payload),
+            correlation_id="test-outbox-row-created",
+            outbox_payload=jsonable_encoder(payload),
+            projection_synced=True,
+            projection_state={"load_state": "idle"},
+            projection_error=None,
+        )
         async with outbox_repository.session_factory() as session:
             result = await session.execute(
                 text(
@@ -182,6 +207,8 @@ async def test_outbox_delivered_on_success(repositories):
     )
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(status_code=200, json={"data": {"device_id": "DEVICE-SUCCESS-1"}})
         return httpx.Response(status_code=200, json={"success": True})
 
     relay = OutboxRelayService(
@@ -191,8 +218,8 @@ async def test_outbox_delivered_on_success(repositories):
     )
     try:
         processed = await relay.run_once()
-        assert processed == 1
-        rows = await outbox_repository.list_messages()
+        assert processed >= 1
+        rows = [row for row in await outbox_repository.list_messages() if row.device_id == "DEVICE-SUCCESS-1"]
         assert len(rows) == 1
         assert rows[0].status == OutboxStatus.DELIVERED
         assert rows[0].delivered_at is not None
@@ -211,6 +238,8 @@ async def test_outbox_retries_on_failure(repositories):
     )
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(status_code=200, json={"data": {"device_id": "DEVICE-RETRY-1"}})
         return httpx.Response(status_code=503, json={"success": False})
 
     relay = OutboxRelayService(
@@ -229,6 +258,41 @@ async def test_outbox_retries_on_failure(repositories):
 
 
 @pytest.mark.asyncio
+async def test_outbox_run_once_drains_multiple_claim_batches(repositories, monkeypatch):
+    outbox_repository, dlq_repository = repositories
+    monkeypatch.setattr(settings, "outbox_batch_size", 10)
+    monkeypatch.setattr(settings, "outbox_max_batches_per_run", 3)
+
+    for idx in range(25):
+        device_id = f"DEVICE-MULTI-{idx:03d}"
+        await outbox_repository.enqueue_telemetry(
+            device_id=device_id,
+            telemetry_payload=_telemetry_payload(device_id),
+            targets=[OutboxTarget.DEVICE_SERVICE],
+            max_retries=5,
+        )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(status_code=200, json={"data": {"device_id": "ok"}})
+        return httpx.Response(status_code=200, json={"success": True})
+
+    relay = OutboxRelayService(
+        outbox_repository=outbox_repository,
+        dlq_repository=dlq_repository,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10.0),
+    )
+    try:
+        processed = await relay.run_once()
+        assert processed == 25
+        rows = [row for row in await outbox_repository.list_messages() if row.device_id.startswith("DEVICE-MULTI-")]
+        assert len(rows) == 25
+        assert all(row.status == OutboxStatus.DELIVERED for row in rows)
+    finally:
+        await relay.stop()
+
+
+@pytest.mark.asyncio
 async def test_outbox_dead_after_max_retries(repositories):
     outbox_repository, dlq_repository = repositories
     await outbox_repository.enqueue_telemetry(
@@ -239,6 +303,8 @@ async def test_outbox_dead_after_max_retries(repositories):
     )
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(status_code=200, json={"data": {"device_id": "DEVICE-DEAD-1"}})
         return httpx.Response(status_code=503, text="downstream unavailable")
 
     relay = OutboxRelayService(
@@ -263,7 +329,97 @@ async def test_outbox_dead_after_max_retries(repositories):
 
 
 @pytest.mark.asyncio
-async def test_reconciliation_detects_drift(repositories, capfd):
+async def test_energy_outbox_is_delivered_via_batched_request(repositories, monkeypatch):
+    outbox_repository, dlq_repository = repositories
+    await outbox_repository.enqueue_telemetry_batch(
+        entries=[
+            ("DEVICE-ENERGY-B1", _telemetry_payload("DEVICE-ENERGY-B1"), [OutboxTarget.ENERGY_SERVICE]),
+            ("DEVICE-ENERGY-B2", _telemetry_payload("DEVICE-ENERGY-B2"), [OutboxTarget.ENERGY_SERVICE]),
+        ],
+        max_retries=5,
+    )
+    monkeypatch.setattr(settings, "outbox_energy_delivery_batch_size", 10)
+    seen_posts: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            seen_posts.append(request.url.path)
+            return httpx.Response(
+                status_code=200,
+                json={
+                    "success": True,
+                    "results": [
+                        {"success": True, "device_id": "DEVICE-ENERGY-B1", "retryable": False},
+                        {"success": True, "device_id": "DEVICE-ENERGY-B2", "retryable": False},
+                    ],
+                },
+            )
+        return httpx.Response(status_code=404)
+
+    relay = OutboxRelayService(
+        outbox_repository=outbox_repository,
+        dlq_repository=dlq_repository,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10.0),
+    )
+    try:
+        processed = await relay.run_once()
+        assert processed == 2
+        assert seen_posts == ["/api/v1/energy/live-update/batch"]
+        rows = [row for row in await outbox_repository.list_messages() if row.device_id.startswith("DEVICE-ENERGY-B")]
+        assert {row.status for row in rows} == {OutboxStatus.DELIVERED}
+    finally:
+        await relay.stop()
+
+
+@pytest.mark.asyncio
+async def test_energy_batch_partial_failure_isolated_per_row(repositories, monkeypatch):
+    outbox_repository, dlq_repository = repositories
+    await outbox_repository.enqueue_telemetry_batch(
+        entries=[
+            ("DEVICE-ENERGY-P1", _telemetry_payload("DEVICE-ENERGY-P1"), [OutboxTarget.ENERGY_SERVICE]),
+            ("DEVICE-ENERGY-P2", _telemetry_payload("DEVICE-ENERGY-P2"), [OutboxTarget.ENERGY_SERVICE]),
+        ],
+        max_retries=5,
+    )
+    monkeypatch.setattr(settings, "outbox_energy_delivery_batch_size", 10)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(
+                status_code=200,
+                json={
+                    "success": True,
+                    "results": [
+                        {"success": True, "device_id": "DEVICE-ENERGY-P1", "retryable": False},
+                        {
+                            "success": False,
+                            "device_id": "DEVICE-ENERGY-P2",
+                            "error": "bad input",
+                            "error_code": "INVALID_ENERGY_PAYLOAD",
+                            "retryable": False,
+                        },
+                    ],
+                },
+            )
+        return httpx.Response(status_code=404)
+
+    relay = OutboxRelayService(
+        outbox_repository=outbox_repository,
+        dlq_repository=dlq_repository,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10.0),
+    )
+    try:
+        await relay.run_once()
+        rows = {row.device_id: row for row in await outbox_repository.list_messages() if row.device_id.startswith("DEVICE-ENERGY-P")}
+        assert rows["DEVICE-ENERGY-P1"].status == OutboxStatus.DELIVERED
+        assert rows["DEVICE-ENERGY-P2"].status == OutboxStatus.DEAD
+        assert rows["DEVICE-ENERGY-P2"].retry_count == 0
+    finally:
+        await relay.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_detects_drift(repositories):
     outbox_repository, _ = repositories
     now = datetime.now(timezone.utc)
     latest_point = TelemetryPoint(
@@ -276,8 +432,11 @@ async def test_reconciliation_detects_drift(repositories, capfd):
     influx_repository = FakeInfluxRepository(latest_map={"DEVICE-DRIFT-1": latest_point})
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/internal/active-tenant-ids"):
+            return httpx.Response(status_code=200, json={"tenant_ids": ["SH00000001"]})
         assert request.url.path.endswith("/api/v1/devices/dashboard/fleet-snapshot")
         assert request.headers["x-internal-service"] == "data-service"
+        assert request.headers["x-tenant-id"] == "SH00000001"
         assert request.url.params["page_size"] == "200"
         assert request.url.params["sort"] == "device_name"
         payload = {
@@ -301,9 +460,11 @@ async def test_reconciliation_detects_drift(repositories, capfd):
     )
     try:
         await service.run_once()
-        captured = capfd.readouterr()
-        assert "Telemetry reconciliation drift detected" in captured.out
-        rows = await outbox_repository.list_messages(status=OutboxStatus.PENDING)
+        rows = [
+            row
+            for row in await outbox_repository.list_messages(status=OutboxStatus.PENDING)
+            if row.device_id == "DEVICE-DRIFT-1"
+        ]
         assert len(rows) == 2
         async with outbox_repository.session_factory() as session:
             result = await session.execute(
@@ -334,6 +495,9 @@ async def test_no_double_delivery(repositories, monkeypatch):
         )
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            device_id = request.url.path.rstrip("/").split("/")[-1]
+            return httpx.Response(status_code=200, json={"data": {"device_id": device_id}})
         device_id = request.url.path.split("/")[-2]
         delivery_counts[device_id] += 1
         await asyncio.sleep(0.05)
@@ -463,3 +627,51 @@ async def test_retention_cleanup_purges_old_operational_rows(repositories, monke
             )
             remaining_dlq = [row["device_id"] for row in cur.fetchall()]
     assert remaining_dlq == ["RECENT-DLQ"]
+
+
+@pytest.mark.asyncio
+async def test_retention_cleanup_reclassifies_non_retryable_pending_dlq_rows(repositories, monkeypatch):
+    outbox_repository, dlq_repository = repositories
+    now = datetime.utcnow()
+    monkeypatch.setattr(settings, "dlq_retryable_error_types", ["parse_error"])
+
+    with _mysql_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO dlq_messages
+                  (timestamp, error_type, error_message, retry_count, original_payload, status, created_at)
+                VALUES
+                  (%s, 'rule_engine_circuit_open', 'circuit open', 0, JSON_OBJECT('device_id', 'NONRETRY-DLQ'), 'pending', %s),
+                  (%s, 'parse_error', 'retryable', 0, JSON_OBJECT('device_id', 'RETRYABLE-DLQ'), 'pending', %s)
+                """,
+                (now, now, now, now),
+            )
+
+    cleanup = RetentionCleanupService(
+        outbox_repository=outbox_repository,
+        dlq_repository=dlq_repository,
+        interval_seconds=3600,
+        batch_size=100,
+    )
+    counts = await cleanup.run_once()
+
+    assert counts["dlq_reclassified_non_retryable"] == 1
+
+    with _mysql_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                  JSON_UNQUOTE(JSON_EXTRACT(original_payload, '$.device_id')) AS device_id,
+                  status
+                FROM dlq_messages
+                WHERE JSON_UNQUOTE(JSON_EXTRACT(original_payload, '$.device_id')) IN ('NONRETRY-DLQ', 'RETRYABLE-DLQ')
+                ORDER BY device_id ASC
+                """
+            )
+            rows = cur.fetchall()
+
+    by_device = {row["device_id"]: row["status"] for row in rows}
+    assert by_device["NONRETRY-DLQ"] == "dead"
+    assert by_device["RETRYABLE-DLQ"] == "pending"

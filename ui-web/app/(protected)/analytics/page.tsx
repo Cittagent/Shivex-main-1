@@ -118,6 +118,39 @@ function formatAnalysisLabel(result: ResultType | null): string {
   return "Fleet Analytics";
 }
 
+function formatSeconds(seconds?: number | null): string {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return "";
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+function formatProgressMessage(status: {
+  status: string;
+  message?: string | null;
+  phase_label?: string | null;
+  queue_position?: number | null;
+  estimated_wait_seconds?: number | null;
+  estimated_completion_seconds?: number | null;
+  estimate_quality?: "low" | "medium" | "high" | null;
+}): string {
+  const phaseText = status.phase_label?.trim() || status.message?.trim() || "Processing";
+  const qualitySuffix = status.estimate_quality ? ` (${status.estimate_quality} confidence)` : "";
+  if (status.status === "pending") {
+    const queue = typeof status.queue_position === "number" ? `Queue #${status.queue_position + 1}` : "Queued";
+    const waitText = formatSeconds(status.estimated_wait_seconds);
+    return waitText ? `${queue} · wait ~${waitText}${qualitySuffix}` : `${queue}${qualitySuffix}`;
+  }
+  if (status.status === "running") {
+    const completion = formatSeconds(status.estimated_completion_seconds);
+    return completion ? `${phaseText} · ETA ~${completion}${qualitySuffix}` : phaseText;
+  }
+  return phaseText;
+}
+
 function ModelVotingPanel({
   ensemble,
 }: {
@@ -226,7 +259,6 @@ function AnalyticsPageContent() {
   const [analysisType, setAnalysisType] = useState<AnalysisType | null>(null);
 
   const [jobId, setJobId] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
   const [displayProgress, setDisplayProgress] = useState(0);
   const [progressMsg, setProgressMsg] = useState("Preparing analysis...");
   const [error, setError] = useState<string | null>(null);
@@ -325,24 +357,6 @@ function AnalyticsPageContent() {
   }, [dateRange]);
 
   useEffect(() => {
-    if (step !== 4) return;
-    const sequence: Array<[number, number, string]> = [
-      [300, 12, "Loading telemetry from dataset storage..."],
-      [1200, 35, "Engineering features across parameters..."],
-      [2300, 58, "Training ML model..."],
-      [3300, 78, "Running inference and scoring..."],
-      [4300, 90, "Formatting premium dashboard payload..."],
-    ];
-    const timers = sequence.map(([ms, pct, msg]) =>
-      setTimeout(() => {
-        setProgress((p) => (p < pct ? pct : p));
-        setProgressMsg(msg);
-      }, ms)
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [step]);
-
-  useEffect(() => {
     if (!jobId) return;
     const MAX_POLL_MS = 15 * 60 * 1000;
     const pollStart = Date.now();
@@ -366,10 +380,9 @@ function AnalyticsPageContent() {
 
         try {
           const status = await getAnalyticsStatus(jobId);
-          setDisplayProgress((prev) =>
-            Math.max(prev, typeof status.progress === "number" ? status.progress : 0)
-          );
-          setProgressMsg(status.message ?? "Processing...");
+          const reportedProgress = typeof status.progress === "number" ? status.progress : 0;
+          setDisplayProgress(Math.max(0, Math.min(100, reportedProgress)));
+          setProgressMsg(formatProgressMessage(status));
 
           if (status.status === "completed") {
             const results = await getFormattedResults(jobId);
@@ -419,7 +432,6 @@ function AnalyticsPageContent() {
     if (!analysisType || !models) return;
 
     setError(null);
-    setProgress(0);
     setDisplayProgress(0);
     setProgressMsg("Preparing analysis...");
     setStep(4);
@@ -472,7 +484,6 @@ function AnalyticsPageContent() {
     setAnomalyPage(1);
     setJobId(null);
     setError(null);
-    setProgress(0);
     setProgressMsg("Preparing analysis...");
     setScopeSelection({
       mode: "all",
@@ -680,7 +691,7 @@ function AnalyticsPageContent() {
                   </div>
                   <div style={{ width: 80, height: 80, borderRadius: "50%", border: "5px solid #e2e8f0", margin: "0 auto 12px", position: "relative", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <div style={{ position: "absolute", width: 80, height: 80, borderRadius: "50%", border: "5px solid transparent", borderTopColor: COLORS.accent, animation: "spin 1s linear infinite" }} />
-                    <span style={{ fontSize: 16, fontWeight: 700, color: COLORS.text }}>{Math.max(progress, displayProgress)}%</span>
+                    <span style={{ fontSize: 16, fontWeight: 700, color: COLORS.text }}>{Math.round(displayProgress)}%</span>
                   </div>
                   <div style={{ fontSize: 11, color: COLORS.muted }}>{progressMsg}</div>
                   <div style={{ marginTop: 6, color: COLORS.muted, fontSize: 10, opacity: 0.7 }}>{selectedScopeSummary} · {dateRange.start} → {dateRange.end}</div>

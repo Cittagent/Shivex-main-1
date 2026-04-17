@@ -20,6 +20,11 @@ from services.shared.tenant_context import TenantContext, resolve_request_tenant
 router = APIRouter(tags=["reports"])
 
 
+def _external_report_status(status: object) -> str:
+    resolved = status.value if hasattr(status, "value") else str(status)
+    return "processing" if resolved == "pending" else resolved
+
+
 class ScheduleCreateRequest(BaseModel):
     report_type: Literal["consumption", "comparison"]
     frequency: Literal["daily", "weekly", "monthly"]
@@ -95,7 +100,7 @@ async def list_reports(
         "reports": [
             {
                 "report_id": r.report_id,
-                "status": r.status.value if hasattr(r.status, 'value') else str(r.status),
+                "status": _external_report_status(r.status),
                 "report_type": r.report_type.value if hasattr(r.report_type, 'value') else str(r.report_type),
                 "created_at": r.created_at.isoformat() if r.created_at else None,
                 "completed_at": r.completed_at.isoformat() if r.completed_at else None
@@ -221,7 +226,7 @@ async def get_report_status(
     
     return {
         "report_id": report.report_id,
-        "status": report.status.value if hasattr(report.status, 'value') else str(report.status),
+        "status": _external_report_status(report.status),
         "progress": getattr(report, 'progress', 0),
         "error_code": report.error_code,
         "error_message": report.error_message

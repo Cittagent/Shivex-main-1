@@ -422,3 +422,70 @@ class NotificationDeliveryLog(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+
+
+class NotificationOutbox(Base):
+    """Durable outbox for asynchronous notification delivery."""
+
+    __tablename__ = "notification_outbox"
+    __table_args__ = (
+        UniqueConstraint("ledger_log_id", name="uq_notification_outbox_ledger_log_id"),
+        UniqueConstraint("alert_id", "channel", "recipient_hash", name="uq_notification_outbox_alert_channel_recipient"),
+        Index("ix_notification_outbox_tenant_status_next_attempt", "tenant_id", "status", "next_attempt_at"),
+        Index("ix_notification_outbox_tenant_channel_status", "tenant_id", "channel", "status"),
+        Index("ix_notification_outbox_processing_started", "status", "processing_started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False, index=True)
+    alert_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("alerts.alert_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    rule_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("rules.rule_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    ledger_log_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("notification_delivery_logs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    device_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    recipient_raw: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    recipient_masked: Mapped[str] = mapped_column(String(255), nullable=False)
+    recipient_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_json: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[NotificationDeliveryStatus] = mapped_column(String(32), nullable=False, index=True)
+    worker_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processing_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dead_lettered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    failure_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    failure_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )

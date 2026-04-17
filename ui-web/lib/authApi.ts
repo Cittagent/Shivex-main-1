@@ -1,3 +1,4 @@
+import { clearAccessToken, getAccessToken, setAccessToken } from "./browserSession.ts";
 import { clearSelectedTenant, initializeTenantStore } from "./tenantStore.js";
 import { apiFetch, configureApiFetchAuthRecovery } from "./apiFetch";
 
@@ -69,7 +70,7 @@ function resolveTenantId(payload: TenantScopedPayload): string {
 
 export interface TokenResponse {
   access_token: string;
-  refresh_token: string;
+  refresh_token?: string | null;
   token_type: string;
   expires_in: number;
 }
@@ -81,8 +82,6 @@ export interface ActionTokenStatus {
   full_name: string | null;
 }
 
-const ACCESS_TOKEN_KEY = "factoryops_access_token";
-const REFRESH_TOKEN_KEY = "factoryops_refresh_token";
 const ME_KEY = "factoryops_me";
 export const AUTH_STATE_CHANGE_EVENT = "factoryops-auth-state-change";
 
@@ -166,32 +165,12 @@ async function readJson(response: Response): Promise<unknown> {
 
 export const tokenStore = {
   getAccessToken(): string | null {
-    if (!isBrowser()) {
-      return null;
-    }
-    return window.sessionStorage.getItem(ACCESS_TOKEN_KEY);
+    return getAccessToken();
   },
 
-  setAccessToken(token: string): void {
-    if (!isBrowser()) {
-      return;
-    }
-    window.sessionStorage.setItem(ACCESS_TOKEN_KEY, token);
+  setAccessToken(token: string | null): void {
+    setAccessToken(token);
     initializeTenantStore();
-  },
-
-  getRefreshToken(): string | null {
-    if (!isBrowser()) {
-      return null;
-    }
-    return window.sessionStorage.getItem(REFRESH_TOKEN_KEY);
-  },
-
-  setRefreshToken(token: string): void {
-    if (!isBrowser()) {
-      return;
-    }
-    window.sessionStorage.setItem(REFRESH_TOKEN_KEY, token);
   },
 
   getMeData(): MeResponse | null {
@@ -220,11 +199,11 @@ export const tokenStore = {
   },
 
   clearAll(): void {
+    clearAccessToken();
     if (!isBrowser()) {
+      initializeTenantStore();
       return;
     }
-    window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
-    window.sessionStorage.removeItem(REFRESH_TOKEN_KEY);
     window.sessionStorage.removeItem(ME_KEY);
     clearSelectedTenant();
     notifyAuthStateChange(null);
@@ -303,8 +282,7 @@ export const authApi = {
     }
 
     const tokenResponse = body as TokenResponse;
-    tokenStore.setRefreshToken(tokenResponse.refresh_token);
-    tokenStore.setAccessToken(tokenResponse.access_token);
+    tokenStore.setAccessToken(tokenResponse.access_token ?? null);
 
     const me = await this.getMe();
     tokenStore.setMeData(me);
@@ -313,10 +291,6 @@ export const authApi = {
 
   async logout(): Promise<void> {
     try {
-      const refreshToken = tokenStore.getRefreshToken();
-      if (!refreshToken) {
-        return;
-      }
       await apiFetch(`${AUTH_BASE}/api/v1/auth/logout`, {
         method: "POST",
         bypassTenantCheck: true,
@@ -324,7 +298,6 @@ export const authApi = {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ refresh_token: refreshToken }),
       });
     } catch {
       // Logout should never block the client from clearing local auth state.
@@ -340,10 +313,6 @@ export const authApi = {
 
     refreshAccessTokenInFlight = (async () => {
       try {
-        const refreshToken = tokenStore.getRefreshToken();
-        if (!refreshToken) {
-          return null;
-        }
         const response = await apiFetch(`${AUTH_BASE}/api/v1/auth/refresh`, {
           method: "POST",
           bypassTenantCheck: true,
@@ -351,18 +320,18 @@ export const authApi = {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ refresh_token: refreshToken }),
         });
 
         if (!response.ok) {
+          tokenStore.setAccessToken(null);
           return null;
         }
 
         const body = (await readJson(response)) as TokenResponse;
-        tokenStore.setRefreshToken(body.refresh_token);
-        tokenStore.setAccessToken(body.access_token);
+        tokenStore.setAccessToken(body.access_token ?? null);
         return body.access_token;
       } catch {
+        tokenStore.setAccessToken(null);
         return null;
       } finally {
         refreshAccessTokenInFlight = null;

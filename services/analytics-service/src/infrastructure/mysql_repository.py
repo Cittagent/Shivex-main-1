@@ -71,6 +71,9 @@ class MySQLResultRepository(ResultRepository):
             parameters=self._sanitize_json(parameters),
             status=JobStatus.PENDING.value,
             progress=0.0,
+            phase="queued",
+            phase_label="Queued",
+            phase_progress=0.0,
         )
 
         self._session.add(job)
@@ -148,6 +151,9 @@ class MySQLResultRepository(ResultRepository):
                     AnalyticsJob.parameters,
                     AnalyticsJob.status,
                     AnalyticsJob.progress,
+                    AnalyticsJob.phase,
+                    AnalyticsJob.phase_label,
+                    AnalyticsJob.phase_progress,
                     AnalyticsJob.message,
                     AnalyticsJob.error_message,
                     AnalyticsJob.created_at,
@@ -199,6 +205,9 @@ class MySQLResultRepository(ResultRepository):
         progress: Optional[float] = None,
         message: Optional[str] = None,
         error_message: Optional[str] = None,
+        phase: Optional[str] = None,
+        phase_label: Optional[str] = None,
+        phase_progress: Optional[float] = None,
     ) -> None:
 
         job = await self.get_job(job_id)
@@ -215,6 +224,12 @@ class MySQLResultRepository(ResultRepository):
             job.message = message
         if error_message:
             job.error_message = error_message
+        if phase is not None:
+            job.phase = phase
+        if phase_label is not None:
+            job.phase_label = phase_label
+        if phase_progress is not None:
+            job.phase_progress = float(max(0.0, min(1.0, phase_progress)))
 
         await self._session.commit()
 
@@ -230,12 +245,21 @@ class MySQLResultRepository(ResultRepository):
         job_id: str,
         progress: float,
         message: str,
+        phase: Optional[str] = None,
+        phase_label: Optional[str] = None,
+        phase_progress: Optional[float] = None,
     ) -> None:
 
         job = await self.get_job(job_id)
 
         job.progress = progress
         job.message = message
+        if phase is not None:
+            job.phase = phase
+        if phase_label is not None:
+            job.phase_label = phase_label
+        if phase_progress is not None:
+            job.phase_progress = float(max(0.0, min(1.0, phase_progress)))
 
         await self._session.commit()
 
@@ -345,6 +369,78 @@ class MySQLResultRepository(ResultRepository):
 
     async def rollback(self) -> None:
         await self._session.rollback()
+
+    async def count_jobs(
+        self,
+        statuses: Optional[list[str]] = None,
+        tenant_id: Optional[str] = None,
+        attempts_gte: Optional[int] = None,
+    ) -> int:
+        query = select(func.count()).select_from(AnalyticsJob)
+
+        if statuses:
+            query = query.where(AnalyticsJob.status.in_(statuses))
+        if tenant_id:
+            query = query.where(
+                func.json_unquote(
+                    func.json_extract(AnalyticsJob.parameters, "$.tenant_id")
+                )
+                == tenant_id
+            )
+        if attempts_gte is not None:
+            query = query.where(AnalyticsJob.attempt >= int(attempts_gte))
+
+        result = await self._session.execute(query)
+        return int(result.scalar() or 0)
+
+    async def list_tenant_job_counts(
+        self,
+        statuses: Optional[list[str]] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        tenant_expr = func.json_unquote(func.json_extract(AnalyticsJob.parameters, "$.tenant_id"))
+        query = (
+            select(
+                tenant_expr.label("tenant_id"),
+                func.count().label("job_count"),
+            )
+            .select_from(AnalyticsJob)
+            .where(tenant_expr.is_not(None))
+            .group_by(tenant_expr)
+            .order_by(func.count().desc())
+            .limit(max(1, int(limit)))
+        )
+
+        if statuses:
+            query = query.where(AnalyticsJob.status.in_(statuses))
+
+        result = await self._session.execute(query)
+        rows = result.all()
+        return [
+            {
+                "tenant_id": str(row.tenant_id),
+                "job_count": int(row.job_count or 0),
+            }
+            for row in rows
+            if row.tenant_id
+        ]
+
+    async def list_jobs_for_parent(
+        self,
+        parent_job_id: str,
+    ) -> List[AnalyticsJob]:
+        query = (
+            select(AnalyticsJob)
+            .where(
+                func.json_unquote(
+                    func.json_extract(AnalyticsJob.parameters, "$.parent_job_id")
+                )
+                == parent_job_id
+            )
+            .order_by(AnalyticsJob.created_at.asc())
+        )
+        result = await self._session.execute(query)
+        return list(result.scalars().all())
 
     async def get_model_artifact(
         self,

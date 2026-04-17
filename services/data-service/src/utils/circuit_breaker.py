@@ -40,20 +40,9 @@ class CircuitBreaker:
         self._lock = asyncio.Lock()
 
     async def call(self, coro) -> tuple[bool, Any]:
-        acquired_half_open_slot = False
-        async with self._lock:
-            now = time.monotonic()
-            if self._state == STATE_OPEN:
-                if (now - self._opened_at_monotonic) >= self.open_timeout_sec:
-                    self._transition_to(STATE_HALF_OPEN)
-                else:
-                    return False, None
-
-            if self._state == STATE_HALF_OPEN:
-                if self._half_open_in_flight >= self.half_open_max_calls:
-                    return False, None
-                self._half_open_in_flight += 1
-                acquired_half_open_slot = True
+        acquired_half_open_slot = await self.try_acquire()
+        if acquired_half_open_slot is None:
+            return False, None
 
         try:
             awaitable = coro() if callable(coro) else coro
@@ -61,17 +50,29 @@ class CircuitBreaker:
                 raise TypeError("CircuitBreaker.call expects an awaitable or async callable")
             result = await awaitable
         except Exception:
-            async with self._lock:
-                self._last_failure_at = datetime.now(timezone.utc)
-                self._failure_count += 1
-                self._success_count = 0
-                if acquired_half_open_slot:
-                    self._half_open_in_flight = max(0, self._half_open_in_flight - 1)
-                    self._transition_to(STATE_OPEN)
-                elif self._failure_count >= self.failure_threshold:
-                    self._transition_to(STATE_OPEN)
+            await self.record_failure(acquired_half_open_slot=bool(acquired_half_open_slot))
             return False, None
 
+        await self.record_success(acquired_half_open_slot=bool(acquired_half_open_slot))
+        return True, result
+
+    async def try_acquire(self) -> bool | None:
+        async with self._lock:
+            now = time.monotonic()
+            if self._state == STATE_OPEN:
+                if (now - self._opened_at_monotonic) >= self.open_timeout_sec:
+                    self._transition_to(STATE_HALF_OPEN)
+                else:
+                    return None
+
+            if self._state == STATE_HALF_OPEN:
+                if self._half_open_in_flight >= self.half_open_max_calls:
+                    return None
+                self._half_open_in_flight += 1
+                return True
+        return False
+
+    async def record_success(self, *, acquired_half_open_slot: bool) -> None:
         async with self._lock:
             if acquired_half_open_slot:
                 self._half_open_in_flight = max(0, self._half_open_in_flight - 1)
@@ -82,7 +83,17 @@ class CircuitBreaker:
             else:
                 self._failure_count = 0
                 self._success_count = 0
-            return True, result
+
+    async def record_failure(self, *, acquired_half_open_slot: bool) -> None:
+        async with self._lock:
+            self._last_failure_at = datetime.now(timezone.utc)
+            self._failure_count += 1
+            self._success_count = 0
+            if acquired_half_open_slot:
+                self._half_open_in_flight = max(0, self._half_open_in_flight - 1)
+                self._transition_to(STATE_OPEN)
+            elif self._failure_count >= self.failure_threshold:
+                self._transition_to(STATE_OPEN)
 
     def get_state(self) -> str:
         if self._state == STATE_OPEN and (time.monotonic() - self._opened_at_monotonic) >= self.open_timeout_sec:

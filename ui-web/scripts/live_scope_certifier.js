@@ -223,11 +223,8 @@ async function verifyPlantManagerAccess() {
 
     if (!payload) {
       const authMeResponse = await page.evaluate(async (baseUrl) => {
-        const rawToken = window.sessionStorage.getItem("factoryops_access_token");
-        const headers = rawToken ? { Authorization: `Bearer ${rawToken}` } : {};
         const response = await fetch(`${baseUrl}/backend/auth/api/v1/auth/me`, {
           credentials: "include",
-          headers,
         });
         const text = await response.text();
         return {

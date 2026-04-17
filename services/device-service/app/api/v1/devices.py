@@ -1,6 +1,7 @@
 """Device API endpoints."""
 
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Optional
 
 import asyncio
@@ -9,7 +10,7 @@ import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status, Header
 from fastapi.responses import StreamingResponse, Response
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy import false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,9 +75,15 @@ from app.services.device_errors import (
     HardwareUnitAlreadyExistsError,
     HardwareUnitIdAllocationError,
     HardwareUnitNotFoundError,
+    InvalidDeviceMetadataError,
 )
 from app.services.hardware_inventory import HardwareInventoryService
 from app.monitoring import fleet_stream_broadcaster
+from app.monitoring import (
+    DEVICE_LIVE_UPDATE_BATCH_DURATION_SECONDS,
+    DEVICE_LIVE_UPDATE_BATCH_ITEMS_TOTAL,
+    DEVICE_LIVE_UPDATE_BATCH_ROWS,
+)
 from shared.auth_middleware import get_auth_state
 from services.shared.tenant_context import TenantContext, require_tenant
 import logging
@@ -150,8 +157,98 @@ class DeviceLiveUpdateRequest(BaseModel):
     tenant_id: Optional[str] = None
 
 
+class DeviceLiveUpdateBatchItem(BaseModel):
+    device_id: str
+    telemetry: dict
+    dynamic_fields: Optional[dict] = None
+    normalized_fields: Optional[dict] = None
+
+
+class DeviceLiveUpdateBatchRequest(BaseModel):
+    tenant_id: Optional[str] = None
+    updates: list[DeviceLiveUpdateBatchItem] = Field(default_factory=list, min_length=1)
+
+
 def get_required_tenant_id(request: Request) -> str:
     return get_tenant_id(request)
+
+
+def _normalize_device_phase_type(device: Device) -> None:
+    raw_phase_type = getattr(device, "phase_type", None)
+    if raw_phase_type is None:
+        return
+    normalized = str(raw_phase_type).strip().lower()
+    if normalized in ("single", "three"):
+        device.phase_type = normalized
+        return
+    if normalized in {"single_phase", "single-phase"}:
+        device.phase_type = "single"
+        return
+    if normalized in {"three_phase", "three-phase"}:
+        device.phase_type = "three"
+        return
+    raise InvalidDeviceMetadataError(
+        device_id=str(getattr(device, "device_id", "unknown")),
+        field_name="phase_type",
+        message="phase_type must be 'single', 'three', or null",
+    )
+
+
+def _serialize_device_response(device: Device) -> DeviceSingleResponse:
+    try:
+        _normalize_device_phase_type(device)
+        return DeviceSingleResponse(data=device)
+    except InvalidDeviceMetadataError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "INVALID_DEVICE_METADATA",
+                "message": exc.message,
+                "device_id": exc.device_id,
+                "field": exc.field_name,
+            },
+        ) from exc
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "INVALID_DEVICE_METADATA",
+                "message": "Stored device metadata violates the device response contract.",
+                "device_id": str(getattr(device, "device_id", "unknown")),
+                "details": exc.errors(),
+            },
+        ) from exc
+
+
+def _serialize_device_list_rows(devices: list[Device]) -> list[DeviceResponse]:
+    serialized: list[DeviceResponse] = []
+    for device in devices:
+        try:
+            _normalize_device_phase_type(device)
+            serialized.append(DeviceResponse.model_validate(device, from_attributes=True))
+        except InvalidDeviceMetadataError:
+            logger.warning(
+                "Coercing invalid persisted device metadata in list response",
+                extra={
+                    "device_id": str(getattr(device, "device_id", "unknown")),
+                    "tenant_id": str(getattr(device, "tenant_id", "unknown")),
+                    "field": "phase_type",
+                    "route": "list_devices",
+                },
+            )
+            device.phase_type = None
+            serialized.append(DeviceResponse.model_validate(device, from_attributes=True))
+        except ValidationError as exc:
+            logger.warning(
+                "Skipping invalid device row in list response",
+                extra={
+                    "device_id": str(getattr(device, "device_id", "unknown")),
+                    "tenant_id": str(getattr(device, "tenant_id", "unknown")),
+                    "route": "list_devices",
+                    "errors": exc.errors(),
+                },
+            )
+    return serialized
 
 
 def _resolve_accessible_plant_ids(
@@ -880,7 +977,7 @@ async def get_device(
             },
         )
 
-    return DeviceSingleResponse(data=device)
+    return _serialize_device_response(device)
 
 
 async def _resolve_scoped_device(
@@ -947,7 +1044,7 @@ async def list_devices(
     total_pages = (total + page_size - 1) // page_size
     
     return DeviceListResponse(
-        data=devices,
+        data=_serialize_device_list_rows(devices),
         total=total,
         page=page,
         page_size=page_size,
@@ -1021,7 +1118,7 @@ async def create_device(
     
     try:
         device = await service.create_device(device_data)
-        return DeviceSingleResponse(data=device)
+        return _serialize_device_response(device)
     except DevicePlantRequiredError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1391,7 +1488,7 @@ async def update_device(
             },
         )
     
-    return DeviceSingleResponse(data=device)
+    return _serialize_device_response(device)
 
 
 @router.delete(
@@ -2490,6 +2587,120 @@ async def live_device_update(
         await dashboard.publish_device_update(device_id=device_id, tenant_id=tenant_id, partial=True),
     )
     return {"success": True, "device": item}
+
+
+@router.post(
+    "/live-update/batch",
+    response_model=dict,
+)
+async def live_device_update_batch(
+    request: Request,
+    payload: DeviceLiveUpdateBatchRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Batch live-state update path for telemetry workers."""
+    from app.services.device_property import DevicePropertyService
+    from app.services.live_projection import LiveProjectionService
+
+    tenant_id = payload.tenant_id or get_tenant_id(request)
+    property_service = DevicePropertyService(db)
+    projection = LiveProjectionService(db)
+    DEVICE_LIVE_UPDATE_BATCH_ROWS.observe(len(payload.updates))
+    started_at = perf_counter()
+    batch_updates: list[dict] = []
+    pre_batch_results: list[dict] = []
+    property_updates_by_device: dict[str, dict] = {}
+    for update in payload.updates:
+        dynamic_fields = update.dynamic_fields or {}
+        if dynamic_fields:
+            merged_fields = property_updates_by_device.setdefault(update.device_id, {})
+            merged_fields.update(dynamic_fields)
+        batch_updates.append(
+            {
+                "device_id": update.device_id,
+                "telemetry": update.telemetry,
+                "dynamic_fields": dynamic_fields,
+                "normalized_fields": update.normalized_fields,
+            }
+        )
+
+    if property_updates_by_device:
+        try:
+            await property_service.sync_from_telemetry_batch(
+                tenant_id=tenant_id,
+                telemetry_by_device=property_updates_by_device,
+            )
+        except Exception as exc:
+            DEVICE_LIVE_UPDATE_BATCH_DURATION_SECONDS.labels("failure").observe(max(perf_counter() - started_at, 0.0))
+            return {
+                "success": True,
+                "results": [
+                    {
+                        "device_id": update["device_id"],
+                        "success": False,
+                        "error": str(exc),
+                        "error_code": "PROPERTY_SYNC_ERROR",
+                        "retryable": True,
+                    }
+                    for update in batch_updates
+                ],
+            }
+
+    try:
+        results, published_items = await projection.apply_live_updates_batch(
+            tenant_id=tenant_id,
+            updates=batch_updates,
+        )
+        results = [*pre_batch_results, *results]
+        outcome = "success"
+    except Exception:
+        DEVICE_LIVE_UPDATE_BATCH_DURATION_SECONDS.labels("failure").observe(max(perf_counter() - started_at, 0.0))
+        raise
+
+    if published_items:
+        await fleet_stream_broadcaster.publish(
+            tenant_id,
+            "fleet_update",
+            {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "stale": False,
+                "warnings": [],
+                "devices": published_items,
+                "partial": True,
+                "version": max(int(item.get("version") or 0) for item in published_items),
+            },
+        )
+
+    success_count = 0
+    invalid_count = 0
+    retryable_failure_count = 0
+    for item in results:
+        if item.get("success"):
+            success_count += 1
+            DEVICE_LIVE_UPDATE_BATCH_ITEMS_TOTAL.labels("success").inc()
+            continue
+        error_code = str(item.get("error_code") or "")
+        if error_code == "INVALID_DEVICE_METADATA":
+            invalid_count += 1
+            DEVICE_LIVE_UPDATE_BATCH_ITEMS_TOTAL.labels("invalid_metadata").inc()
+        elif bool(item.get("retryable")):
+            retryable_failure_count += 1
+            DEVICE_LIVE_UPDATE_BATCH_ITEMS_TOTAL.labels("retryable_failure").inc()
+        else:
+            DEVICE_LIVE_UPDATE_BATCH_ITEMS_TOTAL.labels("nonretryable_failure").inc()
+
+    DEVICE_LIVE_UPDATE_BATCH_DURATION_SECONDS.labels(outcome).observe(max(perf_counter() - started_at, 0.0))
+    logger.info(
+        "Device live-update batch processed",
+        extra={
+            "tenant_id": tenant_id,
+            "batch_size": len(payload.updates),
+            "successful_items": success_count,
+            "invalid_items": invalid_count,
+            "retryable_failures": retryable_failure_count,
+        },
+    )
+    return {"success": True, "results": results}
 
 
 @router.get(

@@ -31,6 +31,7 @@ Production ML analytics service for FactoryOPS. This service runs async jobs for
 ## Runtime Architecture
 - API routes: `src/api/routes/analytics.py`
 - Worker queue: `src/workers/job_queue.py`, `src/workers/job_worker.py`
+- Admission control and fairness: `src/services/scaling_policy.py`
 - Job orchestration: `src/services/job_runner.py`
 - Pipelines:
   - `src/services/analytics/anomaly_detection.py`
@@ -104,3 +105,33 @@ Key settings include:
 - Retrainer is lifecycle-managed and can be toggled by config.
 - Schema is managed by Alembic on startup with guarded baseline stamping.
 - Docker image optimized: CPU-only torch, removed unused dependencies. Target size: under 2GB. Run docker image prune -f after every deploy.
+
+## Production Scaling Policy
+- API and worker roles remain separated with `APP_ROLE=api|worker`; heavy analytics execution stays in workers only.
+- Worker concurrency is bounded per replica by `MAX_CONCURRENT_JOBS`.
+- Global active work is capped by `GLOBAL_ACTIVE_JOB_LIMIT`.
+- Backlog growth is capped by `QUEUE_BACKLOG_REJECT_THRESHOLD`; submissions beyond the safe backlog return an explicit overload response instead of growing the queue indefinitely.
+- Redis stream hard capacity is set by `QUEUE_MAX_LENGTH`.
+- Tenant fairness is enforced at submission time with:
+  - `TENANT_MAX_QUEUED_JOBS`
+  - `TENANT_MAX_ACTIVE_JOBS`
+- Retries stay bounded with `QUEUE_MAX_ATTEMPTS`.
+- Stale worker recovery remains enabled and is scanned on `STALE_SCAN_INTERVAL_SECONDS`.
+
+## Capacity Guidance
+- Scale worker replicas first when queue depth rises persistently but CPU and memory headroom remain healthy.
+- Increase `MAX_CONCURRENT_JOBS` only when one worker replica has spare CPU, memory, and model-runtime headroom; this is the per-process parallelism knob.
+- Increase `GLOBAL_ACTIVE_JOB_LIMIT` only alongside worker replica or per-worker concurrency increases so admission control still reflects real throughput.
+- Keep `QUEUE_BACKLOG_REJECT_THRESHOLD` well below `QUEUE_MAX_LENGTH` so the API sheds load before Redis becomes the only protection layer.
+- Tenant caps should reflect your fairness policy. A common production posture is to keep tenant queued capacity materially below the global backlog threshold so one org cannot monopolize the service.
+
+## Operational Visibility
+- `GET /api/v1/analytics/ops/queue` now reports:
+  - queued jobs
+  - running jobs
+  - failed jobs
+  - retry count
+  - dead-letter count
+  - claimed Redis messages
+  - top tenants by active job volume
+  - configured capacity thresholds

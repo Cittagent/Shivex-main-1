@@ -69,6 +69,18 @@ class AnalyticsDeviceScopeService:
         return [str(device["device_id"]) for device in devices if device.get("device_id")]
 
     async def normalize_requested_device_ids(self, requested_device_ids: list[str]) -> list[str]:
+        if not self._is_plant_scoped_role():
+            normalized: list[str] = []
+            seen: set[str] = set()
+            for device_id in requested_device_ids:
+                normalized_id = str(device_id)
+                if not normalized_id or normalized_id in seen:
+                    continue
+                seen.add(normalized_id)
+                normalized.append(normalized_id)
+            if normalized:
+                return normalized
+
         accessible_ids = await self.resolve_accessible_device_ids()
         if not accessible_ids and not requested_device_ids:
             return []

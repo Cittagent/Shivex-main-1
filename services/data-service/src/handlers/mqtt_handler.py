@@ -139,7 +139,7 @@ class MQTTHandler:
     def _build_client(self) -> None:
         self.client = mqtt.Client(
             client_id=f"data-service-{uuid.uuid4().hex[:8]}",
-            clean_session=False,
+            clean_session=settings.mqtt_clean_session,
         )
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect

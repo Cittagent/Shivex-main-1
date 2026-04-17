@@ -147,6 +147,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - FLEET_STREAM_REDIS_CHANNEL=factoryops:fleet_stream:v1
       - ENERGY_SERVICE_BASE_URL=http://energy-service:8010
+      - PROJECTION_BATCH_CHUNK_SIZE=100
     ports:
       - "8000:8000"
     depends_on:
@@ -182,6 +183,7 @@ services:
       - ENERGY_STREAM_REDIS_CHANNEL=factoryops:energy_stream:v1
       - REPORTING_SERVICE_BASE_URL=http://reporting-service:8085
       - DEVICE_SERVICE_BASE_URL=http://device-service:8000
+      - ENERGY_BATCH_CHUNK_SIZE=120
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JWT_ALGORITHM=HS256
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
@@ -216,6 +218,7 @@ services:
     container_name: data-service
     restart: unless-stopped
     environment:
+      - APP_ROLE=api
       - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
       - REDIS_URL=redis://redis:6379/0
       - ENVIRONMENT=development
@@ -225,6 +228,7 @@ services:
       - MQTT_BROKER_HOST=emqx
       - MQTT_BROKER_PORT=1883
       - MQTT_TOPIC=devices/+/telemetry
+      - MQTT_CLEAN_SESSION=true
       - INFLUXDB_URL=http://influxdb:8086
       - INFLUXDB_TOKEN=energy-token
       - INFLUXDB_ORG=energy-org
@@ -244,13 +248,51 @@ services:
       - DLQ_BACKEND=mysql
       - DEVICE_SYNC_ENABLED=true
       - DEVICE_SYNC_WORKERS=2
-      - DEVICE_SYNC_QUEUE_MAXSIZE=5000
-      - DEVICE_SYNC_MAX_RETRIES=3
-      - DEVICE_SYNC_RETRY_BACKOFF_SEC=0.5
-      - DEVICE_SYNC_RETRY_BACKOFF_MAX_SEC=5
-      - OUTBOX_POLL_INTERVAL_SEC=2
-      - OUTBOX_BATCH_SIZE=50
+      - TELEMETRY_WORKER_CONSUMER_NAME=data-telemetry-api
+      - TELEMETRY_INGEST_STREAM_NAME=telemetry_ingest_stream
+      - TELEMETRY_PROJECTION_STREAM_NAME=telemetry_projection_stream
+      - TELEMETRY_BROADCAST_STREAM_NAME=telemetry_broadcast_stream
+      - TELEMETRY_ENERGY_STREAM_NAME=telemetry_energy_stream
+      - TELEMETRY_RULES_STREAM_NAME=telemetry_rules_stream
+      - TELEMETRY_DEAD_LETTER_STREAM_NAME=telemetry_dead_letter_stream
+      - TELEMETRY_INGEST_STREAM_MAXLEN=250000
+      - TELEMETRY_PROJECTION_STREAM_MAXLEN=250000
+      - TELEMETRY_BROADCAST_STREAM_MAXLEN=250000
+      - TELEMETRY_ENERGY_STREAM_MAXLEN=250000
+      - TELEMETRY_RULES_STREAM_MAXLEN=250000
+      - TELEMETRY_INGEST_REJECT_THRESHOLD=200000
+      - TELEMETRY_PROJECTION_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_BROADCAST_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_ENERGY_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_RULES_BACKLOG_THRESHOLD=200000
+      - OUTBOX_POLL_INTERVAL_SEC=0.5
+      - OUTBOX_BATCH_SIZE=500
+      - OUTBOX_ENERGY_DELIVERY_BATCH_SIZE=300
+      - OUTBOX_MAX_BATCHES_PER_RUN=8
+      - OUTBOX_HTTP_TIMEOUT_SECONDS=8
+      - OUTBOX_HTTP_MAX_KEEPALIVE_CONNECTIONS=60
+      - OUTBOX_HTTP_MAX_CONNECTIONS=200
       - OUTBOX_MAX_RETRIES=5
+      - TELEMETRY_HEALTH_LAG_WARN_SECONDS=30
+      - TELEMETRY_HEALTH_LAG_OVERLOAD_SECONDS=90
+      - TELEMETRY_PROJECTION_OVERLOAD_THRESHOLD=20000
+      - TELEMETRY_PROJECTION_OVERLOAD_MAX_DEFERS=40
+      - TELEMETRY_PROJECTION_DEFER_BASE_SECONDS=0.25
+      - TELEMETRY_PROJECTION_DEFER_MAX_SECONDS=8
+      - TELEMETRY_ENERGY_OVERLOAD_THRESHOLD=5000
+      - TELEMETRY_RULES_OVERLOAD_THRESHOLD=10000
+      - DEVICE_PROJECTION_TRANSPORT_RETRIES=3
+      - DEVICE_PROJECTION_RETRY_BACKOFF_BASE_SECONDS=0.2
+      - DEVICE_PROJECTION_RETRY_BACKOFF_MAX_SECONDS=2.0
+      - DEVICE_PROJECTION_MAX_INFLIGHT_REQUESTS=8
+      - DEVICE_PROJECTION_HTTP_MAX_KEEPALIVE_CONNECTIONS=60
+      - DEVICE_PROJECTION_HTTP_MAX_CONNECTIONS=120
+      - DEVICE_PROJECTION_HTTP_POOL_TIMEOUT_SECONDS=1.0
+      - OUTBOX_PENDING_WARN_THRESHOLD=2000
+      - OUTBOX_PENDING_OVERLOAD_THRESHOLD=10000
+      - DLQ_RETRY_BATCH_LIMIT=100
+      - DLQ_RETRY_BASE_BACKOFF_SECONDS=60
+      - DLQ_RETRY_MAX_BACKOFF_SECONDS=300
       - RECONCILIATION_INTERVAL_SEC=300
       - RECONCILIATION_DRIFT_WARN_MINUTES=10
       - RECONCILIATION_DRIFT_RESYNC_MINUTES=30
@@ -267,8 +309,260 @@ services:
         condition: service_healthy
       energy-service:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - energy-net
+
+  data-telemetry-worker:
+    build:
+      context: .
+      dockerfile: services/data-service/Dockerfile
+    container_name: data-telemetry-worker
+    restart: unless-stopped
+    command: ["python", "-m", "src.worker_main"]
+    environment:
+      - APP_ROLE=worker
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - MQTT_BROKER_HOST=emqx
+      - MQTT_BROKER_PORT=1883
+      - MQTT_TOPIC=devices/+/telemetry
+      - MQTT_CLEAN_SESSION=true
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=energy-token
+      - INFLUXDB_ORG=energy-org
+      - INFLUXDB_BUCKET=telemetry
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - ENERGY_SERVICE_URL=http://energy-service:8010
+      - ENERGY_SYNC_ENABLED=true
+      - RULE_ENGINE_URL=http://rule-engine-service:8002
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=ai_factoryops
+      - MYSQL_USER=energy
+      - MYSQL_PASSWORD=energy
+      - DLQ_BACKEND=mysql
+      - DEVICE_SYNC_ENABLED=true
+      - TELEMETRY_WORKER_CONSUMER_NAME=data-telemetry-worker-1
+      - TELEMETRY_WORKER_MAINTENANCE_ENABLED=true
+      - TELEMETRY_WORKER_OUTBOX_RELAY_ENABLED=true
+      - TELEMETRY_INGEST_STREAM_NAME=telemetry_ingest_stream
+      - TELEMETRY_PROJECTION_STREAM_NAME=telemetry_projection_stream
+      - TELEMETRY_BROADCAST_STREAM_NAME=telemetry_broadcast_stream
+      - TELEMETRY_ENERGY_STREAM_NAME=telemetry_energy_stream
+      - TELEMETRY_RULES_STREAM_NAME=telemetry_rules_stream
+      - TELEMETRY_DEAD_LETTER_STREAM_NAME=telemetry_dead_letter_stream
+      - TELEMETRY_INGEST_STREAM_MAXLEN=250000
+      - TELEMETRY_PROJECTION_STREAM_MAXLEN=250000
+      - TELEMETRY_BROADCAST_STREAM_MAXLEN=250000
+      - TELEMETRY_ENERGY_STREAM_MAXLEN=250000
+      - TELEMETRY_RULES_STREAM_MAXLEN=250000
+      - TELEMETRY_INGEST_REJECT_THRESHOLD=200000
+      - TELEMETRY_PROJECTION_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_BROADCAST_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_ENERGY_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_RULES_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_PERSISTENCE_WORKERS=8
+      - TELEMETRY_PROJECTION_WORKERS=4
+      - TELEMETRY_BROADCAST_WORKERS=4
+      - TELEMETRY_ENERGY_WORKERS=6
+      - TELEMETRY_RULES_WORKERS=8
+      - TELEMETRY_INGEST_BATCH_SIZE=100
+      - TELEMETRY_PROJECTION_BATCH_SIZE=100
+      - TELEMETRY_BROADCAST_BATCH_SIZE=200
+      - TELEMETRY_ENERGY_BATCH_SIZE=200
+      - TELEMETRY_RULES_BATCH_SIZE=100
+      - TELEMETRY_STAGE_MAX_ATTEMPTS=3
+      - TELEMETRY_STAGE_RECLAIM_IDLE_MS=30000
+      - OUTBOX_POLL_INTERVAL_SEC=0.5
+      - OUTBOX_BATCH_SIZE=500
+      - OUTBOX_ENERGY_DELIVERY_BATCH_SIZE=300
+      - OUTBOX_MAX_BATCHES_PER_RUN=8
+      - OUTBOX_HTTP_TIMEOUT_SECONDS=8
+      - OUTBOX_HTTP_MAX_KEEPALIVE_CONNECTIONS=60
+      - OUTBOX_HTTP_MAX_CONNECTIONS=200
+      - OUTBOX_MAX_RETRIES=5
+      - TELEMETRY_HEALTH_LAG_WARN_SECONDS=30
+      - TELEMETRY_HEALTH_LAG_OVERLOAD_SECONDS=90
+      - TELEMETRY_PROJECTION_OVERLOAD_THRESHOLD=20000
+      - TELEMETRY_PROJECTION_OVERLOAD_MAX_DEFERS=40
+      - TELEMETRY_PROJECTION_DEFER_BASE_SECONDS=0.25
+      - TELEMETRY_PROJECTION_DEFER_MAX_SECONDS=8
+      - TELEMETRY_ENERGY_OVERLOAD_THRESHOLD=5000
+      - TELEMETRY_RULES_OVERLOAD_THRESHOLD=10000
+      - DEVICE_PROJECTION_TRANSPORT_RETRIES=3
+      - DEVICE_PROJECTION_RETRY_BACKOFF_BASE_SECONDS=0.2
+      - DEVICE_PROJECTION_RETRY_BACKOFF_MAX_SECONDS=2.0
+      - DEVICE_PROJECTION_MAX_INFLIGHT_REQUESTS=8
+      - DEVICE_PROJECTION_HTTP_MAX_KEEPALIVE_CONNECTIONS=60
+      - DEVICE_PROJECTION_HTTP_MAX_CONNECTIONS=120
+      - DEVICE_PROJECTION_HTTP_POOL_TIMEOUT_SECONDS=1.0
+      - OUTBOX_PENDING_WARN_THRESHOLD=2000
+      - OUTBOX_PENDING_OVERLOAD_THRESHOLD=10000
+      - DLQ_RETRY_BATCH_LIMIT=100
+      - DLQ_RETRY_BASE_BACKOFF_SECONDS=60
+      - DLQ_RETRY_MAX_BACKOFF_SECONDS=300
+      - RECONCILIATION_INTERVAL_SEC=300
+      - RECONCILIATION_DRIFT_WARN_MINUTES=10
+      - RECONCILIATION_DRIFT_RESYNC_MINUTES=30
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      device-service:
+        condition: service_healthy
+      energy-service:
+        condition: service_healthy
+      rule-engine-service:
+        condition: service_healthy
+    networks:
+      - energy-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json, os, redis, sys; r=redis.Redis.from_url(os.environ['REDIS_URL'], decode_responses=True); key='telemetry_worker_health:%s' % os.environ['TELEMETRY_WORKER_CONSUMER_NAME']; data=r.hgetall(key); sys.exit(0 if data.get('ready')=='true' else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+
+  data-telemetry-worker-2:
+    build:
+      context: .
+      dockerfile: services/data-service/Dockerfile
+    container_name: data-telemetry-worker-2
+    restart: unless-stopped
+    command: ["python", "-m", "src.worker_main"]
+    environment:
+      - APP_ROLE=worker
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - MQTT_BROKER_HOST=emqx
+      - MQTT_BROKER_PORT=1883
+      - MQTT_TOPIC=devices/+/telemetry
+      - MQTT_CLEAN_SESSION=true
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=energy-token
+      - INFLUXDB_ORG=energy-org
+      - INFLUXDB_BUCKET=telemetry
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - ENERGY_SERVICE_URL=http://energy-service:8010
+      - ENERGY_SYNC_ENABLED=true
+      - RULE_ENGINE_URL=http://rule-engine-service:8002
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=ai_factoryops
+      - MYSQL_USER=energy
+      - MYSQL_PASSWORD=energy
+      - DLQ_BACKEND=mysql
+      - DEVICE_SYNC_ENABLED=true
+      - TELEMETRY_WORKER_CONSUMER_NAME=data-telemetry-worker-2
+      - TELEMETRY_WORKER_MAINTENANCE_ENABLED=false
+      - TELEMETRY_WORKER_OUTBOX_RELAY_ENABLED=true
+      - TELEMETRY_INGEST_STREAM_NAME=telemetry_ingest_stream
+      - TELEMETRY_PROJECTION_STREAM_NAME=telemetry_projection_stream
+      - TELEMETRY_BROADCAST_STREAM_NAME=telemetry_broadcast_stream
+      - TELEMETRY_ENERGY_STREAM_NAME=telemetry_energy_stream
+      - TELEMETRY_RULES_STREAM_NAME=telemetry_rules_stream
+      - TELEMETRY_DEAD_LETTER_STREAM_NAME=telemetry_dead_letter_stream
+      - TELEMETRY_INGEST_STREAM_MAXLEN=250000
+      - TELEMETRY_PROJECTION_STREAM_MAXLEN=250000
+      - TELEMETRY_BROADCAST_STREAM_MAXLEN=250000
+      - TELEMETRY_ENERGY_STREAM_MAXLEN=250000
+      - TELEMETRY_RULES_STREAM_MAXLEN=250000
+      - TELEMETRY_INGEST_REJECT_THRESHOLD=200000
+      - TELEMETRY_PROJECTION_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_BROADCAST_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_ENERGY_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_RULES_BACKLOG_THRESHOLD=200000
+      - TELEMETRY_PERSISTENCE_WORKERS=8
+      - TELEMETRY_PROJECTION_WORKERS=4
+      - TELEMETRY_BROADCAST_WORKERS=4
+      - TELEMETRY_ENERGY_WORKERS=6
+      - TELEMETRY_RULES_WORKERS=8
+      - TELEMETRY_INGEST_BATCH_SIZE=100
+      - TELEMETRY_PROJECTION_BATCH_SIZE=100
+      - TELEMETRY_BROADCAST_BATCH_SIZE=200
+      - TELEMETRY_ENERGY_BATCH_SIZE=200
+      - TELEMETRY_RULES_BATCH_SIZE=100
+      - TELEMETRY_STAGE_MAX_ATTEMPTS=3
+      - TELEMETRY_STAGE_RECLAIM_IDLE_MS=30000
+      - OUTBOX_POLL_INTERVAL_SEC=0.5
+      - OUTBOX_BATCH_SIZE=500
+      - OUTBOX_ENERGY_DELIVERY_BATCH_SIZE=300
+      - OUTBOX_MAX_BATCHES_PER_RUN=8
+      - OUTBOX_HTTP_TIMEOUT_SECONDS=8
+      - OUTBOX_HTTP_MAX_KEEPALIVE_CONNECTIONS=60
+      - OUTBOX_HTTP_MAX_CONNECTIONS=200
+      - OUTBOX_MAX_RETRIES=5
+      - TELEMETRY_HEALTH_LAG_WARN_SECONDS=30
+      - TELEMETRY_HEALTH_LAG_OVERLOAD_SECONDS=90
+      - TELEMETRY_PROJECTION_OVERLOAD_THRESHOLD=20000
+      - TELEMETRY_PROJECTION_OVERLOAD_MAX_DEFERS=40
+      - TELEMETRY_PROJECTION_DEFER_BASE_SECONDS=0.25
+      - TELEMETRY_PROJECTION_DEFER_MAX_SECONDS=8
+      - TELEMETRY_ENERGY_OVERLOAD_THRESHOLD=5000
+      - TELEMETRY_RULES_OVERLOAD_THRESHOLD=10000
+      - DEVICE_PROJECTION_TRANSPORT_RETRIES=3
+      - DEVICE_PROJECTION_RETRY_BACKOFF_BASE_SECONDS=0.2
+      - DEVICE_PROJECTION_RETRY_BACKOFF_MAX_SECONDS=2.0
+      - DEVICE_PROJECTION_MAX_INFLIGHT_REQUESTS=8
+      - DEVICE_PROJECTION_HTTP_MAX_KEEPALIVE_CONNECTIONS=60
+      - DEVICE_PROJECTION_HTTP_MAX_CONNECTIONS=120
+      - DEVICE_PROJECTION_HTTP_POOL_TIMEOUT_SECONDS=1.0
+      - OUTBOX_PENDING_WARN_THRESHOLD=2000
+      - OUTBOX_PENDING_OVERLOAD_THRESHOLD=10000
+      - DLQ_RETRY_BATCH_LIMIT=100
+      - DLQ_RETRY_BASE_BACKOFF_SECONDS=60
+      - DLQ_RETRY_MAX_BACKOFF_SECONDS=300
+      - RECONCILIATION_INTERVAL_SEC=300
+      - RECONCILIATION_DRIFT_WARN_MINUTES=10
+      - RECONCILIATION_DRIFT_RESYNC_MINUTES=30
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      device-service:
+        condition: service_healthy
+      energy-service:
+        condition: service_healthy
+      rule-engine-service:
+        condition: service_healthy
+    networks:
+      - energy-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json, os, redis, sys; r=redis.Redis.from_url(os.environ['REDIS_URL'], decode_responses=True); key='telemetry_worker_health:%s' % os.environ['TELEMETRY_WORKER_CONSUMER_NAME']; data=r.hgetall(key); sys.exit(0 if data.get('ready')=='true' else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
 
   rule-engine-service:
     build:
@@ -302,6 +596,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - energy-net
     healthcheck:
@@ -316,6 +612,44 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
+
+  rule-engine-worker:
+    build:
+      context: .
+      dockerfile: services/rule-engine-service/Dockerfile
+    container_name: rule-engine-worker
+    restart: unless-stopped
+    environment:
+      - APP_ROLE=worker
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=development
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - EMAIL_ENABLED=${EMAIL_ENABLED:-true}
+      - EMAIL_SMTP_HOST=${EMAIL_SMTP_HOST:-${SMTP_SERVER:-smtp.gmail.com}}
+      - EMAIL_SMTP_PORT=${EMAIL_SMTP_PORT:-587}
+      - EMAIL_SMTP_USERNAME=${EMAIL_SMTP_USERNAME:-${EMAIL_SENDER:-}}
+      - EMAIL_SMTP_PASSWORD=${EMAIL_SMTP_PASSWORD:-${EMAIL_PASSWORD:-}}
+      - EMAIL_FROM_ADDRESS=${EMAIL_FROM_ADDRESS:-${EMAIL_SENDER:-alerts@energy-platform.com}}
+      - SMS_ENABLED=${SMS_ENABLED:-false}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_SMS_FROM_NUMBER=${TWILIO_SMS_FROM_NUMBER:-}
+      - WHATSAPP_ENABLED=${WHATSAPP_ENABLED:-false}
+      - TWILIO_WHATSAPP_FROM_NUMBER=${TWILIO_WHATSAPP_FROM_NUMBER:-}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - REDIS_URL=redis://redis:6379/0
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+      - QUEUE_BACKEND=redis
+      - NOTIFICATION_WORKER_CONCURRENCY=4
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - energy-net
 
   analytics-service:
     build:
@@ -346,6 +680,13 @@ services:
       - REDIS_DEAD_LETTER_STREAM=analytics_jobs_dead_letter
       - REDIS_CONSUMER_GROUP=analytics_workers
       - REDIS_CONSUMER_NAME=analytics-api
+      - MAX_CONCURRENT_JOBS=3
+      - GLOBAL_ACTIVE_JOB_LIMIT=48
+      - QUEUE_MAX_LENGTH=10000
+      - QUEUE_BACKLOG_REJECT_THRESHOLD=500
+      - TENANT_MAX_QUEUED_JOBS=25
+      - TENANT_MAX_ACTIVE_JOBS=8
+      - STALE_SCAN_INTERVAL_SECONDS=30
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JWT_ALGORITHM=HS256
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
@@ -407,6 +748,12 @@ services:
       - REDIS_CONSUMER_GROUP=analytics_workers
       - REDIS_CONSUMER_NAME=analytics-worker-1
       - MAX_CONCURRENT_JOBS=3
+      - GLOBAL_ACTIVE_JOB_LIMIT=48
+      - QUEUE_MAX_LENGTH=10000
+      - QUEUE_BACKLOG_REJECT_THRESHOLD=500
+      - TENANT_MAX_QUEUED_JOBS=25
+      - TENANT_MAX_ACTIVE_JOBS=8
+      - STALE_SCAN_INTERVAL_SECONDS=30
       - ML_WEEKLY_RETRAINER_ENABLED=true
     depends_on:
       mysql:
@@ -456,6 +803,12 @@ services:
       - REDIS_CONSUMER_GROUP=analytics_workers
       - REDIS_CONSUMER_NAME=analytics-worker-2
       - MAX_CONCURRENT_JOBS=3
+      - GLOBAL_ACTIVE_JOB_LIMIT=48
+      - QUEUE_MAX_LENGTH=10000
+      - QUEUE_BACKLOG_REJECT_THRESHOLD=500
+      - TENANT_MAX_QUEUED_JOBS=25
+      - TENANT_MAX_ACTIVE_JOBS=8
+      - STALE_SCAN_INTERVAL_SECONDS=30
       - ML_WEEKLY_RETRAINER_ENABLED=false
     depends_on:
       mysql:
@@ -576,6 +929,57 @@ services:
       timeout: 5s
       retries: 12
       start_period: 60s
+
+  reporting-worker:
+    build:
+      context: .
+      dockerfile: services/reporting-service/Dockerfile
+    container_name: reporting-worker
+    restart: unless-stopped
+    environment:
+      - APP_ROLE=worker
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=mysql+aiomysql://energy:energy@mysql:3306/ai_factoryops
+      - REDIS_URL=redis://redis:6379/0
+      - QUEUE_BACKEND=redis
+      - REPORT_WORKER_CONCURRENCY=2
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=energy
+      - MYSQL_PASSWORD=energy
+      - MYSQL_DATABASE=ai_factoryops
+      - MINIO_ACCESS_KEY=minio
+      - MINIO_SECRET_KEY=minio123
+      - MINIO_BUCKET=energy-platform-datasets
+      - MINIO_EXTERNAL_URL=${MINIO_EXTERNAL_URL:-http://localhost:9000}
+      - AWS_REGION=us-east-1
+      - S3_BUCKET_NAME=energy-platform-datasets
+      - AWS_ENDPOINT_URL=http://minio:9000
+      - AWS_ENDPOINT_URL_S3=http://minio:9000
+      - MINIO_ENDPOINT=minio:9000
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=energy-token
+      - INFLUXDB_ORG=energy-org
+      - INFLUXDB_BUCKET=telemetry
+      - DEVICE_SERVICE_URL=http://device-service:8000
+      - ENERGY_SERVICE_URL=http://energy-service:8010
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8090}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      energy-service:
+        condition: service_healthy
+      device-service:
+        condition: service_healthy
+    networks:
+      - energy-net
 
   waste-analysis-service:
     build:

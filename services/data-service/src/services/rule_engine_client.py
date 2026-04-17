@@ -222,6 +222,8 @@ class RuleEngineClient:
             original_payload=request_data,
             error_type="rule_engine_circuit_open",
             error_message=error_message,
+            initial_status="dead",
+            dead_reason=error_message,
         )
     
     async def health_check(self) -> bool:

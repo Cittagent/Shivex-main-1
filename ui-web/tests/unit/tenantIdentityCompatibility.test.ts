@@ -1,6 +1,7 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 
+import { clearAccessToken, setAccessToken } from "../../lib/browserSession.ts";
 import { resolveScopedTenantId } from "../../lib/orgScope.ts";
 import { clearSelectedTenant, initializeTenantStore, selectedTenantId } from "../../lib/tenantStore.ts";
 
@@ -19,8 +20,6 @@ class SessionStorageMock {
     this.store.delete(key);
   }
 }
-
-const ACCESS_TOKEN_KEY = "factoryops_access_token";
 
 function base64UrlEncode(value: object): string {
   return Buffer.from(JSON.stringify(value), "utf8")
@@ -45,16 +44,14 @@ function installWindow(): SessionStorageMock {
 }
 
 afterEach(() => {
+  clearAccessToken();
   clearSelectedTenant();
   Reflect.deleteProperty(globalThis, "window");
 });
 
 test("tenant store initializes non-super-admin scope from canonical tenant_id first", () => {
-  const storage = installWindow();
-  storage.setItem(
-    ACCESS_TOKEN_KEY,
-    makeToken({ role: "org_admin", tenant_id: "SH00000042", exp: Math.floor(Date.now() / 1000) + 3600 }),
-  );
+  installWindow();
+  setAccessToken(makeToken({ role: "org_admin", tenant_id: "SH00000042", exp: Math.floor(Date.now() / 1000) + 3600 }));
 
   initializeTenantStore();
 

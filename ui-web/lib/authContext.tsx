@@ -56,10 +56,8 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
       setIsLoading(true);
       initializeTenantStore();
 
-      const accessToken = tokenStore.getAccessToken();
-      const refreshToken = tokenStore.getRefreshToken();
       const cached = tokenStore.getMeData();
-      if (cached && active && (accessToken || refreshToken)) {
+      if (cached && active) {
         setMe(cached);
       }
 

@@ -260,7 +260,7 @@ import asyncio
 import math
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Callable
 
 import pandas as pd
 import structlog
@@ -277,6 +277,7 @@ from src.services.analytics.forecasting import ForecastingPipeline
 from src.services.dataset_service import DatasetService
 from src.services.readiness_orchestrator import dataset_window_from_key, ensure_device_ready
 from src.services.result_formatter import ResultFormatter
+from src.services.progress_tracking import JobProgressReporter, SINGLE_JOB_PHASES
 from src.services.result_repository import ResultRepository
 from src.utils.exceptions import AnalyticsError
 
@@ -342,10 +343,20 @@ class JobRunner:
                 job_id=job_id,
                 status=JobStatus.RUNNING,
                 started_at=datetime.utcnow(),
+                phase="dataset_loading",
+                phase_label="Starting analytics execution",
+                phase_progress=0.0,
             )
 
-            await self._result_repo.update_job_progress(
-                job_id, 10.0, "Loading dataset"
+            progress = JobProgressReporter(
+                self._result_repo,
+                job_id,
+                phase_ranges=SINGLE_JOB_PHASES,
+            )
+            await progress.update(
+                "dataset_loading",
+                phase_progress=0.05,
+                message="Preparing dataset loading",
             )
 
             readiness_enabled = (
@@ -360,8 +371,10 @@ class JobRunner:
                 and request.analysis_type in {AnalyticsType.ANOMALY, AnalyticsType.PREDICTION}
                 and readiness_enabled
             ):
-                await self._result_repo.update_job_progress(
-                    job_id, 15.0, "Preparing exact-range dataset"
+                await progress.update(
+                    "readiness",
+                    phase_progress=0.2,
+                    message="Preparing exact-range dataset",
                 )
                 s3_client = S3Client()
                 ready_device_id, dataset_key, readiness_meta = await ensure_device_ready(
@@ -385,18 +398,27 @@ class JobRunner:
                     # Permanent hardening:
                     # when export/S3 path is unavailable, continue with exact-range direct data-service fetch.
                     resolved_request = request
-                    await self._result_repo.update_job_progress(
-                        job_id, 20.0, "Loading exact-range telemetry directly"
+                    await progress.update(
+                        "dataset_loading",
+                        phase_progress=0.2,
+                        message="Readiness fallback: loading exact-range telemetry directly",
                     )
                 else:
                     resolved_request = request.model_copy(update={"dataset_key": dataset_key})
-                    await self._result_repo.update_job_progress(
-                        job_id, 20.0, "Running analysis"
+                    await progress.update(
+                        "dataset_loading",
+                        phase_progress=0.2,
+                        message="Exact-range dataset resolved; loading dataset",
                     )
 
             # -------------------------------------------------------
             # Dataset loading
             # -------------------------------------------------------
+            await progress.update(
+                "dataset_loading",
+                phase_progress=0.35,
+                message="Loading dataset from storage",
+            )
             df = await self._dataset_service.load_dataset(
                 device_id=resolved_request.device_id,
                 start_time=resolved_request.start_time,
@@ -406,8 +428,15 @@ class JobRunner:
             )
             current_rows = len(df)
 
-            await self._result_repo.update_job_progress(
-                job_id, 30.0, "Preparing features"
+            await progress.update(
+                "dataset_loading",
+                phase_progress=1.0,
+                message=f"Dataset loaded ({current_rows} rows)",
+            )
+            await progress.update(
+                "feature_preparation",
+                phase_progress=0.2,
+                message="Preparing features",
             )
             if request.analysis_type == AnalyticsType.ANOMALY:
                 preloaded_artifacts = await self._load_valid_cached_artifacts(
@@ -416,16 +445,25 @@ class JobRunner:
                     model_keys=("isolation_forest", "lstm_autoencoder", "cusum"),
                     current_rows=current_rows,
                 )
-                await self._result_repo.update_job_progress(
-                    job_id, 50.0, "Training ensemble models"
+                await progress.update(
+                    "feature_preparation",
+                    phase_progress=1.0,
+                    message="Features prepared for anomaly ensemble",
                 )
                 ensemble = AnomalyEnsemble()
-                await self._result_repo.update_job_progress(
-                    job_id, 75.0, "Running ensemble inference"
+                model_expected_seconds = self._estimate_model_phase_seconds(
+                    analysis_type=request.analysis_type,
+                    current_rows=current_rows,
                 )
                 run_params = dict(params)
                 run_params["__artifacts"] = preloaded_artifacts
-                results = await asyncio.to_thread(ensemble.run, df, run_params)
+                results = await self._run_with_phase_progress(
+                    progress=progress,
+                    phase="model_execution",
+                    expected_seconds=model_expected_seconds,
+                    message_template="Running anomaly ensemble",
+                    work=lambda: ensemble.run(df, run_params),
+                )
                 artifact_updates = results.pop("artifact_updates", {}) if isinstance(results, dict) else {}
                 await self._persist_artifact_updates(
                     device_id=request.device_id,
@@ -435,8 +473,10 @@ class JobRunner:
                     start_time=resolved_request.start_time,
                     end_time=resolved_request.end_time,
                 )
-                await self._result_repo.update_job_progress(
-                    job_id, 90.0, "Calculating metrics"
+                await progress.update(
+                    "metrics_formatting",
+                    phase_progress=0.35,
+                    message="Calculating anomaly metrics",
                 )
                 total = len(results.get("is_anomaly", []))
                 detected = int(sum(1 for x in results.get("is_anomaly", []) if x))
@@ -455,16 +495,25 @@ class JobRunner:
                     model_keys=("xgboost", "lstm_classifier", "degradation_tracker"),
                     current_rows=current_rows,
                 )
-                await self._result_repo.update_job_progress(
-                    job_id, 50.0, "Training ensemble models"
+                await progress.update(
+                    "feature_preparation",
+                    phase_progress=1.0,
+                    message="Features prepared for failure ensemble",
                 )
                 ensemble = FailureEnsemble()
-                await self._result_repo.update_job_progress(
-                    job_id, 75.0, "Running ensemble inference"
+                model_expected_seconds = self._estimate_model_phase_seconds(
+                    analysis_type=request.analysis_type,
+                    current_rows=current_rows,
                 )
                 run_params = dict(params)
                 run_params["__artifacts"] = preloaded_artifacts
-                results = await asyncio.to_thread(ensemble.run, df, run_params)
+                results = await self._run_with_phase_progress(
+                    progress=progress,
+                    phase="model_execution",
+                    expected_seconds=model_expected_seconds,
+                    message_template="Running failure ensemble",
+                    work=lambda: ensemble.run(df, run_params),
+                )
                 artifact_updates = results.pop("artifact_updates", {}) if isinstance(results, dict) else {}
                 await self._persist_artifact_updates(
                     device_id=request.device_id,
@@ -474,8 +523,10 @@ class JobRunner:
                     start_time=resolved_request.start_time,
                     end_time=resolved_request.end_time,
                 )
-                await self._result_repo.update_job_progress(
-                    job_id, 90.0, "Calculating metrics"
+                await progress.update(
+                    "metrics_formatting",
+                    phase_progress=0.35,
+                    message="Calculating prediction metrics",
                 )
                 metrics = {
                     "failure_probability_pct": float(results.get("failure_probability_pct", 0.0)),
@@ -495,24 +546,34 @@ class JobRunner:
                     df, params
                 )
 
-                await self._result_repo.update_job_progress(
-                    job_id, 50.0, "Training model"
+                await progress.update(
+                    "feature_preparation",
+                    phase_progress=1.0,
+                    message="Features prepared for forecasting",
                 )
 
-                model = await asyncio.to_thread(
-                    pipeline.train, train_df, resolved_request.model_name, params
+                model = await self._run_with_phase_progress(
+                    progress=progress,
+                    phase="model_execution",
+                    expected_seconds=self._estimate_model_phase_seconds(
+                        analysis_type=request.analysis_type,
+                        current_rows=current_rows,
+                    ),
+                    message_template="Training forecast model",
+                    work=lambda: pipeline.train(train_df, resolved_request.model_name, params),
                 )
 
-                await self._result_repo.update_job_progress(
-                    job_id, 75.0, "Running inference"
+                await progress.update(
+                    "metrics_formatting",
+                    phase_progress=0.2,
+                    message="Running forecast inference",
                 )
+                results = await asyncio.to_thread(pipeline.predict, df, model, params)
 
-                results = await asyncio.to_thread(
-                    pipeline.predict, df, model, params
-                )
-
-                await self._result_repo.update_job_progress(
-                    job_id, 90.0, "Calculating metrics"
+                await progress.update(
+                    "metrics_formatting",
+                    phase_progress=0.5,
+                    message="Calculating forecast metrics",
                 )
 
                 metrics = await asyncio.to_thread(
@@ -529,6 +590,11 @@ class JobRunner:
                 self._attach_failure_points(results, df)
 
             if settings.ml_formatted_results_enabled:
+                await progress.update(
+                    "metrics_formatting",
+                    phase_progress=0.8,
+                    message="Formatting analytics payload",
+                )
                 requested_start = (
                     (
                         resolved_request.start_time.astimezone(timezone.utc)
@@ -601,12 +667,22 @@ class JobRunner:
             safe_metrics = _json_safe(metrics)
 
             execution_time = int(time.time() - start_clock)
+            await progress.update(
+                "final_persistence",
+                phase_progress=0.3,
+                message="Persisting analysis outputs",
+            )
 
             await self._result_repo.save_results(
                 job_id=job_id,
                 results=safe_results,
                 accuracy_metrics=safe_metrics,
                 execution_time_seconds=execution_time,
+            )
+            await progress.update(
+                "final_persistence",
+                phase_progress=1.0,
+                message="Finalizing analytics job",
             )
 
             await self._result_repo.update_job_status(
@@ -615,6 +691,9 @@ class JobRunner:
                 completed_at=datetime.utcnow(),
                 progress=100.0,
                 message="Analysis completed successfully",
+                phase="completed",
+                phase_label="Completed",
+                phase_progress=1.0,
             )
 
             self._logger.info(
@@ -643,9 +722,62 @@ class JobRunner:
                 completed_at=datetime.utcnow(),
                 message="Job failed",
                 error_message=str(e),
+                phase="failed",
+                phase_label="Failed",
+                phase_progress=1.0,
             )
 
             raise AnalyticsError(f"Job execution failed: {e}") from e
+
+    def _estimate_model_phase_seconds(
+        self,
+        *,
+        analysis_type: AnalyticsType,
+        current_rows: int,
+    ) -> float:
+        # Row-aware baseline so simulator-sized runs finish quickly while larger
+        # real datasets progress proportionally slower.
+        rows = max(1, int(current_rows))
+        if analysis_type in {AnalyticsType.ANOMALY, AnalyticsType.PREDICTION}:
+            return max(8.0, 6.0 + rows / 1200.0)
+        return max(6.0, 4.0 + rows / 1800.0)
+
+    async def _run_with_phase_progress(
+        self,
+        *,
+        progress: JobProgressReporter,
+        phase: str,
+        expected_seconds: float,
+        message_template: str,
+        work: Callable[[], Any],
+    ) -> Any:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(asyncio.to_thread(work))
+        start = time.monotonic()
+        update_interval = 2.0
+
+        while not task.done():
+            elapsed = max(0.0, time.monotonic() - start)
+            linear_ratio = elapsed / max(1.0, expected_seconds)
+            if linear_ratio <= 0.85:
+                ratio = linear_ratio
+            else:
+                tail = 1.0 - math.exp(-(linear_ratio - 0.85))
+                ratio = min(0.98, 0.85 + (0.13 * tail))
+            await progress.update(
+                phase,
+                phase_progress=ratio,
+                message=f"{message_template} (estimated)",
+            )
+            await asyncio.sleep(update_interval)
+
+        result = await task
+        await progress.update(
+            phase,
+            phase_progress=1.0,
+            message=f"{message_template} completed",
+        )
+        return result
 
     async def _load_valid_cached_artifacts(
         self,

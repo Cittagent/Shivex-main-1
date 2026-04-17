@@ -27,6 +27,7 @@ from app.models.rule import (
     NotificationChannelSetting,
     NotificationDeliveryLog,
     NotificationDeliveryStatus,
+    NotificationOutbox,
     Rule,
     RuleTriggerState,
     RuleScope,
@@ -34,11 +35,14 @@ from app.models.rule import (
     RuleType,
 )
 from app.notifications.adapter import NotificationAdapter
+from app.queue.notification_queue import InMemoryNotificationQueue, NotificationQueueItem
 from app.repositories.rule import RuleRepository
 from app.schemas.rule import TelemetryPayload
 from app.services.evaluator import RuleEvaluator
 from app.services.notification_delivery import NotificationDeliveryAuditService
+from app.services.notification_outbox import NotificationOutboxService
 from app.services import notification_delivery as notification_delivery_module
+from app.workers.notification_worker import NotificationWorker
 from services.shared.tenant_context import TenantContext
 
 
@@ -527,7 +531,7 @@ async def test_no_recipient_dispatch_is_recorded_as_skipped_and_not_success(sess
 
 
 @pytest.mark.asyncio
-async def test_existing_notification_flow_is_not_broken(session_factory, monkeypatch):
+async def test_rule_evaluation_enqueues_notification_intents_without_inline_provider_send(session_factory, monkeypatch):
     _FakeSMTP.sent_messages = []
     _FakeSMTP.refusal_map = {}
     _FakeSMTP.raise_error = None
@@ -542,14 +546,9 @@ async def test_existing_notification_flow_is_not_broken(session_factory, monkeyp
         session.add(rule)
         await session.flush()
 
+        queue = InMemoryNotificationQueue()
+        monkeypatch.setattr("app.services.notification_outbox.get_notification_queue", lambda: queue)
         evaluator = RuleEvaluator(session, _ctx())
-        email_adapter = evaluator._notification_adapter._adapters["email"]
-        email_adapter._enabled = True
-        email_adapter._smtp_host = "smtp.example.com"
-        email_adapter._smtp_port = 587
-        email_adapter._smtp_username = "user"
-        email_adapter._smtp_password = "pass"
-        email_adapter._from_address = "alerts@example.com"
 
         total, triggered, _ = await evaluator.evaluate_telemetry(
             TelemetryPayload(
@@ -561,22 +560,23 @@ async def test_existing_notification_flow_is_not_broken(session_factory, monkeyp
 
         alerts = list((await session.execute(select(Alert))).scalars().all())
         logs = await _all_logs(session)
+        outbox_rows = list((await session.execute(select(NotificationOutbox))).scalars().all())
 
     assert total == 1
     assert triggered == 1
     assert len(alerts) == 1
     assert len(logs) == 1
+    assert len(outbox_rows) == 1
     assert logs[0].alert_id == alerts[0].alert_id
-    assert logs[0].status == NotificationDeliveryStatus.PROVIDER_ACCEPTED.value
+    assert logs[0].status == NotificationDeliveryStatus.QUEUED.value
+    assert _FakeSMTP.sent_messages == []
+    queued_item = await queue.get()
+    assert queued_item is not None
+    assert queued_item.outbox_id == outbox_rows[0].id
 
 
 @pytest.mark.asyncio
 async def test_multi_device_rule_cooldown_is_enforced_per_device(session_factory, monkeypatch):
-    _FakeSMTP.sent_messages = []
-    _FakeSMTP.refusal_map = {}
-    _FakeSMTP.raise_error = None
-    monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
-
     async with session_factory() as session:
         rule = _make_rule(
             rule_id="22222222-2222-2222-2222-222222222222",
@@ -591,14 +591,8 @@ async def test_multi_device_rule_cooldown_is_enforced_per_device(session_factory
         session.add(rule)
         await session.flush()
 
+        monkeypatch.setattr("app.services.notification_outbox.get_notification_queue", lambda: InMemoryNotificationQueue())
         evaluator = RuleEvaluator(session, _ctx())
-        email_adapter = evaluator._notification_adapter._adapters["email"]
-        email_adapter._enabled = True
-        email_adapter._smtp_host = "smtp.example.com"
-        email_adapter._smtp_port = 587
-        email_adapter._smtp_username = "user"
-        email_adapter._smtp_password = "pass"
-        email_adapter._from_address = "alerts@example.com"
 
         first_total, first_triggered, _ = await evaluator.evaluate_telemetry(
             TelemetryPayload(
@@ -640,11 +634,6 @@ async def test_multi_device_rule_cooldown_is_enforced_per_device(session_factory
 
 @pytest.mark.asyncio
 async def test_multi_device_no_repeat_is_isolated_per_device(session_factory, monkeypatch):
-    _FakeSMTP.sent_messages = []
-    _FakeSMTP.refusal_map = {}
-    _FakeSMTP.raise_error = None
-    monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
-
     async with session_factory() as session:
         rule = _make_rule(
             rule_id="33333333-3333-3333-3333-333333333333",
@@ -657,14 +646,8 @@ async def test_multi_device_no_repeat_is_isolated_per_device(session_factory, mo
         session.add(rule)
         await session.flush()
 
+        monkeypatch.setattr("app.services.notification_outbox.get_notification_queue", lambda: InMemoryNotificationQueue())
         evaluator = RuleEvaluator(session, _ctx())
-        email_adapter = evaluator._notification_adapter._adapters["email"]
-        email_adapter._enabled = True
-        email_adapter._smtp_host = "smtp.example.com"
-        email_adapter._smtp_port = 587
-        email_adapter._smtp_username = "user"
-        email_adapter._smtp_password = "pass"
-        email_adapter._from_address = "alerts@example.com"
 
         _, triggered_device_1_first, _ = await evaluator.evaluate_telemetry(
             TelemetryPayload(device_id="DEVICE-1", timestamp=datetime.now(timezone.utc), power=25.0)

@@ -30,6 +30,9 @@ class AnalyticsJob(Base):
 
     status = Column(String(50), nullable=False, default="pending")
     progress = Column(Float, nullable=True)
+    phase = Column(String(50), nullable=True)
+    phase_label = Column(String(255), nullable=True)
+    phase_progress = Column(Float, nullable=True)
     message = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
 

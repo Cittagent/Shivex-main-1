@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import select, update, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -298,7 +298,6 @@ class EnergyEngine:
             return state
         state = EnergyDeviceState(device_id=device_id, session_state="running", version=0)
         self._session.add(state)
-        await self._session.flush()
         return state
 
     async def _get_or_create_device_day(self, device_id: str, day_bucket: date) -> EnergyDeviceDay:
@@ -311,7 +310,6 @@ class EnergyEngine:
             return row
         row = EnergyDeviceDay(device_id=device_id, day=day_bucket)
         self._session.add(row)
-        await self._session.flush()
         return row
 
     async def _get_or_create_device_month(self, device_id: str, month_bucket: date) -> EnergyDeviceMonth:
@@ -324,7 +322,6 @@ class EnergyEngine:
             return row
         row = EnergyDeviceMonth(device_id=device_id, month=month_bucket)
         self._session.add(row)
-        await self._session.flush()
         return row
 
     async def _get_or_create_fleet_day(self, day_bucket: date) -> EnergyFleetDay:
@@ -333,7 +330,6 @@ class EnergyEngine:
             return row
         row = EnergyFleetDay(day=day_bucket)
         self._session.add(row)
-        await self._session.flush()
         return row
 
     async def _get_or_create_fleet_month(self, month_bucket: date) -> EnergyFleetMonth:
@@ -342,7 +338,6 @@ class EnergyEngine:
             return row
         row = EnergyFleetMonth(month=month_bucket)
         self._session.add(row)
-        await self._session.flush()
         return row
 
     def _compute_delta(
@@ -407,11 +402,194 @@ class EnergyEngine:
         normalized_fields: Optional[dict[str, Any]] = None,
         tenant_id: Optional[str] = None,
     ) -> dict[str, Any]:
+        meta = await meta_cache.get(device_id, tenant_id)
+        tariff = await tariff_cache.get(tenant_id)
+        state = await self._get_or_create_state(device_id)
+        result = await self._apply_live_update_loaded(
+            device_id=device_id,
+            telemetry=telemetry,
+            dynamic_fields=dynamic_fields,
+            normalized_fields=normalized_fields,
+            tenant_id=tenant_id,
+            state=state,
+            meta=meta,
+            rate=float((tariff or {}).get("rate") or 0.0),
+            persistence_mode="optimistic",
+        )
+        await self._session.commit()
+        return result
+
+    async def apply_live_updates_batch(
+        self,
+        *,
+        tenant_id: Optional[str],
+        updates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not updates:
+            return []
+
+        ordered_device_ids: list[str] = []
+        seen: set[str] = set()
+        for update in updates:
+            device_id = str((update.get("telemetry") or {}).get("device_id") or "").strip()
+            if not device_id or device_id in seen:
+                continue
+            seen.add(device_id)
+            ordered_device_ids.append(device_id)
+
+        state_rows = await self._session.execute(
+            select(EnergyDeviceState).where(EnergyDeviceState.device_id.in_(ordered_device_ids)).with_for_update()
+        )
+        states_by_id = {str(state.device_id): state for state in state_rows.scalars().all()}
+        for device_id in ordered_device_ids:
+            if device_id not in states_by_id:
+                state = EnergyDeviceState(device_id=device_id, session_state="running", version=0)
+                self._session.add(state)
+                states_by_id[device_id] = state
+        await self._session.flush()
+
+        meta_rows = await asyncio.gather(*[meta_cache.get(device_id, tenant_id) for device_id in ordered_device_ids])
+        meta_by_id = {device_id: meta for device_id, meta in zip(ordered_device_ids, meta_rows, strict=False)}
+        tariff = await tariff_cache.get(tenant_id)
+        rate = float((tariff or {}).get("rate") or 0.0)
+
+        local_tz = _get_platform_tz()
+        day_keys: set[tuple[str, date]] = set()
+        month_keys: set[tuple[str, date]] = set()
+        fleet_days: set[date] = set()
+        fleet_months: set[date] = set()
+        for update in updates:
+            telemetry = update.get("telemetry") or {}
+            device_id = str(telemetry.get("device_id") or "").strip()
+            if not device_id:
+                continue
+            ts = self._parse_ts(telemetry.get("timestamp"))
+            day_bucket = ts.astimezone(local_tz).date()
+            month_bucket = day_bucket.replace(day=1)
+            day_keys.add((device_id, day_bucket))
+            month_keys.add((device_id, month_bucket))
+            fleet_days.add(day_bucket)
+            fleet_months.add(month_bucket)
+
+        device_day_rows = (
+            await self._session.execute(
+                select(EnergyDeviceDay).where(tuple_(EnergyDeviceDay.device_id, EnergyDeviceDay.day).in_(list(day_keys)))
+            )
+        ).scalars().all() if day_keys else []
+        device_month_rows = (
+            await self._session.execute(
+                select(EnergyDeviceMonth).where(tuple_(EnergyDeviceMonth.device_id, EnergyDeviceMonth.month).in_(list(month_keys)))
+            )
+        ).scalars().all() if month_keys else []
+        fleet_day_rows = (
+            await self._session.execute(select(EnergyFleetDay).where(EnergyFleetDay.day.in_(list(fleet_days))))
+        ).scalars().all() if fleet_days else []
+        fleet_month_rows = (
+            await self._session.execute(select(EnergyFleetMonth).where(EnergyFleetMonth.month.in_(list(fleet_months))))
+        ).scalars().all() if fleet_months else []
+
+        device_days = {(row.device_id, row.day): row for row in device_day_rows}
+        device_months = {(row.device_id, row.month): row for row in device_month_rows}
+        fleet_days_by_day = {row.day: row for row in fleet_day_rows}
+        fleet_months_by_month = {row.month: row for row in fleet_month_rows}
+
+        results: list[dict[str, Any] | None] = [None] * len(updates)
+        processable: list[tuple[int, str, dict[str, Any]]] = []
+        for index, update in enumerate(updates):
+            telemetry = update.get("telemetry") or {}
+            device_id = str(telemetry.get("device_id") or "").strip()
+            if not device_id:
+                results[index] = {
+                    "success": False,
+                    "device_id": "",
+                    "error": "device_id required",
+                    "error_code": "DEVICE_ID_REQUIRED",
+                    "retryable": False,
+                }
+                continue
+            processable.append((index, device_id, update))
+
+        async def _apply_one(device_id: str, update: dict[str, Any]) -> dict[str, Any]:
+            return await self._apply_live_update_loaded(
+                device_id=device_id,
+                telemetry=update.get("telemetry") or {},
+                dynamic_fields=update.get("dynamic_fields"),
+                normalized_fields=update.get("normalized_fields"),
+                tenant_id=tenant_id,
+                state=states_by_id[device_id],
+                meta=meta_by_id.get(device_id) or {},
+                rate=rate,
+                persistence_mode="locked",
+                device_day_rows=device_days,
+                device_month_rows=device_months,
+                fleet_day_rows=fleet_days_by_day,
+                fleet_month_rows=fleet_months_by_month,
+            )
+
+        chunk_size = max(1, int(settings.ENERGY_BATCH_CHUNK_SIZE))
+        for start in range(0, len(processable), chunk_size):
+            chunk = processable[start:start + chunk_size]
+            chunk_failed = False
+
+            try:
+                async with self._session.begin_nested():
+                    for result_index, device_id, update in chunk:
+                        data = await _apply_one(device_id, update)
+                        results[result_index] = {
+                            "success": True,
+                            "device_id": device_id,
+                            "data": data,
+                            "retryable": False,
+                        }
+            except Exception:
+                chunk_failed = True
+
+            if not chunk_failed:
+                continue
+
+            for result_index, device_id, update in chunk:
+                try:
+                    async with self._session.begin_nested():
+                        data = await _apply_one(device_id, update)
+                    results[result_index] = {
+                        "success": True,
+                        "device_id": device_id,
+                        "data": data,
+                        "retryable": False,
+                    }
+                except Exception as exc:
+                    results[result_index] = {
+                        "success": False,
+                        "device_id": device_id,
+                        "error": str(exc),
+                        "error_code": "ENERGY_LIVE_UPDATE_ERROR",
+                        "retryable": True,
+                    }
+
+        await self._session.commit()
+        return [item for item in results if item is not None]
+
+    async def _apply_live_update_loaded(
+        self,
+        *,
+        device_id: str,
+        telemetry: dict[str, Any],
+        dynamic_fields: Optional[dict[str, Any]],
+        normalized_fields: Optional[dict[str, Any]],
+        tenant_id: Optional[str],
+        state: EnergyDeviceState,
+        meta: dict[str, Any],
+        rate: float,
+        persistence_mode: str,
+        device_day_rows: dict[tuple[str, date], EnergyDeviceDay] | None = None,
+        device_month_rows: dict[tuple[str, date], EnergyDeviceMonth] | None = None,
+        fleet_day_rows: dict[date, EnergyFleetDay] | None = None,
+        fleet_month_rows: dict[date, EnergyFleetMonth] | None = None,
+    ) -> dict[str, Any]:
         merged = dict(telemetry or {})
         if dynamic_fields:
             merged.update(dynamic_fields)
 
-        meta = await meta_cache.get(device_id, tenant_id)
         idle_threshold = self._to_float(meta.get("idle_threshold"))
         over_threshold = self._to_float(meta.get("over_threshold"))
         shifts = meta.get("shifts") or []
@@ -422,7 +600,6 @@ class EnergyEngine:
         current_sample = normalize_telemetry_sample(merged, config)
         ts = current_sample.timestamp
 
-        state = await self._get_or_create_state(device_id)
         previous_sample = None
         if state.last_ts is not None:
             previous_sample = normalize_telemetry_sample(
@@ -455,17 +632,15 @@ class EnergyEngine:
                 "idempotent_drop": True,
             }
 
-        tariff = await tariff_cache.get(tenant_id)
-        rate = float(tariff.get("rate") or 0.0)
         local_tz = _get_platform_tz()
         day_bucket = ts.astimezone(local_tz).date()
         month_bucket = day_bucket.replace(day=1)
 
         if delta.energy_kwh > 0:
-            dd = await self._get_or_create_device_day(device_id, day_bucket)
-            dm = await self._get_or_create_device_month(device_id, month_bucket)
-            fd = await self._get_or_create_fleet_day(day_bucket)
-            fm = await self._get_or_create_fleet_month(month_bucket)
+            dd = await self._get_or_create_device_day_cached(device_id, day_bucket, device_day_rows)
+            dm = await self._get_or_create_device_month_cached(device_id, month_bucket, device_month_rows)
+            fd = await self._get_or_create_fleet_day_cached(day_bucket, fleet_day_rows)
+            fm = await self._get_or_create_fleet_month_cached(month_bucket, fleet_month_rows)
 
             for row in (dd, dm, fd, fm):
                 row.energy_kwh = float(row.energy_kwh or 0.0) + delta.energy_kwh
@@ -485,33 +660,44 @@ class EnergyEngine:
             dm.quality_flags = json.dumps(sorted(dm_quality))
 
         current_version = int(state.version or 0)
-        success = await update_live_state_with_lock(
-            self._session,
-            device_id,
-            {
-                "last_ts": ts,
-                "last_energy_counter": current_sample.energy_counter_kwh if current_sample.energy_counter_kwh is not None else state.last_energy_counter,
-                "last_power_kw": (current_sample.business_power_w / 1000.0) if current_sample.business_power_w > 0 else state.last_power_kw,
-                "last_day_bucket": day_bucket,
-                "last_month_bucket": month_bucket,
-                "session_state": "running",
-            },
-        )
-        if not success:
-            await self._session.rollback()
-            return {
-                "device_id": device_id,
-                "device_name": meta.get("device_name") or device_id,
-                "ts": ts.isoformat(),
-                "delta_energy_kwh": 0.0,
-                "delta_loss_kwh": 0.0,
-                "quality_flags": sorted(delta.flags | {"optimistic_lock_skipped"}),
-                "version": current_version,
-                "freshness_ts": datetime.now(timezone.utc).isoformat(),
-                "idempotent_drop": True,
-            }
-
-        await self._session.commit()
+        if persistence_mode == "locked":
+            state.last_ts = ts
+            if current_sample.energy_counter_kwh is not None:
+                state.last_energy_counter = current_sample.energy_counter_kwh
+            if current_sample.business_power_w > 0:
+                state.last_power_kw = current_sample.business_power_w / 1000.0
+            state.last_day_bucket = day_bucket
+            state.last_month_bucket = month_bucket
+            state.session_state = "running"
+            state.version = current_version + 1
+            state.updated_at = datetime.utcnow()
+            await self._session.flush()
+        else:
+            success = await update_live_state_with_lock(
+                self._session,
+                device_id,
+                {
+                    "last_ts": ts,
+                    "last_energy_counter": current_sample.energy_counter_kwh if current_sample.energy_counter_kwh is not None else state.last_energy_counter,
+                    "last_power_kw": (current_sample.business_power_w / 1000.0) if current_sample.business_power_w > 0 else state.last_power_kw,
+                    "last_day_bucket": day_bucket,
+                    "last_month_bucket": month_bucket,
+                    "session_state": "running",
+                },
+            )
+            if not success:
+                await self._session.rollback()
+                return {
+                    "device_id": device_id,
+                    "device_name": meta.get("device_name") or device_id,
+                    "ts": ts.isoformat(),
+                    "delta_energy_kwh": 0.0,
+                    "delta_loss_kwh": 0.0,
+                    "quality_flags": sorted(delta.flags | {"optimistic_lock_skipped"}),
+                    "version": current_version,
+                    "freshness_ts": datetime.now(timezone.utc).isoformat(),
+                    "idempotent_drop": True,
+                }
 
         return {
             "device_id": device_id,
@@ -523,6 +709,66 @@ class EnergyEngine:
             "version": current_version + 1,
             "freshness_ts": datetime.now(timezone.utc).isoformat(),
         }
+
+    async def _get_or_create_device_day_cached(
+        self,
+        device_id: str,
+        day_bucket: date,
+        cache: dict[tuple[str, date], EnergyDeviceDay] | None,
+    ) -> EnergyDeviceDay:
+        if cache is None:
+            return await self._get_or_create_device_day(device_id, day_bucket)
+        key = (device_id, day_bucket)
+        row = cache.get(key)
+        if row is None:
+            row = EnergyDeviceDay(device_id=device_id, day=day_bucket)
+            self._session.add(row)
+            cache[key] = row
+        return row
+
+    async def _get_or_create_device_month_cached(
+        self,
+        device_id: str,
+        month_bucket: date,
+        cache: dict[tuple[str, date], EnergyDeviceMonth] | None,
+    ) -> EnergyDeviceMonth:
+        if cache is None:
+            return await self._get_or_create_device_month(device_id, month_bucket)
+        key = (device_id, month_bucket)
+        row = cache.get(key)
+        if row is None:
+            row = EnergyDeviceMonth(device_id=device_id, month=month_bucket)
+            self._session.add(row)
+            cache[key] = row
+        return row
+
+    async def _get_or_create_fleet_day_cached(
+        self,
+        day_bucket: date,
+        cache: dict[date, EnergyFleetDay] | None,
+    ) -> EnergyFleetDay:
+        if cache is None:
+            return await self._get_or_create_fleet_day(day_bucket)
+        row = cache.get(day_bucket)
+        if row is None:
+            row = EnergyFleetDay(day=day_bucket)
+            self._session.add(row)
+            cache[day_bucket] = row
+        return row
+
+    async def _get_or_create_fleet_month_cached(
+        self,
+        month_bucket: date,
+        cache: dict[date, EnergyFleetMonth] | None,
+    ) -> EnergyFleetMonth:
+        if cache is None:
+            return await self._get_or_create_fleet_month(month_bucket)
+        row = cache.get(month_bucket)
+        if row is None:
+            row = EnergyFleetMonth(month=month_bucket)
+            self._session.add(row)
+            cache[month_bucket] = row
+        return row
 
     async def apply_device_lifecycle(self, device_id: str, status: str, at: Optional[datetime] = None) -> dict[str, Any]:
         state = await self._get_or_create_state(device_id)

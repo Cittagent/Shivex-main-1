@@ -54,9 +54,10 @@ async def _run_worker() -> None:
             dead_letter_stream=settings.redis_dead_letter_stream,
             consumer_group=settings.redis_consumer_group,
             consumer_name=settings.redis_consumer_name,
+            maxsize=settings.queue_max_length,
         )
     else:
-        queue = InMemoryJobQueue()
+        queue = InMemoryJobQueue(maxsize=settings.queue_max_length)
 
     worker = JobWorker(queue, max_concurrent=settings.max_concurrent_jobs)
     await worker.start()

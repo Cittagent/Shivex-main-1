@@ -63,6 +63,23 @@ class Settings(BaseSettings):
     WHATSAPP_ENABLED: bool = False
     TWILIO_WHATSAPP_FROM_NUMBER: str | None = os.getenv("TWILIO_WHATSAPP_FROM_NUMBER", None)
     DEVICE_SERVICE_URL: str | None = os.getenv("DEVICE_SERVICE_URL", None)
+    REDIS_URL: str | None = os.getenv("REDIS_URL", None)
+    APP_ROLE: str = "api"
+    QUEUE_BACKEND: str = "redis"
+    NOTIFICATION_OUTBOX_STREAM: str = "rule-engine:notification-outbox"
+    NOTIFICATION_OUTBOX_DEAD_LETTER_STREAM: str = "rule-engine:notification-outbox:dead"
+    NOTIFICATION_OUTBOX_CONSUMER_GROUP: str = "rule-engine-notification-workers"
+    NOTIFICATION_OUTBOX_CONSUMER_NAME: str = os.getenv("NOTIFICATION_OUTBOX_CONSUMER_NAME", f"{SERVICE_NAME}-worker")
+    NOTIFICATION_WORKER_CONCURRENCY: int = 4
+    NOTIFICATION_OUTBOX_MAX_RETRIES: int = 4
+    NOTIFICATION_OUTBOX_QUEUE_MAXLEN: int = 20000
+    NOTIFICATION_OUTBOX_CLAIM_IDLE_MS: int = 30000
+    NOTIFICATION_OUTBOX_READ_BLOCK_MS: int = 5000
+    NOTIFICATION_OUTBOX_REQUEUE_BATCH_SIZE: int = 100
+    NOTIFICATION_OUTBOX_REQUEUE_INTERVAL_SECONDS: int = 5
+    NOTIFICATION_BACKOFF_BASE_SECONDS: int = 5
+    NOTIFICATION_BACKOFF_MAX_SECONDS: int = 300
+    NOTIFICATION_DELIVERY_TIMEOUT_SECONDS: int = 30
     
     # Multi-tenancy (Phase-2 ready)
     TENANT_ID_HEADER: str = "X-Tenant-ID"
@@ -89,6 +106,7 @@ for _name in (
     "TWILIO_SMS_FROM_NUMBER",
     "TWILIO_WHATSAPP_FROM_NUMBER",
     "DEVICE_SERVICE_URL",
+    "REDIS_URL",
 ):
     if getattr(settings, _name) is None:
         logger.warning("Missing environment variable for rule-engine-service setting: %s", _name)

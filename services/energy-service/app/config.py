@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
     CIRCUIT_BREAKER_OPEN_TIMEOUT_SEC: int = 30
     CIRCUIT_BREAKER_SUCCESS_THRESHOLD: int = 2
+    ENERGY_BATCH_CHUNK_SIZE: int = 50
 
     class Config:
         env_file = ".env"

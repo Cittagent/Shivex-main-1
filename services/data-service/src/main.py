@@ -43,6 +43,7 @@ from src.services import (
 from src.api import create_router, create_websocket_router
 from src.utils.circuit_breaker import get_circuit_breaker_metrics
 from src.utils import configure_logging, get_logger
+from src.workers import TelemetryPipelineWorker
 from shared.auth_middleware import AuthMiddleware
 from services.shared.startup_contract import validate_startup_contract
 
@@ -61,6 +62,7 @@ class ApplicationState:
         self.reconciliation_service: ReconciliationService | None = None
         self.retention_cleanup_service: RetentionCleanupService | None = None
         self.mqtt_handler: MQTTHandler | None = None
+        self.telemetry_pipeline_worker: TelemetryPipelineWorker | None = None
         self._shutdown_event = asyncio.Event()
 
     async def startup(self) -> None:
@@ -74,34 +76,45 @@ class ApplicationState:
         await self.telemetry_service.start()
         await ensure_bucket_retention(self.telemetry_service.influx_repository.client)
 
-        self.outbox_relay_service = OutboxRelayService(
-            outbox_repository=self.telemetry_service.outbox_repository,
-            dlq_repository=self.telemetry_service.dlq_repository,
-        )
-        await self.outbox_relay_service.start()
+        if settings.app_role == "worker":
+            self.telemetry_pipeline_worker = TelemetryPipelineWorker(self.telemetry_service)
+            await self.telemetry_pipeline_worker.start()
+            if settings.telemetry_worker_outbox_relay_enabled:
+                self.outbox_relay_service = OutboxRelayService(
+                    outbox_repository=self.telemetry_service.outbox_repository,
+                    dlq_repository=self.telemetry_service.dlq_repository,
+                )
+                await self.outbox_relay_service.start()
 
-        self.reconciliation_service = ReconciliationService(
-            influx_repository=self.telemetry_service.influx_repository,
-            outbox_repository=self.telemetry_service.outbox_repository,
-        )
-        await self.reconciliation_service.start()
+            if settings.telemetry_worker_maintenance_enabled:
+                self.reconciliation_service = ReconciliationService(
+                    influx_repository=self.telemetry_service.influx_repository,
+                    outbox_repository=self.telemetry_service.outbox_repository,
+                )
+                await self.reconciliation_service.start()
 
-        self.retention_cleanup_service = RetentionCleanupService(
-            outbox_repository=self.telemetry_service.outbox_repository,
-            dlq_repository=self.telemetry_service.dlq_repository,
-        )
-        await self.retention_cleanup_service.start()
+                self.retention_cleanup_service = RetentionCleanupService(
+                    outbox_repository=self.telemetry_service.outbox_repository,
+                    dlq_repository=self.telemetry_service.dlq_repository,
+                )
+                await self.retention_cleanup_service.start()
 
-        self.dlq_retry_service = DLQRetryService(
-            telemetry_service=self.telemetry_service,
-            dlq_repository=self.telemetry_service.dlq_repository,
-        )
-        await self.dlq_retry_service.start()
-
-        self.mqtt_handler = MQTTHandler(
-            telemetry_service=self.telemetry_service,
-        )
-        self.mqtt_handler.connect()
+                self.dlq_retry_service = DLQRetryService(
+                    telemetry_service=self.telemetry_service,
+                    dlq_repository=self.telemetry_service.dlq_repository,
+                    batch_limit=max(1, settings.dlq_retry_batch_limit),
+                    base_backoff_seconds=max(1, settings.dlq_retry_base_backoff_seconds),
+                    max_backoff_seconds=max(
+                        settings.dlq_retry_base_backoff_seconds,
+                        settings.dlq_retry_max_backoff_seconds,
+                    ),
+                )
+                await self.dlq_retry_service.start()
+        else:
+            self.mqtt_handler = MQTTHandler(
+                telemetry_service=self.telemetry_service,
+            )
+            self.mqtt_handler.connect()
 
         logger.info("Data Service startup complete")
 
@@ -110,6 +123,11 @@ class ApplicationState:
 
         if self.mqtt_handler:
             self.mqtt_handler.disconnect()
+            self.mqtt_handler = None
+
+        if self.telemetry_pipeline_worker:
+            await self.telemetry_pipeline_worker.stop()
+            self.telemetry_pipeline_worker = None
 
         if self.reconciliation_service:
             await self.reconciliation_service.stop()
@@ -237,11 +255,72 @@ async def root():
 
 @app.get("/health")
 async def health():
+    if app_state.telemetry_service is not None:
+        await app_state.telemetry_service._refresh_stage_metrics()  # noqa: SLF001
+    telemetry_stats = (
+        app_state.telemetry_service.get_operational_stats()
+        if app_state.telemetry_service is not None
+        else None
+    )
+    dlq_retry_stats = (
+        app_state.dlq_retry_service.get_stats()
+        if app_state.dlq_retry_service is not None
+        else None
+    )
+    telemetry_status = "healthy"
+    telemetry_policy: dict[str, object] = {"state": "healthy", "reasons": []}
+    if telemetry_stats is not None:
+        stages = telemetry_stats.get("stages", {})
+        workers = telemetry_stats.get("workers", {})
+        outbox_counts = (
+            await app_state.telemetry_service.outbox_repository.get_status_counts()
+            if app_state.telemetry_service is not None
+            else {"pending": 0, "failed": 0, "delivered": 0, "dead": 0}
+        )
+        telemetry_stats["outbox"] = outbox_counts
+        max_oldest_age = max((float(stage.get("oldest_age_seconds") or 0.0) for stage in stages.values()), default=0.0)
+        ready_workers = sum(1 for worker in workers.values() if worker.get("ready"))
+        overloaded_reasons: list[str] = []
+        degraded_reasons: list[str] = []
+        if max_oldest_age >= float(settings.telemetry_health_lag_overload_seconds):
+            overloaded_reasons.append("stage_lag_exceeded")
+        elif max_oldest_age >= float(settings.telemetry_health_lag_warn_seconds):
+            degraded_reasons.append("stage_lag_warning")
+        if int(stages.get("projection", {}).get("backlog_depth") or 0) >= int(settings.telemetry_projection_overload_threshold):
+            overloaded_reasons.append("projection_backlog_exceeded")
+        if int(stages.get("energy", {}).get("backlog_depth") or 0) >= int(settings.telemetry_energy_overload_threshold):
+            overloaded_reasons.append("energy_backlog_exceeded")
+        if int(stages.get("rules", {}).get("backlog_depth") or 0) >= int(settings.telemetry_rules_overload_threshold):
+            overloaded_reasons.append("rules_backlog_exceeded")
+        if int(outbox_counts.get("pending") or 0) >= int(settings.outbox_pending_overload_threshold):
+            overloaded_reasons.append("outbox_pending_exceeded")
+        elif int(outbox_counts.get("pending") or 0) >= int(settings.outbox_pending_warn_threshold):
+            degraded_reasons.append("outbox_pending_warning")
+        dlq_stats = telemetry_stats.get("dlq") or {}
+        dlq_retryable_backlog = int(dlq_stats.get("backlog_count") or 0)
+        dlq_non_retryable_pending = int(dlq_stats.get("pending_non_retryable_count") or 0)
+        if dlq_retryable_backlog >= int(settings.dlq_pending_overload_threshold):
+            overloaded_reasons.append("dlq_pending_exceeded")
+        elif dlq_retryable_backlog >= int(settings.dlq_pending_warn_threshold):
+            degraded_reasons.append("dlq_pending_warning")
+        if dlq_non_retryable_pending >= int(settings.dlq_non_retryable_pending_warn_threshold):
+            degraded_reasons.append("dlq_non_retryable_pending_present")
+        if settings.app_role == "api" and ready_workers == 0:
+            degraded_reasons.append("no_ready_workers")
+        if overloaded_reasons:
+            telemetry_status = "overloaded"
+            telemetry_policy = {"state": "overloaded", "reasons": overloaded_reasons}
+        elif degraded_reasons:
+            telemetry_status = "degraded"
+            telemetry_policy = {"state": "degraded", "reasons": degraded_reasons}
     return {
-        "status": "healthy",
+        "status": telemetry_status,
         "service": "data-service",
         "version": settings.app_version,
         "circuit_breakers": get_circuit_breaker_metrics(),
+        "telemetry": telemetry_stats,
+        "telemetry_policy": telemetry_policy,
+        "dlq_retry": dlq_retry_stats,
     }
 
 

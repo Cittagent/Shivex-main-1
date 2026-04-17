@@ -13,16 +13,6 @@ from src.utils import get_logger
 
 logger = get_logger(__name__)
 
-RETRYABLE_ERROR_TYPES = (
-    "QUEUE_OVERFLOW",
-    "invalid_numeric_fields",
-    "influxdb_write_error",
-    "outbox_enqueue_error",
-    "parse_error",
-    "processing_error",
-    "unexpected_error",
-)
-
 
 class DLQRetryService:
     """Async DLQ retry loop that replays telemetry through the existing service."""
@@ -45,8 +35,12 @@ class DLQRetryService:
         self._batch_limit = max(1, batch_limit)
         self._base_backoff_seconds = max(1, base_backoff_seconds)
         self._max_backoff_seconds = max(self._base_backoff_seconds, max_backoff_seconds)
+        self._retryable_error_types = self._dlq_repository.retryable_error_types()
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
+        self._attempts_by_error_type: dict[str, int] = {}
+        self._reprocessed_by_error_type: dict[str, int] = {}
+        self._failed_by_error_type: dict[str, int] = {}
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -58,6 +52,7 @@ class DLQRetryService:
             batch_limit=self._batch_limit,
             max_retry_count=self._max_retry_count,
             retry_grace_period_seconds=int(self._retry_grace_period.total_seconds()),
+            retryable_error_types=list(self._retryable_error_types),
         )
 
     async def stop(self) -> None:
@@ -105,7 +100,7 @@ class DLQRetryService:
             max_retry_count=self._max_retry_count,
             grace_period=self._retry_grace_period,
             limit=self._batch_limit,
-            error_types=RETRYABLE_ERROR_TYPES,
+            error_types=self._retryable_error_types,
         )
         if not rows:
             logger.debug("dlq_retry_batch_empty")
@@ -131,6 +126,7 @@ class DLQRetryService:
             retry_count=next_retry_count,
             error_type=error_type,
         )
+        self._attempts_by_error_type[error_type] = int(self._attempts_by_error_type.get(error_type, 0) or 0) + 1
 
         try:
             accepted = await self._telemetry_service.process_telemetry_message(
@@ -152,6 +148,7 @@ class DLQRetryService:
                 retry_count=next_retry_count,
                 error_type=error_type,
             )
+            self._reprocessed_by_error_type[error_type] = int(self._reprocessed_by_error_type.get(error_type, 0) or 0) + 1
         except Exception as exc:
             failure_reason = self._truncate_reason(exc)
             status = await asyncio.to_thread(
@@ -171,6 +168,7 @@ class DLQRetryService:
                 status=status,
                 error=str(exc),
             )
+            self._failed_by_error_type[error_type] = int(self._failed_by_error_type.get(error_type, 0) or 0) + 1
 
     @staticmethod
     def _decode_payload(original_payload: Any) -> dict[str, Any]:
@@ -188,3 +186,15 @@ class DLQRetryService:
         if len(message) <= max_length:
             return message
         return message[: max_length - 3] + "..."
+
+    def get_stats(self) -> dict[str, Any]:
+        return {
+            "retryable_error_types": list(self._retryable_error_types),
+            "attempts_by_error_type": dict(self._attempts_by_error_type),
+            "reprocessed_by_error_type": dict(self._reprocessed_by_error_type),
+            "failed_by_error_type": dict(self._failed_by_error_type),
+            "batch_limit": self._batch_limit,
+            "max_retry_count": self._max_retry_count,
+            "base_backoff_seconds": self._base_backoff_seconds,
+            "max_backoff_seconds": self._max_backoff_seconds,
+        }

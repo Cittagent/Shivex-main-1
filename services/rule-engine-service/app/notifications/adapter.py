@@ -68,6 +68,10 @@ class NotificationChannel(ABC):
     provider_name: str
 
     @abstractmethod
+    async def resolve_recipients(self, rule: Rule) -> tuple[list[str], dict[str, int | str]]:
+        """Resolve recipients for a rule without sending notifications."""
+
+    @abstractmethod
     async def dispatch_alert(
         self,
         subject: str,
@@ -170,6 +174,9 @@ class EmailAdapter(NotificationChannel):
             "resolved_recipient_count": len(resolved),
         }
 
+    async def resolve_recipients(self, rule: Rule) -> tuple[list[str], dict[str, int | str]]:
+        return await self._resolve_recipients(rule)
+
     async def dispatch_alert(
         self,
         subject: str,
@@ -181,9 +188,16 @@ class EmailAdapter(NotificationChannel):
         device_names: Optional[str] = None,
         alert_context: Optional[dict[str, Any]] = None,
         scope_label: Optional[str] = None,
+        resolved_recipients: Optional[list[str]] = None,
+        resolution_metadata: Optional[dict[str, int | str]] = None,
+        attempt_log_ids: Optional[dict[str, Optional[str]]] = None,
+        defer_failure_finalization: bool = False,
         **kwargs: Any,
     ) -> NotificationDispatchResult:
-        recipients, resolution_metadata = await self._resolve_recipients(rule)
+        if resolved_recipients is None or resolution_metadata is None:
+            recipients, resolution_metadata = await self._resolve_recipients(rule)
+        else:
+            recipients = sorted(set(resolved_recipients))
         result = NotificationDispatchResult(channel=self.channel_name, provider_name=self.provider_name)
         metadata = {
             "subject": subject,
@@ -219,6 +233,7 @@ class EmailAdapter(NotificationChannel):
                 failure_code="channel_disabled",
                 failure_message="Email notifications are disabled.",
                 result=result,
+                attempt_log_ids=attempt_log_ids,
             )
             logger.info("Email notifications disabled", extra={"channel": "email"})
             result.forced_success = True
@@ -235,12 +250,13 @@ class EmailAdapter(NotificationChannel):
                 failure_code="missing_configuration",
                 failure_message="Email SMTP credentials are missing.",
                 result=result,
+                attempt_log_ids=attempt_log_ids,
             )
             logger.warning("Email not configured - SMTP credentials missing", extra={"channel": "email"})
             result.forced_success = False
             return result
 
-        attempt_logs = await self._create_attempt_logs(
+        attempt_logs = attempt_log_ids or await self._create_attempt_logs(
             recipients=recipients,
             rule=rule,
             device_id=device_id,
@@ -248,6 +264,7 @@ class EmailAdapter(NotificationChannel):
             alert_id=alert_id,
             metadata=metadata,
         )
+        await self._mark_attempt_logs(attempt_logs=attempt_logs, metadata=metadata)
 
         try:
             context = ssl.create_default_context()
@@ -278,6 +295,7 @@ class EmailAdapter(NotificationChannel):
                                 failure_code=code,
                                 failure_message=detail,
                                 metadata=metadata,
+                                finalize=not defer_failure_finalization,
                             )
                         )
                         continue
@@ -319,6 +337,7 @@ class EmailAdapter(NotificationChannel):
                         failure_code=exc.__class__.__name__,
                         failure_message=str(exc),
                         metadata=metadata,
+                        finalize=not defer_failure_finalization,
                     )
                 )
             return result
@@ -576,10 +595,20 @@ class EmailAdapter(NotificationChannel):
         failure_code: str,
         failure_message: str,
         result: NotificationDispatchResult,
+        attempt_log_ids: Optional[dict[str, Optional[str]]] = None,
     ) -> None:
         for recipient in recipients:
             audit_log_id = None
-            if self._audit_service is not None:
+            existing_log_id = (attempt_log_ids or {}).get(recipient)
+            if self._audit_service is not None and existing_log_id is not None:
+                row = await self._audit_service.mark_skipped_log(
+                    existing_log_id,
+                    failure_code=failure_code,
+                    failure_message=failure_message,
+                    metadata_json=metadata,
+                )
+                audit_log_id = row.id if row is not None else existing_log_id
+            elif self._audit_service is not None:
                 row = await self._audit_service.mark_skipped(
                     channel=self.channel_name,
                     raw_recipient=recipient,
@@ -704,6 +733,23 @@ class EmailAdapter(NotificationChannel):
             metadata_json=metadata,
         )
 
+    async def _mark_attempt_logs(
+        self,
+        *,
+        attempt_logs: dict[str, Optional[str]],
+        metadata: dict[str, Any],
+    ) -> None:
+        if self._audit_service is None:
+            return
+        for attempt_log_id in attempt_logs.values():
+            if attempt_log_id is None:
+                continue
+            await self._audit_service.mark_attempted(
+                attempt_log_id,
+                attempted_at=datetime.now(timezone.utc),
+                metadata_json=metadata,
+            )
+
     async def _record_failed_result(
         self,
         *,
@@ -712,9 +758,10 @@ class EmailAdapter(NotificationChannel):
         failure_code: Optional[str],
         failure_message: Optional[str],
         metadata: dict[str, Any],
+        finalize: bool = True,
     ) -> NotificationRecipientResult:
         failed_at = datetime.now(timezone.utc)
-        if self._audit_service is not None and attempt_log_id is not None:
+        if finalize and self._audit_service is not None and attempt_log_id is not None:
             await self._audit_service.mark_failed(
                 attempt_log_id,
                 failure_code=failure_code,
@@ -791,6 +838,14 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
 
     def _configured(self) -> bool:
         return bool(self._account_sid and self._auth_token and self._from_number)
+
+    async def resolve_recipients(self, rule: Rule) -> tuple[list[str], dict[str, int | str]]:
+        recipients = self._recipients_for_rule(rule, self.channel_name)
+        return recipients, {
+            "resolution_strategy": "rule_recipients_only",
+            "direct_rule_recipient_count": len(recipients),
+            "resolved_recipient_count": len(recipients),
+        }
 
     @staticmethod
     def _compact_whitespace(value: str) -> str:
@@ -939,17 +994,22 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
         alert_type: str = "threshold_alert",
         alert_id: Optional[str] = None,
         alert_context: Optional[dict[str, Any]] = None,
+        resolved_recipients: Optional[list[str]] = None,
+        resolution_metadata: Optional[dict[str, int | str]] = None,
+        attempt_log_ids: Optional[dict[str, Optional[str]]] = None,
+        defer_failure_finalization: bool = False,
         **kwargs: Any,
     ) -> NotificationDispatchResult:
-        recipients = self._recipients_for_rule(rule, self.channel_name)
+        if resolved_recipients is None or resolution_metadata is None:
+            recipients, resolution_metadata = await self.resolve_recipients(rule)
+        else:
+            recipients = sorted(set(resolved_recipients))
         result = NotificationDispatchResult(channel=self.channel_name, provider_name=self.provider_name)
         metadata = {
             "subject": subject,
             "alert_type": alert_type,
             "device_id": device_id,
-            "resolution_strategy": "rule_recipients_only",
-            "direct_rule_recipient_count": len(recipients),
-            "resolved_recipient_count": len(recipients),
+            **resolution_metadata,
         }
         if not recipients:
             await self._record_no_recipient_skip(
@@ -980,6 +1040,7 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
                 failure_code="channel_disabled",
                 failure_message=f"{self.channel_name} notifications are disabled.",
                 result=result,
+                attempt_log_ids=attempt_log_ids,
             )
             logger.info(
                 "%s notifications disabled or not configured",
@@ -1000,6 +1061,7 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
                 failure_code="missing_configuration",
                 failure_message=f"{self.channel_name} provider credentials are missing.",
                 result=result,
+                attempt_log_ids=attempt_log_ids,
             )
             logger.warning(
                 "%s notifications enabled but not configured",
@@ -1019,14 +1081,23 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
         try:
             async with httpx.AsyncClient(timeout=10.0, auth=(self._account_sid, self._auth_token)) as client:
                 for recipient in recipients:
-                    attempt_log_id = await self._create_attempt_log(
-                        recipient=recipient,
-                        rule=rule,
-                        device_id=device_id,
-                        event_type=alert_type,
-                        alert_id=alert_id,
-                        metadata=metadata,
-                    )
+                    if attempt_log_ids and recipient in attempt_log_ids:
+                        attempt_log_id = attempt_log_ids[recipient]
+                    else:
+                        attempt_log_id = await self._create_attempt_log(
+                            recipient=recipient,
+                            rule=rule,
+                            device_id=device_id,
+                            event_type=alert_type,
+                            alert_id=alert_id,
+                            metadata=metadata,
+                        )
+                    if self._audit_service is not None and attempt_log_id is not None:
+                        await self._audit_service.mark_attempted(
+                            attempt_log_id,
+                            attempted_at=datetime.now(timezone.utc),
+                            metadata_json=metadata,
+                        )
                     to_value = recipient
                     from_value = self._from_number or ""
                     if self.channel_name == "whatsapp" and not from_value.startswith("whatsapp:"):
@@ -1046,6 +1117,7 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
                                 failure_code=exc.__class__.__name__,
                                 failure_message=str(exc),
                                 metadata=metadata,
+                                finalize=not defer_failure_finalization,
                             )
                         )
                         continue
@@ -1070,6 +1142,7 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
                                 failure_code=failure_code,
                                 failure_message=failure_message,
                                 metadata=metadata,
+                                finalize=not defer_failure_finalization,
                             )
                         )
                         continue
@@ -1162,10 +1235,20 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
         failure_code: str,
         failure_message: str,
         result: NotificationDispatchResult,
+        attempt_log_ids: Optional[dict[str, Optional[str]]] = None,
     ) -> None:
         for recipient in recipients:
             audit_log_id = None
-            if self._audit_service is not None:
+            existing_log_id = (attempt_log_ids or {}).get(recipient)
+            if self._audit_service is not None and existing_log_id is not None:
+                row = await self._audit_service.mark_skipped_log(
+                    existing_log_id,
+                    failure_code=failure_code,
+                    failure_message=failure_message,
+                    metadata_json=metadata,
+                )
+                audit_log_id = row.id if row is not None else existing_log_id
+            elif self._audit_service is not None:
                 row = await self._audit_service.mark_skipped(
                     channel=self.channel_name,
                     raw_recipient=recipient,
@@ -1295,9 +1378,10 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
         failure_code: Optional[str],
         failure_message: Optional[str],
         metadata: dict[str, Any],
+        finalize: bool = True,
     ) -> NotificationRecipientResult:
         failed_at = datetime.now(timezone.utc)
-        if self._audit_service is not None and attempt_log_id is not None:
+        if finalize and self._audit_service is not None and attempt_log_id is not None:
             await self._audit_service.mark_failed(
                 attempt_log_id,
                 failure_code=failure_code,
@@ -1377,6 +1461,21 @@ class NotificationAdapter:
             alert_id=kwargs.pop("alert_id", None),
             **kwargs,
         )
+
+    async def resolve_recipients(
+        self,
+        channel: str,
+        rule: Rule,
+    ) -> tuple[list[str], dict[str, int | str]]:
+        if channel not in self._adapters:
+            raise ValueError(f"Unsupported notification channel: {channel}")
+        adapter = self._adapters[channel]
+        return await adapter.resolve_recipients(rule)
+
+    def provider_name_for(self, channel: str) -> str:
+        if channel not in self._adapters:
+            raise ValueError(f"Unsupported notification channel: {channel}")
+        return self._adapters[channel].provider_name
 
     async def send(
         self,

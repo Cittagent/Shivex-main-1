@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.schemas import DeviceLifecycleRequest, LiveUpdateRequest
+from app.schemas import DeviceLifecycleRequest, LiveUpdateBatchRequest, LiveUpdateRequest
 from app.services.broadcaster import energy_broadcaster
 from app.services.energy_engine import EnergyEngine
 from shared.feature_entitlements import require_feature
@@ -42,6 +42,31 @@ async def live_update(request: Request, payload: LiveUpdateRequest, db: AsyncSes
     )
     await energy_broadcaster.publish("energy_update", result)
     return {"success": True, "data": result}
+
+
+@router.post("/live-update/batch")
+async def live_update_batch(request: Request, payload: LiveUpdateBatchRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    tenant_id = resolve_request_tenant_id(request, explicit_tenant_id=payload.tenant_id)
+    engine = EnergyEngine(db)
+    results = await engine.apply_live_updates_batch(
+        tenant_id=tenant_id,
+        updates=[
+            {
+                "telemetry": update.telemetry,
+                "dynamic_fields": update.dynamic_fields,
+                "normalized_fields": update.normalized_fields,
+            }
+            for update in payload.updates
+        ],
+    )
+    success_payloads = [
+        item["data"]
+        for item in results
+        if item.get("success") and isinstance(item.get("data"), dict)
+    ]
+    if success_payloads:
+        await energy_broadcaster.publish_many("energy_update", success_payloads)
+    return {"success": True, "results": results}
 
 
 @router.post("/device-lifecycle/{device_id}")

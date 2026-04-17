@@ -13,6 +13,17 @@ class LiveUpdateRequest(BaseModel):
     tenant_id: Optional[str] = Field(default=None)
 
 
+class LiveUpdateBatchItem(BaseModel):
+    telemetry: dict[str, Any]
+    dynamic_fields: Optional[dict[str, Any]] = None
+    normalized_fields: Optional[dict[str, Any]] = None
+
+
+class LiveUpdateBatchRequest(BaseModel):
+    tenant_id: Optional[str] = Field(default=None)
+    updates: list[LiveUpdateBatchItem] = Field(default_factory=list, min_length=1)
+
+
 class DeviceLifecycleRequest(BaseModel):
     status: str = Field(..., pattern="^(running|stopped|restarted)$")
     at: Optional[datetime] = None

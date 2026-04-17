@@ -1,1 +1,1 @@
-"""Tests for data service."""
+"""Data-service tests package."""

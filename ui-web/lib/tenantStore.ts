@@ -1,8 +1,8 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { getAccessTokenClaims } from "./browserSession.ts";
 
-const ACCESS_TOKEN_KEY = "factoryops_access_token";
 const TENANT_KEY = "factoryops_selected_tenant";
 
 type UserRole = "super_admin" | "org_admin" | "plant_manager" | "operator" | "viewer";
@@ -32,27 +32,8 @@ function emit(): void {
   }
 }
 
-function decodeClaims(token: string | null): AccessTokenClaims | null {
-  if (!token) {
-    return null;
-  }
-
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) {
-      return null;
-    }
-    return JSON.parse(atob(parts[1])) as AccessTokenClaims;
-  } catch {
-    return null;
-  }
-}
-
 function getCurrentClaims(): AccessTokenClaims | null {
-  if (!isBrowser()) {
-    return null;
-  }
-  return decodeClaims(window.sessionStorage.getItem(ACCESS_TOKEN_KEY));
+  return getAccessTokenClaims() as AccessTokenClaims | null;
 }
 
 function getClaimTenantId(claims: AccessTokenClaims | null): string | null {

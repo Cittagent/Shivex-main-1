@@ -101,6 +101,11 @@ class JobStatusResponse(AppBaseModel):
     attempt: Optional[int] = None
     worker_lease_expires_at: Optional[datetime] = None
     estimated_wait_seconds: Optional[int] = None
+    estimated_completion_seconds: Optional[int] = None
+    estimate_quality: Optional[Literal["low", "medium", "high"]] = None
+    phase: Optional[str] = None
+    phase_label: Optional[str] = None
+    phase_progress: Optional[float] = Field(None, ge=0, le=1)
 
 
 # ---------------------------------------------------------

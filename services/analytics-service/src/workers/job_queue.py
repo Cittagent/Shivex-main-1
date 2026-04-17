@@ -29,6 +29,7 @@ class QueueBackend(Protocol):
     async def get_job(self) -> Optional[Job]: ...
     async def ack_job(self, receipt: str) -> None: ...
     async def dead_letter(self, job: Job, reason: str) -> None: ...
+    async def metrics(self) -> dict[str, int]: ...
     def task_done(self) -> None: ...
     def size(self) -> int: ...
     def empty(self) -> bool: ...
@@ -57,6 +58,13 @@ class InMemoryJobQueue:
 
     async def dead_letter(self, job: Job, reason: str) -> None:
         self._logger.error("job_dead_lettered", job_id=job.job_id, attempt=job.attempt, reason=reason)
+
+    async def metrics(self) -> dict[str, int]:
+        return {
+            "queued_messages": self._queue.qsize(),
+            "claimed_messages": 0,
+            "dead_letter_messages": 0,
+        }
 
     def task_done(self) -> None:
         self._queue.task_done()
@@ -109,7 +117,8 @@ class RedisJobQueue:
             "raw_payload": raw_payload,
             "enqueued_at": datetime.now(timezone.utc).isoformat(),
         }
-        if self.size() >= self._maxsize:
+        stream_length = int(await self._redis.xlen(self._stream))
+        if stream_length >= self._maxsize:
             raise RuntimeError("queue capacity reached")
         await self._redis.xadd(self._stream, payload, maxlen=self._maxsize, approximate=True)
         self._logger.info("job_queued", job_id=job_id, attempt=attempt)
@@ -162,6 +171,25 @@ class RedisJobQueue:
         if job.receipt:
             await self.ack_job(job.receipt)
         self._logger.error("job_dead_lettered", job_id=job.job_id, attempt=job.attempt, reason=reason)
+
+    async def metrics(self) -> dict[str, int]:
+        await self._ensure_group()
+        try:
+            pending = await self._redis.xpending(self._stream, self._group)
+            if isinstance(pending, dict):
+                claimed_messages = int(pending.get("pending", 0))
+            elif isinstance(pending, (list, tuple)) and pending:
+                claimed_messages = int(pending[0] or 0)
+            else:
+                claimed_messages = 0
+        except Exception:
+            claimed_messages = 0
+
+        return {
+            "queued_messages": int(await self._redis.xlen(self._stream)),
+            "claimed_messages": claimed_messages,
+            "dead_letter_messages": int(await self._redis.xlen(self._dead_stream)),
+        }
 
     def task_done(self) -> None:
         # Redis streams don't need task_done semantics.
