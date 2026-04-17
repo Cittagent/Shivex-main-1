@@ -20,6 +20,19 @@ const AUTH_SERVICE_BASE =
   process.env.AUTH_SERVICE_BASE_URL ?? (isLocalDev ? "http://localhost:8090" : "http://auth-service:8090");
 
 const nextConfig: NextConfig = {
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "header", key: "accept", value: ".*text/html.*" }],
+        headers: [
+          { key: "Cache-Control", value: "no-store" },
+          { key: "Pragma", value: "no-cache" },
+          { key: "Expires", value: "0" },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     return [
       {

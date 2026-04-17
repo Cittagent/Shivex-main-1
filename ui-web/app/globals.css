@@ -3,6 +3,8 @@
 @tailwind utilities;
 
 :root {
+  --font-manrope: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+  --font-plex-mono: "IBM Plex Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
   --app-bg: #f4f7fb;
   --surface-0: #ffffff;
   --surface-1: #f8fafc;

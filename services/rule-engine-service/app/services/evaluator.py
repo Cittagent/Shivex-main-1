@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.rule import Rule, RuleType, CooldownMode
+from app.models.rule import CooldownMode, NotificationDeliveryStatus, Rule, RuleType
 from app.schemas.rule import EvaluationResult, TelemetryPayload
 from app.schemas.telemetry import TelemetryIn
 from app.services.rule import RuleService, AlertService
@@ -374,7 +374,7 @@ class RuleEvaluator:
 
         for channel in rule.notification_channels:
             try:
-                await self._notification_adapter.send(
+                dispatch_result = await self._notification_adapter.dispatch(
                     channel=channel,
                     message=message,
                     rule=rule,
@@ -382,14 +382,48 @@ class RuleEvaluator:
                     alert_id=alert_id,
                     alert_context=alert_context,
                 )
-                logger.info(
-                    "Notification sent",
-                    extra={
-                        "channel": channel,
-                        "rule_id": str(rule.rule_id),
-                        "device_id": device_id,
-                    },
+                sent_count = sum(
+                    1
+                    for recipient_result in dispatch_result.recipient_results
+                    if recipient_result.status in {
+                        NotificationDeliveryStatus.PROVIDER_ACCEPTED.value,
+                        NotificationDeliveryStatus.DELIVERED.value,
+                    }
                 )
+                skipped_count = sum(
+                    1
+                    for recipient_result in dispatch_result.recipient_results
+                    if recipient_result.status == NotificationDeliveryStatus.SKIPPED.value
+                )
+                if sent_count > 0:
+                    logger.info(
+                        "Notification sent",
+                        extra={
+                            "channel": channel,
+                            "rule_id": str(rule.rule_id),
+                            "device_id": device_id,
+                            "sent_count": sent_count,
+                        },
+                    )
+                elif skipped_count > 0:
+                    logger.warning(
+                        "Notification skipped",
+                        extra={
+                            "channel": channel,
+                            "rule_id": str(rule.rule_id),
+                            "device_id": device_id,
+                            "skipped_count": skipped_count,
+                        },
+                    )
+                else:
+                    logger.error(
+                        "Notification failed",
+                        extra={
+                            "channel": channel,
+                            "rule_id": str(rule.rule_id),
+                            "device_id": device_id,
+                        },
+                    )
             except Exception as e:
                 logger.error(
                     "Failed to send notification",

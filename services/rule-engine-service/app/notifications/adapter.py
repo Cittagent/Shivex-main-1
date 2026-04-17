@@ -18,6 +18,7 @@ import httpx
 
 from app.config import settings
 from app.models.rule import NotificationDeliveryStatus, Rule
+from app.repositories.notification_settings import NotificationSettingsRepository
 from app.services.notification_delivery import NotificationDeliveryAuditService
 from app.utils.recipients import normalize_phone_recipient
 from app.utils.timezone import format_platform_datetime, platform_tz_label
@@ -54,10 +55,10 @@ class NotificationDispatchResult:
     def overall_success(self) -> bool:
         if self.forced_success is not None:
             return self.forced_success
-        return all(
+        return bool(self.recipient_results) and all(
             result.status in {NotificationDeliveryStatus.PROVIDER_ACCEPTED.value, NotificationDeliveryStatus.DELIVERED.value}
             for result in self.recipient_results
-        ) or not self.recipient_results
+        )
 
 
 class NotificationChannel(ABC):
@@ -139,7 +140,7 @@ class EmailAdapter(NotificationChannel):
         self._from_address = settings.EMAIL_FROM_ADDRESS
 
     @staticmethod
-    def _recipients_for_rule(rule: Rule) -> list[str]:
+    def _direct_rule_recipients(rule: Rule) -> list[str]:
         recipients: list[str] = []
         for row in list(getattr(rule, "notification_recipients", []) or []):
             if not isinstance(row, dict):
@@ -150,6 +151,24 @@ class EmailAdapter(NotificationChannel):
                 continue
             recipients.append(value)
         return sorted(set(recipients))
+
+    async def _settings_recipients_for_rule(self, rule: Rule) -> list[str]:
+        channels = {str(channel).strip().lower() for channel in list(rule.notification_channels or [])}
+        if "email" not in channels or self._audit_service is None:
+            return []
+        repository = NotificationSettingsRepository(self._audit_service._session, self._audit_service._ctx)
+        return sorted({recipient.strip().lower() for recipient in await repository.list_active_channel_values("email")})
+
+    async def _resolve_recipients(self, rule: Rule) -> tuple[list[str], dict[str, int | str]]:
+        direct_recipients = self._direct_rule_recipients(rule)
+        settings_recipients = await self._settings_recipients_for_rule(rule)
+        resolved = sorted(set(direct_recipients) | set(settings_recipients))
+        return resolved, {
+            "resolution_strategy": "merge_rule_and_tenant_settings",
+            "direct_rule_recipient_count": len(direct_recipients),
+            "tenant_settings_recipient_count": len(settings_recipients),
+            "resolved_recipient_count": len(resolved),
+        }
 
     async def dispatch_alert(
         self,
@@ -164,20 +183,31 @@ class EmailAdapter(NotificationChannel):
         scope_label: Optional[str] = None,
         **kwargs: Any,
     ) -> NotificationDispatchResult:
-        recipients = self._recipients_for_rule(rule)
+        recipients, resolution_metadata = await self._resolve_recipients(rule)
         result = NotificationDispatchResult(channel=self.channel_name, provider_name=self.provider_name)
-        if not recipients:
-            logger.warning(
-                "Email recipients not configured on rule",
-                extra={"channel": "email", "rule_id": str(rule.rule_id) if rule.rule_id else None},
-            )
-            return result
-
         metadata = {
             "subject": subject,
             "alert_type": alert_type,
             "device_id": device_id,
+            **resolution_metadata,
         }
+        if not recipients:
+            await self._record_no_recipient_skip(
+                rule=rule,
+                device_id=device_id,
+                event_type=alert_type,
+                alert_id=alert_id,
+                metadata=metadata,
+                result=result,
+                failure_code="NO_ACTIVE_RECIPIENTS",
+                failure_message="No active recipients configured for email channel.",
+            )
+            logger.warning(
+                "Email notification skipped because no active recipients were resolved",
+                extra={"channel": "email", "rule_id": str(rule.rule_id) if rule.rule_id else None},
+            )
+            return result
+
         if not self._enabled:
             await self._record_skipped_batch(
                 recipients=recipients,
@@ -577,6 +607,47 @@ class EmailAdapter(NotificationChannel):
                 )
             )
 
+    async def _record_no_recipient_skip(
+        self,
+        *,
+        rule: Rule,
+        device_id: str,
+        event_type: str,
+        alert_id: Optional[str],
+        metadata: dict[str, Any],
+        failure_code: str,
+        failure_message: str,
+        result: NotificationDispatchResult,
+    ) -> None:
+        audit_log_id = None
+        if self._audit_service is not None:
+            row = await self._audit_service.mark_skipped(
+                channel=self.channel_name,
+                raw_recipient="",
+                provider_name=self.provider_name,
+                event_type=event_type,
+                rule_id=str(rule.rule_id) if rule.rule_id else None,
+                alert_id=alert_id,
+                device_id=device_id,
+                failure_code=failure_code,
+                failure_message=failure_message,
+                metadata_json=metadata,
+            )
+            audit_log_id = row.id
+        result.recipient_results.append(
+            NotificationRecipientResult(
+                recipient="",
+                channel=self.channel_name,
+                provider_name=self.provider_name,
+                status=NotificationDeliveryStatus.SKIPPED.value,
+                attempted_at=datetime.now(timezone.utc),
+                failure_code=failure_code,
+                failure_message=failure_message,
+                audit_log_id=audit_log_id,
+                metadata_json=metadata,
+            )
+        )
+
     async def _create_attempt_logs(
         self,
         *,
@@ -872,19 +943,32 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
     ) -> NotificationDispatchResult:
         recipients = self._recipients_for_rule(rule, self.channel_name)
         result = NotificationDispatchResult(channel=self.channel_name, provider_name=self.provider_name)
+        metadata = {
+            "subject": subject,
+            "alert_type": alert_type,
+            "device_id": device_id,
+            "resolution_strategy": "rule_recipients_only",
+            "direct_rule_recipient_count": len(recipients),
+            "resolved_recipient_count": len(recipients),
+        }
         if not recipients:
+            await self._record_no_recipient_skip(
+                rule=rule,
+                device_id=device_id,
+                event_type=alert_type,
+                alert_id=alert_id,
+                metadata=metadata,
+                result=result,
+                failure_code="NO_ACTIVE_RECIPIENTS",
+                failure_message=f"No active recipients configured for {self.channel_name} channel.",
+            )
             logger.warning(
-                "%s recipients not configured on rule",
+                "%s notification skipped because no active recipients were resolved",
                 self.channel_name.capitalize(),
                 extra={"channel": self.channel_name, "rule_id": str(rule.rule_id) if rule.rule_id else None},
             )
             return result
 
-        metadata = {
-            "subject": subject,
-            "alert_type": alert_type,
-            "device_id": device_id,
-        }
         if not self._enabled:
             await self._record_skipped_batch(
                 recipients=recipients,
@@ -1108,6 +1192,47 @@ class _TwilioChannelAdapter(NotificationChannel, ABC):
                     metadata_json=metadata,
                 )
             )
+
+    async def _record_no_recipient_skip(
+        self,
+        *,
+        rule: Rule,
+        device_id: str,
+        event_type: str,
+        alert_id: Optional[str],
+        metadata: dict[str, Any],
+        failure_code: str,
+        failure_message: str,
+        result: NotificationDispatchResult,
+    ) -> None:
+        audit_log_id = None
+        if self._audit_service is not None:
+            row = await self._audit_service.mark_skipped(
+                channel=self.channel_name,
+                raw_recipient="",
+                provider_name=self.provider_name,
+                event_type=event_type,
+                rule_id=str(rule.rule_id) if rule.rule_id else None,
+                alert_id=alert_id,
+                device_id=device_id,
+                failure_code=failure_code,
+                failure_message=failure_message,
+                metadata_json=metadata,
+            )
+            audit_log_id = row.id
+        result.recipient_results.append(
+            NotificationRecipientResult(
+                recipient="",
+                channel=self.channel_name,
+                provider_name=self.provider_name,
+                status=NotificationDeliveryStatus.SKIPPED.value,
+                attempted_at=datetime.now(timezone.utc),
+                failure_code=failure_code,
+                failure_message=failure_message,
+                audit_log_id=audit_log_id,
+                metadata_json=metadata,
+            )
+        )
 
     async def _create_attempt_log(
         self,

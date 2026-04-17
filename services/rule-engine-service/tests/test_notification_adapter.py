@@ -7,6 +7,7 @@ from email import message_from_string
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 RULE_SERVICE_ROOT = Path(__file__).resolve().parents[1]
 SERVICES_ROOT = RULE_SERVICE_ROOT.parent
@@ -18,8 +19,12 @@ sys.path.insert(0, str(RULE_SERVICE_ROOT))
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 
-from app.models.rule import Rule, RuleScope, RuleStatus, RuleType
+from app.database import Base
+from app.models.rule import NotificationChannelSetting, Rule, RuleScope, RuleStatus, RuleType
 from app.notifications.adapter import EmailAdapter, NotificationAdapter, SmsAdapter, WhatsAppAdapter
+from app.services.notification_delivery import NotificationDeliveryAuditService
+from services.shared.tenant_context import TenantContext
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
 def _make_rule(*, rule_id: str, recipients: list[dict]) -> Rule:
@@ -41,6 +46,28 @@ def _make_rule(*, rule_id: str, recipients: list[dict]) -> Rule:
         created_at=now,
         updated_at=now,
     )
+
+
+def _ctx() -> TenantContext:
+    return TenantContext(
+        tenant_id="TENANT-A",
+        user_id="test-user",
+        role="tenant_admin",
+        plant_ids=["PLANT-1"],
+        is_super_admin=False,
+    )
+
+
+@pytest_asyncio.fixture
+async def session_factory():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
 
 
 class _FakeResponse:
@@ -155,28 +182,68 @@ async def test_email_adapter_sends_only_rule_attached_recipients(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_email_adapter_skips_send_when_rule_has_no_email_recipients(monkeypatch):
+async def test_email_adapter_uses_tenant_settings_recipients_when_rule_has_no_direct_recipients(session_factory, monkeypatch):
     _FakeSMTP.sent_messages = []
     monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
 
-    adapter = EmailAdapter()
-    adapter._enabled = True
-    adapter._smtp_host = "smtp.example.com"
-    adapter._smtp_port = 587
-    adapter._smtp_username = "user"
-    adapter._smtp_password = "pass"
-    adapter._from_address = "alerts@example.com"
+    async with session_factory() as session:
+        session.add_all(
+            [
+                NotificationChannelSetting(tenant_id="TENANT-A", channel_type="email", value="ops@example.com", is_active=True),
+                NotificationChannelSetting(tenant_id="TENANT-A", channel_type="email", value="guard@example.com", is_active=True),
+            ]
+        )
+        await session.commit()
 
-    rule = _make_rule(rule_id="rule-no-recipients", recipients=[])
+        adapter = EmailAdapter(audit_service=NotificationDeliveryAuditService(session, _ctx()))
+        adapter._enabled = True
+        adapter._smtp_host = "smtp.example.com"
+        adapter._smtp_port = 587
+        adapter._smtp_username = "user"
+        adapter._smtp_password = "pass"
+        adapter._from_address = "alerts@example.com"
 
-    sent = await adapter.send_alert(
-        subject="No recipients",
-        message="Alert fired",
-        rule=rule,
-        device_id="P1",
-    )
+        rule = _make_rule(rule_id="rule-settings-recipients", recipients=[])
+
+        sent = await adapter.send_alert(
+            subject="Tenant recipients",
+            message="Alert fired",
+            rule=rule,
+            device_id="P1",
+        )
 
     assert sent is True
+    assert len(_FakeSMTP.sent_messages) == 2
+    assert sorted(message["recipients"] for message in _FakeSMTP.sent_messages) == [
+        ["guard@example.com"],
+        ["ops@example.com"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_email_adapter_skips_send_when_no_email_recipients_exist(session_factory, monkeypatch):
+    _FakeSMTP.sent_messages = []
+    monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
+
+    async with session_factory() as session:
+        adapter = EmailAdapter(audit_service=NotificationDeliveryAuditService(session, _ctx()))
+        adapter._enabled = True
+        adapter._smtp_host = "smtp.example.com"
+        adapter._smtp_port = 587
+        adapter._smtp_username = "user"
+        adapter._smtp_password = "pass"
+        adapter._from_address = "alerts@example.com"
+
+        rule = _make_rule(rule_id="rule-no-recipients", recipients=[])
+
+        sent = await adapter.send_alert(
+            subject="No recipients",
+            message="Alert fired",
+            rule=rule,
+            device_id="P1",
+        )
+
+    assert sent is False
     assert _FakeSMTP.sent_messages == []
 
 

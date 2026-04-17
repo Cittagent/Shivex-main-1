@@ -1,0 +1,4 @@
+tenant_id=SH00000001
+cutoff_utc=2026-04-16T19:43:20Z
+policy=ignore_any_report_or_pdf_created_before_cutoff
+reset_scope=minio_prefix:reports/SH00000001 + mysql:energy_reports,scheduled_reports

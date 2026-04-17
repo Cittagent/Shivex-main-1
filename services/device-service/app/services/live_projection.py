@@ -740,7 +740,48 @@ class LiveProjectionService:
             closed_reason="telemetry_timeout",
             source="timeout_reconciler",
         )
-        return {"closed_intervals": len(closed_rows)}
+        persisted_state_updated = await self._persist_timed_out_live_state(
+            tenant_id=tenant_id,
+            device_id=device_id,
+        )
+        return {
+            "closed_intervals": len(closed_rows),
+            "persisted_state_updated": persisted_state_updated,
+        }
+
+    async def _persist_timed_out_live_state(
+        self,
+        *,
+        tenant_id: str,
+        device_id: str,
+    ) -> bool:
+        state = await self._get_or_create_state(device_id, tenant_id)
+        desired_updates = {
+            "runtime_status": RuntimeStatus.STOPPED.value,
+            "load_state": "unknown",
+            "idle_streak_started_at": None,
+            "idle_streak_duration_sec": 0,
+        }
+        if (
+            state.runtime_status == desired_updates["runtime_status"]
+            and state.load_state == desired_updates["load_state"]
+            and state.idle_streak_started_at is None
+            and int(state.idle_streak_duration_sec or 0) == desired_updates["idle_streak_duration_sec"]
+        ):
+            return False
+
+        success = await update_live_state_with_lock(
+            self._session,
+            device_id,
+            tenant_id,
+            desired_updates,
+        )
+        if success:
+            state.runtime_status = desired_updates["runtime_status"]
+            state.load_state = desired_updates["load_state"]
+            state.idle_streak_started_at = desired_updates["idle_streak_started_at"]
+            state.idle_streak_duration_sec = desired_updates["idle_streak_duration_sec"]
+        return success
 
     async def backfill_first_telemetry_timestamps(self, max_devices: int = 500) -> dict[str, Any]:
         """Backfill immutable activation timestamps from historical telemetry."""

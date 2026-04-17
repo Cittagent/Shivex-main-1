@@ -25,7 +25,7 @@ from app.schemas.rule import (
     RuleCreate,
     RuleUpdate,
 )
-from app.services.rule import RuleService
+from app.services.rule import DuplicateRuleError, RuleService
 from app.services.device_scope import DeviceScopeService
 from app.config import settings
 from app.api.v1.alerts import _resolve_accessible_device_ids as resolve_alert_accessible_device_ids
@@ -424,6 +424,35 @@ async def test_rule_service_rejects_selected_devices_outside_scope(session_facto
                 ),
                 accessible_device_ids=["P1"],
             )
+
+
+@pytest.mark.asyncio
+async def test_rule_service_blocks_duplicate_active_rule_creation(session_factory):
+    async with session_factory() as session:
+        service = RuleService(session, _ctx())
+        payload = RuleCreate(
+            tenant_id="TENANT-A",
+            rule_name="Duplicate Guard",
+            scope=RuleScope.SELECTED_DEVICES,
+            device_ids=["P1"],
+            property="power",
+            condition=ConditionOperator.GREATER_THAN,
+            threshold=5.0,
+            notification_channels=[NotificationChannel.EMAIL],
+        )
+
+        created = await service.create_rule(payload, accessible_device_ids=["P1"])
+        await session.commit()
+
+        with pytest.raises(DuplicateRuleError, match="An identical active rule already exists"):
+            await service.create_rule(payload, accessible_device_ids=["P1"])
+
+        repo = RuleRepository(session, _ctx())
+        listed, total = await repo.list_rules(accessible_device_ids=["P1"], page=1, page_size=20)
+
+    assert created.rule_name == "Duplicate Guard"
+    assert total == 1
+    assert [row.rule_name for row in listed] == ["Duplicate Guard"]
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,9 @@
 """Rule service layer - business logic."""
 
-from typing import Optional, List
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional, List, Any
 from uuid import UUID
 import logging
 
@@ -26,6 +29,39 @@ from app.utils.cooldown import normalize_cooldown_values
 from services.shared.tenant_context import TenantContext
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RuleDuplicateSignature:
+    """Normalized active-rule signature used for server-side duplicate protection."""
+
+    rule_name: str
+    description: Optional[str]
+    scope: str
+    device_ids: tuple[str, ...]
+    property: Optional[str]
+    condition: Optional[str]
+    threshold: Optional[float]
+    rule_type: str
+    cooldown_mode: str
+    cooldown_unit: Optional[str]
+    cooldown_minutes: int
+    cooldown_seconds: int
+    time_window_start: Optional[str]
+    time_window_end: Optional[str]
+    timezone: Optional[str]
+    time_condition: Optional[str]
+    duration_minutes: Optional[int]
+    notification_channels: tuple[str, ...]
+    notification_recipients: tuple[tuple[str, str], ...]
+
+
+class DuplicateRuleError(ValueError):
+    """Raised when an identical active rule already exists for the tenant."""
+
+    def __init__(self, existing_rule_id: str, rule_name: str):
+        self.existing_rule_id = existing_rule_id
+        super().__init__(f"An identical active rule already exists for '{rule_name}'.")
 
 
 class RuleService:
@@ -72,6 +108,102 @@ class RuleService:
             seen.add(key)
             normalized.append({"channel": channel, "value": value})
         return normalized
+
+    @staticmethod
+    def _normalize_optional_text(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @staticmethod
+    def _normalize_optional_float(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        return float(value)
+
+    @classmethod
+    def _build_duplicate_signature(
+        cls,
+        *,
+        rule_name: str,
+        description: Optional[str],
+        scope: str,
+        device_ids: list[str],
+        property: Optional[str],
+        condition: Optional[str],
+        threshold: Optional[float],
+        rule_type: str,
+        cooldown_mode: str,
+        cooldown_unit: Optional[str],
+        cooldown_minutes: Optional[int],
+        cooldown_seconds: Optional[int],
+        time_window_start: Optional[str],
+        time_window_end: Optional[str],
+        timezone: Optional[str],
+        time_condition: Optional[str],
+        duration_minutes: Optional[int],
+        notification_channels: list[str],
+        notification_recipients: list[dict[str, str]],
+    ) -> RuleDuplicateSignature:
+        normalized_recipients = sorted(
+            (
+                str(row.get("channel") or "").strip(),
+                str(row.get("value") or "").strip().lower(),
+            )
+            for row in notification_recipients
+            if str(row.get("channel") or "").strip() and str(row.get("value") or "").strip()
+        )
+        return RuleDuplicateSignature(
+            rule_name=str(rule_name).strip(),
+            description=cls._normalize_optional_text(description),
+            scope=str(scope).strip(),
+            device_ids=tuple(cls._ordered_unique_device_ids(list(device_ids or []))),
+            property=cls._normalize_optional_text(property),
+            condition=cls._normalize_optional_text(condition),
+            threshold=cls._normalize_optional_float(threshold),
+            rule_type=str(rule_type).strip(),
+            cooldown_mode=str(cooldown_mode).strip(),
+            cooldown_unit=cls._normalize_optional_text(cooldown_unit),
+            cooldown_minutes=int(cooldown_minutes or 0),
+            cooldown_seconds=int(cooldown_seconds or 0),
+            time_window_start=cls._normalize_optional_text(time_window_start),
+            time_window_end=cls._normalize_optional_text(time_window_end),
+            timezone=cls._normalize_optional_text(timezone),
+            time_condition=cls._normalize_optional_text(time_condition),
+            duration_minutes=None if duration_minutes is None else int(duration_minutes),
+            notification_channels=tuple(sorted(str(channel).strip() for channel in notification_channels if str(channel).strip())),
+            notification_recipients=tuple(normalized_recipients),
+        )
+
+    @classmethod
+    def _build_duplicate_signature_for_rule(cls, rule: Rule) -> RuleDuplicateSignature:
+        return cls._build_duplicate_signature(
+            rule_name=rule.rule_name,
+            description=rule.description,
+            scope=str(rule.scope.value) if hasattr(rule.scope, "value") else str(rule.scope),
+            device_ids=list(rule.device_ids or []),
+            property=rule.property,
+            condition=str(rule.condition.value) if hasattr(rule.condition, "value") else rule.condition,
+            threshold=rule.threshold,
+            rule_type=str(rule.rule_type.value) if hasattr(rule.rule_type, "value") else str(rule.rule_type),
+            cooldown_mode=str(rule.cooldown_mode.value) if hasattr(rule.cooldown_mode, "value") else str(rule.cooldown_mode),
+            cooldown_unit=str(rule.cooldown_unit.value) if hasattr(rule.cooldown_unit, "value") else rule.cooldown_unit,
+            cooldown_minutes=rule.cooldown_minutes,
+            cooldown_seconds=rule.cooldown_seconds,
+            time_window_start=rule.time_window_start,
+            time_window_end=rule.time_window_end,
+            timezone=rule.timezone,
+            time_condition=str(rule.time_condition.value) if hasattr(rule.time_condition, "value") else rule.time_condition,
+            duration_minutes=rule.duration_minutes,
+            notification_channels=list(rule.notification_channels or []),
+            notification_recipients=list(rule.notification_recipients or []),
+        )
+
+    async def _ensure_no_duplicate_active_rule(self, signature: RuleDuplicateSignature) -> None:
+        for existing_rule in await self._repository.list_active_rules():
+            if self._build_duplicate_signature_for_rule(existing_rule) == signature:
+                raise DuplicateRuleError(str(existing_rule.rule_id), existing_rule.rule_name)
 
     @staticmethod
     def _is_manageable_by_scope(rule: Rule, accessible_device_ids: Optional[list[str]]) -> bool:
@@ -145,6 +277,29 @@ class RuleService:
             scope=rule_data.scope.value,
             device_ids=list(rule_data.device_ids or []),
             accessible_device_ids=accessible_device_ids,
+        )
+        await self._ensure_no_duplicate_active_rule(
+            self._build_duplicate_signature(
+                rule_name=rule_data.rule_name,
+                description=rule_data.description,
+                scope=scope_value,
+                device_ids=normalized_device_ids,
+                property=rule_data.property,
+                condition=rule_data.condition.value if rule_data.condition else None,
+                threshold=rule_data.threshold,
+                rule_type=rule_data.rule_type.value,
+                cooldown_mode=cooldown_mode,
+                cooldown_unit=cooldown_unit,
+                cooldown_minutes=cooldown_minutes,
+                cooldown_seconds=cooldown_seconds,
+                time_window_start=rule_data.time_window_start,
+                time_window_end=rule_data.time_window_end,
+                timezone=rule_data.timezone,
+                time_condition=rule_data.time_condition.value if rule_data.time_condition else None,
+                duration_minutes=rule_data.duration_minutes,
+                notification_channels=notification_channels,
+                notification_recipients=notification_recipients,
+            )
         )
 
         rule = Rule(

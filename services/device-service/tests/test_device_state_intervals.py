@@ -125,6 +125,10 @@ async def _all_device_intervals(session) -> list[DeviceStateInterval]:
     return list(result.scalars().all())
 
 
+async def _live_state(session) -> DeviceLiveState | None:
+    return await session.get(DeviceLiveState, {"device_id": "DEVICE-1", "tenant_id": "TENANT-A"})
+
+
 @pytest.mark.asyncio
 async def test_idle_transition_opens_and_closes_interval_rows(session_factory, monkeypatch):
     async with session_factory() as session:
@@ -323,14 +327,21 @@ async def test_runtime_on_interval_closes_when_telemetry_becomes_stale(session_f
         )
 
         runtime_intervals = await _intervals(session, DeviceStateIntervalType.RUNTIME_ON)
+        live_state = await _live_state(session)
         expected_end = sample_ts + timedelta(seconds=TELEMETRY_TIMEOUT_SECONDS)
         assert summary["closed_intervals"] == 1
+        assert summary["persisted_state_updated"] is True
         assert len(runtime_intervals) == 1
         assert runtime_intervals[0].is_open is False
         assert runtime_intervals[0].ended_at == expected_end
         assert runtime_intervals[0].duration_sec == TELEMETRY_TIMEOUT_SECONDS
         assert runtime_intervals[0].closed_reason == "telemetry_timeout"
         assert runtime_intervals[0].source == "timeout_reconciler"
+        assert live_state is not None
+        assert live_state.runtime_status == "stopped"
+        assert live_state.load_state == "unknown"
+        assert live_state.idle_streak_started_at is None
+        assert live_state.idle_streak_duration_sec == 0
 
 
 @pytest.mark.asyncio
@@ -409,10 +420,16 @@ async def test_timeout_reconciliation_is_idempotent_across_repeated_runs(session
 
         idle_intervals = await _intervals(session, DeviceStateIntervalType.IDLE)
         runtime_intervals = await _intervals(session, DeviceStateIntervalType.RUNTIME_ON)
+        live_state = await _live_state(session)
         assert first["closed_intervals"] == 2
+        assert first["persisted_state_updated"] is True
         assert second["closed_intervals"] == 0
+        assert second["persisted_state_updated"] is False
         assert len(idle_intervals) == 1
         assert len(runtime_intervals) == 1
+        assert live_state is not None
+        assert live_state.runtime_status == "stopped"
+        assert live_state.load_state == "unknown"
 
 
 @pytest.mark.asyncio

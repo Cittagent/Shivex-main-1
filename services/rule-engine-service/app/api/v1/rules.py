@@ -22,10 +22,11 @@ from app.schemas.rule import (
     RuleStatus,
     TelemetryPayload,
 )
-from app.services.rule import RuleService
+from app.services.rule import DuplicateRuleError, RuleService
 from app.services.evaluator import RuleEvaluator
 from app.services.device_scope import DeviceScopeService
 from app.notifications.adapter import NotificationAdapter
+from app.models.rule import NotificationDeliveryStatus
 from app.services.notification_delivery import NotificationDeliveryAuditService
 from services.shared.tenant_context import TenantContext
 import logging
@@ -166,6 +167,7 @@ async def list_rules(
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {"model": ErrorResponse, "description": "Validation error"},
+        409: {"model": ErrorResponse, "description": "Duplicate rule"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
     },
 )
@@ -197,7 +199,7 @@ async def create_rule(
                 adapter = NotificationAdapter(
                     audit_service=NotificationDeliveryAuditService(db, ctx)
                 )
-                await adapter.send_alert(
+                dispatch_result = await adapter.dispatch_alert(
                     channel="email",
                     subject=f"Rule Created: {rule.rule_name}",
                     message=f"Your rule '{rule.rule_name}' has been successfully created and is now {status_value}.",
@@ -207,14 +209,48 @@ async def create_rule(
                     scope_label=scope_label,
                     alert_type="rule_created"
                 )
-                logger.info(
-                    "Rule creation notification sent",
-                    extra={
-                        "rule_id": str(rule.rule_id),
-                        "rule_name": rule.rule_name,
-                        "channels": rule.notification_channels,
+                sent_count = sum(
+                    1
+                    for recipient_result in dispatch_result.recipient_results
+                    if recipient_result.status in {
+                        NotificationDeliveryStatus.PROVIDER_ACCEPTED.value,
+                        NotificationDeliveryStatus.DELIVERED.value,
                     }
                 )
+                skipped_count = sum(
+                    1
+                    for recipient_result in dispatch_result.recipient_results
+                    if recipient_result.status == NotificationDeliveryStatus.SKIPPED.value
+                )
+                if sent_count > 0:
+                    logger.info(
+                        "Rule creation notification sent",
+                        extra={
+                            "rule_id": str(rule.rule_id),
+                            "rule_name": rule.rule_name,
+                            "channels": rule.notification_channels,
+                            "sent_count": sent_count,
+                        }
+                    )
+                elif skipped_count > 0:
+                    logger.warning(
+                        "Rule creation notification skipped",
+                        extra={
+                            "rule_id": str(rule.rule_id),
+                            "rule_name": rule.rule_name,
+                            "channels": rule.notification_channels,
+                            "skipped_count": skipped_count,
+                        }
+                    )
+                else:
+                    logger.error(
+                        "Rule creation notification failed",
+                        extra={
+                            "rule_id": str(rule.rule_id),
+                            "rule_name": rule.rule_name,
+                            "channels": rule.notification_channels,
+                        }
+                    )
                 await db.commit()
             except Exception as e:
                 logger.error(
@@ -241,6 +277,26 @@ async def create_rule(
                 "error": {
                     "code": "RULE_SCOPE_FORBIDDEN",
                     "message": str(e),
+                },
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        )
+    except DuplicateRuleError as e:
+        logger.warning(
+            "Duplicate rule creation blocked",
+            extra={
+                "rule_name": rule_data.rule_name,
+                "existing_rule_id": e.existing_rule_id,
+            }
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "success": False,
+                "error": {
+                    "code": "RULE_ALREADY_EXISTS",
+                    "message": str(e),
+                    "existing_rule_id": e.existing_rule_id,
                 },
                 "timestamp": datetime.utcnow().isoformat(),
             },

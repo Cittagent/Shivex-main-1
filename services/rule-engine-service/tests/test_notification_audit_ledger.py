@@ -24,6 +24,7 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 from app.database import Base
 from app.models.rule import (
     Alert,
+    NotificationChannelSetting,
     NotificationDeliveryLog,
     NotificationDeliveryStatus,
     Rule,
@@ -418,6 +419,110 @@ async def test_monthly_summary_query_returns_grouped_counts(session_factory):
     assert [(row.channel, row.attempted_count, row.accepted_count, row.failed_count, row.billable_count) for row in summary] == [
         ("email", 1, 1, 0, 1),
         ("sms", 1, 0, 1, 0),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_email_uses_tenant_notification_settings_and_counts_stay_billable_safe(session_factory, monkeypatch):
+    _FakeSMTP.sent_messages = []
+    _FakeSMTP.refusal_map = {}
+    _FakeSMTP.raise_error = None
+    monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
+
+    async with session_factory() as session:
+        session.add_all(
+            [
+                NotificationChannelSetting(tenant_id="TENANT-A", channel_type="email", value="ops@example.com", is_active=True),
+                NotificationChannelSetting(tenant_id="TENANT-A", channel_type="email", value="guard@example.com", is_active=True),
+            ]
+        )
+        await session.commit()
+
+        adapter = NotificationAdapter(audit_service=NotificationDeliveryAuditService(session, _ctx()))
+        email_adapter = adapter._adapters["email"]
+        email_adapter._enabled = True
+        email_adapter._smtp_host = "smtp.example.com"
+        email_adapter._smtp_port = 587
+        email_adapter._smtp_username = "user"
+        email_adapter._smtp_password = "pass"
+        email_adapter._from_address = "alerts@example.com"
+
+        rule = _make_rule(
+            rule_id="rule-settings-email",
+            recipients=[],
+            channels=["email"],
+        )
+
+        sent = await adapter.send_alert(
+            channel="email",
+            subject="Alert",
+            message="Threshold exceeded",
+            rule=rule,
+            device_id="DEVICE-1",
+        )
+        await session.commit()
+
+        rows = await _all_logs(session)
+        summary = await NotificationDeliveryAuditService(session, _ctx()).summarize_for_month(
+            year=datetime.now(timezone.utc).year,
+            month=datetime.now(timezone.utc).month,
+        )
+
+    assert sent is True
+    assert len(rows) == 2
+    assert all(row.status == NotificationDeliveryStatus.PROVIDER_ACCEPTED.value for row in rows)
+    assert [(row.channel, row.attempted_count, row.accepted_count, row.failed_count, row.skipped_count, row.billable_count) for row in summary] == [
+        ("email", 2, 2, 0, 0, 2),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_recipient_dispatch_is_recorded_as_skipped_and_not_success(session_factory, monkeypatch):
+    _FakeSMTP.sent_messages = []
+    _FakeSMTP.refusal_map = {}
+    _FakeSMTP.raise_error = None
+    monkeypatch.setattr("app.notifications.adapter.smtplib.SMTP", _FakeSMTP)
+
+    async with session_factory() as session:
+        adapter = NotificationAdapter(audit_service=NotificationDeliveryAuditService(session, _ctx()))
+        email_adapter = adapter._adapters["email"]
+        email_adapter._enabled = True
+        email_adapter._smtp_host = "smtp.example.com"
+        email_adapter._smtp_port = 587
+        email_adapter._smtp_username = "user"
+        email_adapter._smtp_password = "pass"
+        email_adapter._from_address = "alerts@example.com"
+
+        rule = _make_rule(
+            rule_id="rule-no-recipients",
+            recipients=[],
+            channels=["email"],
+        )
+
+        sent = await adapter.send_alert(
+            channel="email",
+            subject="Alert",
+            message="Threshold exceeded",
+            rule=rule,
+            device_id="DEVICE-1",
+        )
+        await session.commit()
+
+        rows = await _all_logs(session)
+        summary = await NotificationDeliveryAuditService(session, _ctx()).summarize_for_month(
+            year=datetime.now(timezone.utc).year,
+            month=datetime.now(timezone.utc).month,
+        )
+
+    assert sent is False
+    assert _FakeSMTP.sent_messages == []
+    assert len(rows) == 1
+    assert rows[0].status == NotificationDeliveryStatus.SKIPPED.value
+    assert rows[0].failure_code == "NO_ACTIVE_RECIPIENTS"
+    assert rows[0].failure_message == "No active recipients configured for email channel."
+    assert rows[0].recipient_masked == ""
+    assert [(row.channel, row.attempted_count, row.accepted_count, row.failed_count, row.skipped_count, row.billable_count) for row in summary] == [
+        ("email", 1, 0, 0, 1, 0),
     ]
 
 

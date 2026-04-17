@@ -62,6 +62,16 @@ class RuleRepository(TenantScopedRepository[Rule]):
         await self._session.flush()
         await self._session.refresh(rule)
         return rule
+
+    async def list_active_rules(self) -> list[Rule]:
+        """Return active, non-deleted rules for duplicate detection."""
+        statement = select(Rule).where(
+            Rule.status == RuleStatus.ACTIVE,
+            Rule.deleted_at.is_(None),
+        )
+        statement = self._apply_tenant_scope_select(statement)
+        result = await self._session.execute(statement)
+        return list(result.scalars().all())
     
     async def get_by_id(
         self, 

@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Optional, List, Dict, Any
 import uuid
 
-from sqlalchemy import String, DateTime, Float, Integer, Text, ForeignKey, JSON, Index, CheckConstraint, UniqueConstraint
+from sqlalchemy import Boolean, String, DateTime, Float, Integer, Text, ForeignKey, JSON, Index, CheckConstraint, UniqueConstraint
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -71,6 +71,23 @@ class NotificationDeliveryStatus(str, Enum):
     DELIVERED = "delivered"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class NotificationChannelSetting(Base):
+    """Tenant-scoped notification channel settings mirrored from reporting-service."""
+
+    __tablename__ = "notification_channels"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "channel_type", "value", name="uq_notification_channels_tenant_type_value"),
+        Index("ix_notification_channels_tenant_channel_active", "tenant_id", "channel_type", "is_active"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False, index=True)
+    channel_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    value: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
 
 class RuleTriggerState(Base):

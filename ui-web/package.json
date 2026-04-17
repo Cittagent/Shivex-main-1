@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "npm run lint:hooks && next build",
-    "start": "next start",
+    "start": "node server.mjs",
     "lint": "eslint",
     "lint:hooks": "eslint --no-config-lookup --ext .ts,.tsx --parser @typescript-eslint/parser --parser-options '{\"ecmaVersion\":\"latest\",\"sourceType\":\"module\",\"ecmaFeatures\":{\"jsx\":true}}' --plugin react-hooks --rule 'react-hooks/rules-of-hooks:error' --report-unused-disable-directives-severity off --max-warnings=0 app",
     "test:unit": "node --experimental-specifier-resolution=node --test tests/unit/*.test.ts",
