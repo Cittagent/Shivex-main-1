@@ -39,6 +39,7 @@ from services.shared.tariff_client import fetch_tenant_tariff
 from services.shared.tenant_context import TenantContext, build_internal_headers
 from app.services.load_thresholds import classify_current_band, resolve_device_thresholds
 from app.services.runtime_state import resolve_load_state, resolve_runtime_status
+from app.services.status_model import resolve_operational_status
 
 try:  # pragma: no cover - optional during local unit tests
     from minio import Minio
@@ -841,6 +842,7 @@ class DashboardService:
                 Device.device_id,
                 Device.device_name,
                 Device.device_type,
+                Device.plant_id,
                 Device.location,
                 Device.full_load_current_a,
                 Device.idle_threshold_pct_of_fla,
@@ -893,9 +895,16 @@ class DashboardService:
                     "device_id": row.device_id,
                     "device_name": row.device_name,
                     "device_type": row.device_type,
+                    "plant_id": row.plant_id,
                     "runtime_status": runtime_status,
                     "load_state": load_state,
                     "current_band": current_band,
+                    "operational_status": resolve_operational_status(
+                        runtime_status=runtime_status,
+                        load_state=load_state,
+                        current_band=current_band,
+                        has_telemetry=last_seen_timestamp is not None,
+                    ),
                     "location": row.location,
                     "first_telemetry_timestamp": _iso_utc(row.first_telemetry_timestamp),
                     "last_seen_timestamp": last_seen_timestamp.isoformat() if last_seen_timestamp else None,
@@ -1196,6 +1205,13 @@ class DashboardService:
             health_values = [float(d["health_score"]) for d in devices if d.get("health_score") is not None]
             uptime_values = [float(d["uptime_percentage"]) for d in devices if d.get("uptime_percentage") is not None]
             running_count = sum(1 for d in devices if d.get("runtime_status") == RuntimeStatus.RUNNING.value)
+            status_counts = {
+                "unknown": sum(1 for d in devices if d.get("operational_status") == "unknown"),
+                "stopped": sum(1 for d in devices if d.get("operational_status") == "stopped"),
+                "idle": sum(1 for d in devices if d.get("operational_status") == "idle"),
+                "running": sum(1 for d in devices if d.get("operational_status") == "running"),
+                "overconsumption": sum(1 for d in devices if d.get("operational_status") == "overconsumption"),
+            }
             uptime_configured_count = sum(1 for d in devices if bool(d.get("has_uptime_config")))
             total_devices = len(devices)
 
@@ -1270,6 +1286,11 @@ class DashboardService:
                     "total_devices": total_devices,
                     "running_devices": running_count,
                     "stopped_devices": max(total_devices - running_count, 0),
+                    "idle_devices": status_counts["idle"],
+                    "in_load_devices": status_counts["running"],
+                    "overconsumption_devices": status_counts["overconsumption"],
+                    "unknown_devices": status_counts["unknown"],
+                    "status_counts": status_counts,
                     "devices_with_health_data": len(health_values),
                     "devices_with_uptime_configured": uptime_configured_count,
                     "devices_missing_uptime_config": max(total_devices - uptime_configured_count, 0),
@@ -1283,6 +1304,7 @@ class DashboardService:
                         "device_name": d.get("device_name"),
                         "device_type": d.get("device_type"),
                         "runtime_status": d.get("runtime_status"),
+                        "operational_status": d.get("operational_status"),
                         "location": d.get("location"),
                         "first_telemetry_timestamp": d.get("first_telemetry_timestamp"),
                         "last_seen_timestamp": d.get("last_seen_timestamp"),

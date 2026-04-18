@@ -377,6 +377,17 @@ async def test_api_response_unchanged(monkeypatch):
             "total_devices": 2,
             "running_devices": 1,
             "stopped_devices": 1,
+            "idle_devices": 0,
+            "in_load_devices": 1,
+            "overconsumption_devices": 0,
+            "unknown_devices": 1,
+            "status_counts": {
+                "unknown": 1,
+                "stopped": 0,
+                "idle": 0,
+                "running": 1,
+                "overconsumption": 0,
+            },
             "devices_with_health_data": 2,
             "devices_with_uptime_configured": 1,
             "devices_missing_uptime_config": 1,
@@ -395,6 +406,7 @@ async def test_api_response_unchanged(monkeypatch):
                 "device_name": "Pump 1",
                 "device_type": "pump",
                 "runtime_status": "running",
+                "operational_status": "running",
                 "location": "Plant A",
                 "last_seen_timestamp": datetime.now(timezone.utc),
                 "health_score": 95.5,
@@ -411,15 +423,29 @@ async def test_api_response_unchanged(monkeypatch):
     }
 
     class FakeDashboardService:
-        def __init__(self, session):
+        def __init__(self, session, ctx=None):
             self.session = session
+            self.ctx = ctx
 
-        async def get_dashboard_summary(self, tenant_id=None):
+        async def get_dashboard_summary(self, tenant_id=None, plant_id=None, accessible_plant_ids=None):
             return expected_payload
 
     monkeypatch.setattr("app.services.live_dashboard.LiveDashboardService", FakeDashboardService)
     response = Response()
-    request = SimpleNamespace(headers={"X-Tenant-Id": "tenant-a"}, query_params={}, state=SimpleNamespace())
+    request = SimpleNamespace(
+        headers={"X-Tenant-Id": "tenant-a"},
+        query_params={},
+        state=SimpleNamespace(
+            role="internal_service",
+            tenant_context=TenantContext(
+                tenant_id="tenant-a",
+                user_id="tester",
+                role="internal_service",
+                plant_ids=[],
+                is_super_admin=False,
+            ),
+        ),
+    )
 
     result = await get_dashboard_summary(request=request, response=response, db=AsyncMock())
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
-type BadgeVariant = 'default' | 'success' | 'warning' | 'error' | 'info';
+type BadgeVariant = 'default' | 'success' | 'warning' | 'error' | 'info' | 'critical';
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   children: React.ReactNode;
@@ -15,6 +15,7 @@ const variantStyles: Record<BadgeVariant, string> = {
   warning: "bg-[var(--tone-warning-bg)] text-[var(--tone-warning-text)] border-[var(--tone-warning-border)]",
   error: "bg-[var(--tone-danger-bg)] text-[var(--tone-danger-text)] border-[var(--tone-danger-border)]",
   info: "bg-[var(--tone-info-bg)] text-[var(--tone-info-text)] border-[var(--tone-info-border)]",
+  critical: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200",
 };
 
 export function Badge({
@@ -51,6 +52,8 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
     variant = 'success';
   } else if (['inactive', 'offline', 'stopped', 'down', 'failed'].includes(normalizedStatus)) {
     variant = 'error';
+  } else if (['overconsumption'].includes(normalizedStatus)) {
+    variant = 'critical';
   } else if (['warning', 'degraded', 'maintenance', 'idle'].includes(normalizedStatus)) {
     variant = 'warning';
   } else if (['paused', 'pending', 'open', 'unclassified'].includes(normalizedStatus)) {
@@ -67,6 +70,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
             variant === 'error' && 'bg-red-500',
             variant === 'warning' && 'bg-amber-500',
             variant === 'info' && 'bg-blue-500',
+            variant === 'critical' && 'bg-fuchsia-600',
             variant === 'default' && 'bg-slate-500'
           )}
         />

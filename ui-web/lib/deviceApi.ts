@@ -4,6 +4,8 @@ import { authApi } from "./authApi";
 import { createFleetStreamConnector as createReconnectableFleetStream } from "./fleetStreamReconnect";
 import { readResponseError } from "./responseError";
 import { mapBackendDeviceShape, type BackendDeviceShape, type DeviceShape } from "./deviceMapping.ts";
+import type { DeviceLoadState, DeviceOperatingBand, DeviceOperationalStatus } from "./deviceStatus";
+export type { DeviceLoadState, DeviceOperatingBand, DeviceOperationalStatus } from "./deviceStatus";
 
 const DASHBOARD_REQUEST_TIMEOUT_MS = 5_000;
 
@@ -16,9 +18,6 @@ interface BackendDevice extends BackendDeviceShape {}
  * UI shape - uses runtime_status for dynamic device state
  */
 export interface Device extends DeviceShape {}
-
-export type DeviceLoadState = "running" | "idle" | "unloaded" | "unknown";
-export type DeviceOperatingBand = "unloaded" | "idle" | "in_load" | "overconsumption" | "unknown";
 
 export interface IdleConfig {
   device_id: string;
@@ -113,6 +112,8 @@ export interface DeviceLossStats {
 type FleetStreamParams = {
   pageSize?: number;
   runtimeStatus?: "running" | "stopped";
+  operationalStatus?: DeviceOperationalStatus;
+  plantId?: string | null;
   lastEventId?: string;
   inactivityTimeoutMs?: number;
   onEvent: (payload: FleetStreamEventData) => void;
@@ -646,6 +647,7 @@ export interface DashboardDeviceItem {
   device_type: string;
   plant_id?: string | null;
   runtime_status: string;
+  operational_status: DeviceOperationalStatus;
   location: string | null;
   first_telemetry_timestamp: string | null;
   last_seen_timestamp: string | null;
@@ -657,6 +659,11 @@ export interface DashboardSystemSummary {
   total_devices: number;
   running_devices: number;
   stopped_devices: number;
+  idle_devices: number;
+  in_load_devices: number;
+  overconsumption_devices: number;
+  unknown_devices: number;
+  status_counts: Record<DeviceOperationalStatus, number>;
   devices_with_health_data: number;
   devices_with_uptime_configured: number;
   devices_missing_uptime_config: number;
@@ -705,6 +712,7 @@ export interface FleetSnapshotItem {
   runtime_status: string;
   load_state: DeviceLoadState;
   current_band?: DeviceOperatingBand | null;
+  operational_status: DeviceOperationalStatus;
   location: string | null;
   first_telemetry_timestamp: string | null;
   last_seen_timestamp: string | null;
@@ -979,12 +987,33 @@ export async function getDashboardSummary(plantId?: string | null): Promise<Dash
     throw new Error(`HTTP ${res.status}`);
   }
   const json = await res.json();
+  const summary = json.summary ?? {};
   return {
     generated_at: json.generated_at,
     service_started_at: res.headers.get("x-service-started-at"),
     stale: Boolean(json.stale),
     warnings: json.warnings ?? [],
-    summary: json.summary,
+    summary: {
+      total_devices: Number(summary.total_devices ?? 0),
+      running_devices: Number(summary.running_devices ?? 0),
+      stopped_devices: Number(summary.stopped_devices ?? 0),
+      idle_devices: Number(summary.idle_devices ?? 0),
+      in_load_devices: Number(summary.in_load_devices ?? 0),
+      overconsumption_devices: Number(summary.overconsumption_devices ?? 0),
+      unknown_devices: Number(summary.unknown_devices ?? 0),
+      status_counts: {
+        unknown: Number(summary.status_counts?.unknown ?? summary.unknown_devices ?? 0),
+        stopped: Number(summary.status_counts?.stopped ?? 0),
+        idle: Number(summary.status_counts?.idle ?? summary.idle_devices ?? 0),
+        running: Number(summary.status_counts?.running ?? summary.in_load_devices ?? 0),
+        overconsumption: Number(summary.status_counts?.overconsumption ?? summary.overconsumption_devices ?? 0),
+      },
+      devices_with_health_data: Number(summary.devices_with_health_data ?? 0),
+      devices_with_uptime_configured: Number(summary.devices_with_uptime_configured ?? 0),
+      devices_missing_uptime_config: Number(summary.devices_missing_uptime_config ?? 0),
+      system_health: summary.system_health ?? null,
+      average_efficiency: summary.average_efficiency ?? null,
+    },
     alerts: json.alerts,
     devices: json.devices || [],
     cost_data_state: json.cost_data_state ?? "unavailable",
@@ -997,11 +1026,21 @@ export async function getDashboardSummary(plantId?: string | null): Promise<Dash
 export async function getFleetSnapshot(
   page: number,
   pageSize: number,
+  options?: {
+    plantId?: string | null;
+    operationalStatus?: DeviceOperationalStatus | null;
+  },
 ): Promise<FleetSnapshotData> {
   const query = new URLSearchParams({
     page: String(page),
     page_size: String(pageSize),
   });
+  if (options?.plantId) {
+    query.set("plant_id", options.plantId);
+  }
+  if (options?.operationalStatus) {
+    query.set("operational_status", options.operationalStatus);
+  }
   const res = await fetchWithBackendSessionTimeout(`${DEVICE_SERVICE_BASE}/api/v1/devices/dashboard/fleet-snapshot?${query.toString()}`, {
     cache: "no-store",
   });
@@ -1070,6 +1109,12 @@ export function createFleetStreamConnector(
       });
       if (params?.runtimeStatus) {
         query.append("runtime_status", params.runtimeStatus);
+      }
+      if (params?.operationalStatus) {
+        query.append("operational_status", params.operationalStatus);
+      }
+      if (params?.plantId) {
+        query.append("plant_id", params.plantId);
       }
       if (currentLastEventId) {
         query.append("last_event_id", currentLastEventId);

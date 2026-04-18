@@ -616,14 +616,16 @@ async def get_fleet_snapshot(
     response: Response,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
+    plant_id: Optional[str] = Query(default=None),
     sort: str = Query(default="device_name", pattern="^(device_name|last_seen)$"),
     runtime_filter: Optional[str] = Query(default=None, pattern="^(running|stopped)$"),
     runtime_status: Optional[str] = Query(None, pattern="^(running|stopped)$"),
+    operational_status: Optional[str] = Query(default=None, pattern="^(unknown|stopped|idle|running|overconsumption)$"),
     db: AsyncSession = Depends(get_db),
 ) -> FleetSnapshotResponse:
     from app.services.live_dashboard import LiveDashboardService
 
-    effective_plant_ids = _resolve_accessible_plant_ids(request)
+    effective_plant_ids = _resolve_accessible_plant_ids(request, plant_id=plant_id)
     service = LiveDashboardService(db)
     payload = await service.get_fleet_snapshot(
         page=page,
@@ -631,6 +633,7 @@ async def get_fleet_snapshot(
         sort=sort,
         tenant_id=get_tenant_id(request),
         runtime_filter=runtime_filter or runtime_status,
+        operational_status_filter=operational_status,
         accessible_plant_ids=effective_plant_ids,
     )
     response.headers["Cache-Control"] = "no-store"
@@ -667,14 +670,16 @@ async def get_active_tenant_ids(
 async def fleet_snapshot_stream(
     request: Request,
     page_size: int = Query(200, ge=1, le=500),
+    plant_id: Optional[str] = Query(default=None),
     runtime_status: Optional[str] = Query(None, pattern="^(running|stopped)$"),
+    operational_status: Optional[str] = Query(default=None, pattern="^(unknown|stopped|idle|running|overconsumption)$"),
     last_event_id_query: Optional[str] = Query(default=None, alias="last_event_id"),
     last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     from app.services.live_dashboard import LiveDashboardService
 
     tenant_id = get_required_tenant_id(request)
-    accessible_plant_ids = _resolve_accessible_plant_ids(request)
+    accessible_plant_ids = _resolve_accessible_plant_ids(request, plant_id=plant_id)
     last_seen_int = None
     last_event_id_raw = last_event_id if last_event_id is not None else last_event_id_query
     try:
@@ -695,6 +700,7 @@ async def fleet_snapshot_stream(
                     sort="device_name",
                     tenant_id=tenant_id,
                     runtime_filter=runtime_status,
+                    operational_status_filter=operational_status,
                     accessible_plant_ids=accessible_plant_ids,
                 )
             event = FleetStreamEvent(
@@ -747,7 +753,8 @@ async def fleet_snapshot_stream(
                         devices=[
                             device
                             for device in message.data.get("devices", [])
-                            if accessible_plant_ids is None or device.get("plant_id") in accessible_plant_ids
+                            if (accessible_plant_ids is None or device.get("plant_id") in accessible_plant_ids)
+                            and (operational_status is None or device.get("operational_status") == operational_status)
                         ],
                         partial=bool(message.data.get("partial", False)),
                         version=int(message.data.get("version", 0)),

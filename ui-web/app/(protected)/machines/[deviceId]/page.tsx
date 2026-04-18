@@ -78,6 +78,13 @@ import { isPhaseDiagnosticField } from "@/lib/telemetryContract";
 import { MachineRulesView } from "@/app/(protected)/machines/[deviceId]/rules/machine-rules-view";
 import { formatIST, getRelativeTime } from "@/lib/utils";
 import { ActivationTimestampField } from "@/components/devices/ActivationTimestampField";
+import {
+  getOperationalStatusMeta,
+  mergeCurrentStateWithStability,
+  resolveOperationalStatus,
+  type DeviceLoadState,
+  type DeviceOperationalStatus,
+} from "@/lib/deviceStatus";
 import { useAdaptivePolling } from "@/lib/useAdaptivePolling";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ReadOnlyBanner } from "@/components/auth/ReadOnlyBanner";
@@ -346,29 +353,21 @@ function HealthScoreCircle({ healthScore, onClick }: { healthScore: HealthScore 
   );
 }
 
-function LoadStateBadge({ state }: { state: "running" | "idle" | "unloaded" | "unknown" }) {
-  const cfg: Record<string, { label: string; className: string }> = {
-    running: { label: "In Load", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
-    idle: { label: "Idle", className: "bg-amber-100 text-amber-800 border-amber-200" },
-    unloaded: { label: "Unloaded", className: "bg-orange-100 text-orange-800 border-orange-200" },
-    unknown: { label: "Unknown", className: "bg-slate-100 text-slate-700 border-slate-200" },
-  };
-  const item = cfg[state] || cfg.unknown;
+function OperationalStatusBadge({ status }: { status: DeviceOperationalStatus }) {
+  const item = getOperationalStatusMeta(status);
   return (
-    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${item.className}`}>
+    <span className={`inline-flex max-w-full items-center rounded-full border px-3 py-1 text-center text-xs font-semibold leading-tight [overflow-wrap:anywhere] ${item.className}`}>
       {item.label}
     </span>
   );
 }
 
-function getEffectiveLoadState(
-  runtimeStatus: string | undefined,
-  rawLoadState: "running" | "idle" | "unloaded" | "unknown" | undefined,
-): "running" | "idle" | "unloaded" | "unknown" {
-  if ((runtimeStatus || "").toLowerCase() !== "running") {
-    return "unknown";
-  }
-  return rawLoadState || "unknown";
+function getDetailedLoadStateLabel(state: DeviceLoadState | undefined): string {
+  if (state === "running") return "In Load";
+  if (state === "idle") return "Idle";
+  if (state === "overconsumption") return "Overconsumption";
+  if (state === "unloaded") return "Unloaded";
+  return "Unknown";
 }
 
 function getBackendStatusBadge(statusColor: string | null | undefined): { color: string; bgColor: string } {
@@ -720,7 +719,12 @@ export default function MachineDashboardPage() {
       setShifts(bootstrap.shifts);
       setHealthConfigs(bootstrap.health_configs);
       setWidgetConfig(bootstrap.widget_config);
-      setCurrentState(bootstrap.current_state);
+      setCurrentState((previous) =>
+        mergeCurrentStateWithStability(previous, bootstrap.current_state, {
+          runtimeStatus: machineData?.runtime_status,
+          source: "bootstrap",
+        }) ?? null,
+      );
       setLossStats(bootstrap.loss_stats);
       if (isInitial || !widgetDirty) {
         setSelectedWidgetFields(bootstrap.widget_config?.effective_fields || []);
@@ -845,7 +849,12 @@ export default function MachineDashboardPage() {
   const loadCurrentState = async () => {
     try {
       const state = await getCurrentState(deviceId);
-      setCurrentState(state);
+      setCurrentState((previous) =>
+        mergeCurrentStateWithStability(previous, state, {
+          runtimeStatus: machine?.runtime_status,
+          source: "current_state_poll",
+        }) ?? null,
+      );
     } catch (err) {
       console.error("Failed to load current state:", err);
     }
@@ -1106,15 +1115,15 @@ export default function MachineDashboardPage() {
   const healthPercent = typeof healthScore?.health_score === "number" ? healthScore.health_score : null;
   const uptimePercent = typeof uptime?.uptime_percentage === "number" ? uptime.uptime_percentage : null;
   const trendDisplay = buildPerformanceTrendDisplayModel(trendData, trendMetric);
-  const effectiveLoadState = getEffectiveLoadState(machine.runtime_status, currentState?.state);
-  const effectiveLoadStateLabel =
-    effectiveLoadState === "running"
-      ? "In Load"
-      : effectiveLoadState === "idle"
-        ? "Idle"
-        : effectiveLoadState === "unloaded"
-          ? "Unloaded"
-          : "Unknown";
+  const effectiveLoadState = (currentState?.state ?? "unknown") as DeviceLoadState;
+  const operationalStatus = resolveOperationalStatus({
+    runtimeStatus: machine.runtime_status,
+    loadState: currentState?.state,
+    currentBand: currentState?.current_band,
+    hasTelemetry: Boolean(machine.last_seen_timestamp),
+  });
+  const operationalStatusMeta = getOperationalStatusMeta(operationalStatus);
+  const effectiveLoadStateLabel = getDetailedLoadStateLabel(effectiveLoadState);
   const currentBandLabel =
     currentState?.current_band === "in_load"
       ? "In Load"
@@ -1197,7 +1206,7 @@ export default function MachineDashboardPage() {
                 )}
               </div>
 
-              <div className="flex items-center gap-3 self-start">
+              <div className="flex flex-wrap items-center justify-end gap-3 self-start">
                 <button
                   type="button"
                   onClick={() => setShowAlertHistory((prev) => !prev)}
@@ -1215,7 +1224,7 @@ export default function MachineDashboardPage() {
                   )}
                 </button>
                 <StatusBadge status={machine.runtime_status} />
-                <LoadStateBadge state={effectiveLoadState} />
+                <OperationalStatusBadge status={operationalStatus} />
               </div>
             </div>
 
@@ -1226,8 +1235,13 @@ export default function MachineDashboardPage() {
               </div>
               <div className="rounded-xl border border-slate-200 bg-white p-4">
                 <p className="text-xs uppercase tracking-[0.14em] text-slate-500 font-semibold">Status</p>
-                <p className={`text-2xl font-bold mt-2 ${machine.runtime_status === "running" ? "text-emerald-500" : "text-rose-500"}`}>
-                  {machine.runtime_status === "running" ? "Running" : "Stopped"}
+                <p
+                  className={`mt-2 text-xl font-bold leading-tight [overflow-wrap:anywhere] sm:text-2xl ${
+                    operationalStatusMeta.className.split(" ").find((token) => token.startsWith("text-")) || "text-slate-900"
+                  }`}
+                  title={operationalStatusMeta.label}
+                >
+                  {operationalStatusMeta.label}
                 </p>
               </div>
               <div className="rounded-xl border border-slate-200 bg-white p-4">

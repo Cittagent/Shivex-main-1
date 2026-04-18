@@ -16,6 +16,7 @@ from app.services.idle_running import TariffCache
 from app.services.load_thresholds import classify_current_band, resolve_device_thresholds
 from app.services.live_projection import LiveProjectionService
 from app.services.runtime_state import load_state_sql, runtime_status_sql
+from app.services.status_model import OPERATIONAL_STATUS_VALUES, operational_status_sql, resolve_operational_status
 from services.shared.tenant_context import TenantContext, build_internal_headers
 
 
@@ -198,12 +199,14 @@ class LiveDashboardService:
         sort: str = "device_name",
         tenant_id: Optional[str] = None,
         runtime_filter: Optional[str] = None,
+        operational_status_filter: Optional[str] = None,
         accessible_plant_ids: Optional[list[str]] = None,
     ) -> dict:
         now_utc = datetime.now(timezone.utc)
         derived_last_seen = func.coalesce(DeviceLiveState.last_telemetry_ts, Device.last_seen_timestamp)
         derived_runtime_status = runtime_status_sql(derived_last_seen, now_utc=now_utc)
         derived_load_state = load_state_sql(DeviceLiveState.load_state, derived_last_seen, now_utc=now_utc)
+        derived_operational_status = operational_status_sql(derived_runtime_status, derived_load_state, derived_last_seen)
 
         count_query = (
             select(func.count())
@@ -222,6 +225,7 @@ class LiveDashboardService:
                 Device.first_telemetry_timestamp,
                 derived_runtime_status.label("resolved_runtime_status"),
                 derived_load_state.label("resolved_load_state"),
+                derived_operational_status.label("resolved_operational_status"),
                 derived_last_seen.label("resolved_last_seen"),
             )
             .outerjoin(
@@ -247,6 +251,9 @@ class LiveDashboardService:
         if runtime_filter:
             count_query = count_query.where(derived_runtime_status == runtime_filter)
             page_query = page_query.where(derived_runtime_status == runtime_filter)
+        if operational_status_filter in OPERATIONAL_STATUS_VALUES:
+            count_query = count_query.where(derived_operational_status == operational_status_filter)
+            page_query = page_query.where(derived_operational_status == operational_status_filter)
 
         last_seen_nulls_last = case((derived_last_seen.is_(None), 1), else_=0)
         if sort == "last_seen":
@@ -267,7 +274,7 @@ class LiveDashboardService:
 
         page_items: list[dict] = []
         device_ids: list[str] = []
-        for device, state, first_telemetry_ts, runtime_status, load_state, last_seen_ts in rows:
+        for device, state, first_telemetry_ts, runtime_status, load_state, operational_status, last_seen_ts in rows:
             device_ids.append(device.device_id)
             thresholds = resolve_device_thresholds(device)
             current_band = (
@@ -279,6 +286,12 @@ class LiveDashboardService:
                 if runtime_status == RuntimeStatus.RUNNING.value
                 else "unknown"
             )
+            resolved_operational_status = resolve_operational_status(
+                runtime_status=runtime_status,
+                load_state=load_state,
+                current_band=current_band,
+                has_telemetry=last_seen_ts is not None,
+            )
             page_items.append(
                 {
                     "device_id": device.device_id,
@@ -288,6 +301,7 @@ class LiveDashboardService:
                     "runtime_status": runtime_status,
                     "load_state": load_state or "unknown",
                     "current_band": current_band,
+                    "operational_status": resolved_operational_status or operational_status,
                     "location": device.location,
                     "first_telemetry_timestamp": self._iso_utc(first_telemetry_ts),
                     "last_seen_timestamp": last_seen_ts.isoformat() if last_seen_ts is not None else None,
@@ -335,11 +349,18 @@ class LiveDashboardService:
         plant_scope = self._resolve_plant_scope(plant_id, accessible_plant_ids)
         authoritative_last_seen = func.coalesce(DeviceLiveState.last_telemetry_ts, Device.last_seen_timestamp)
         derived_runtime_status = runtime_status_sql(authoritative_last_seen, now_utc=now_utc)
+        derived_load_state = load_state_sql(DeviceLiveState.load_state, authoritative_last_seen, now_utc=now_utc)
+        derived_operational_status = operational_status_sql(derived_runtime_status, derived_load_state, authoritative_last_seen)
 
         summary_query = (
             select(
                 func.count(Device.device_id),
                 func.sum(case((derived_runtime_status == RuntimeStatus.RUNNING.value, 1), else_=0)),
+                func.sum(case((derived_operational_status == "stopped", 1), else_=0)),
+                func.sum(case((derived_operational_status == "idle", 1), else_=0)),
+                func.sum(case((derived_operational_status == "running", 1), else_=0)),
+                func.sum(case((derived_operational_status == "overconsumption", 1), else_=0)),
+                func.sum(case((derived_operational_status == "unknown", 1), else_=0)),
                 func.count(DeviceLiveState.health_score),
                 func.avg(DeviceLiveState.health_score),
                 func.avg(DeviceLiveState.uptime_percentage),
@@ -356,7 +377,7 @@ class LiveDashboardService:
             summary_query = summary_query.where(Device.tenant_id == tenant_id)
         summary_query = self._apply_plant_scope(summary_query, plant_scope)
 
-        total, running, devices_with_health_data, avg_health, avg_uptime = (
+        total, running, stopped, idle, in_load, overconsumption, unknown, devices_with_health_data, avg_health, avg_uptime = (
             await self._session.execute(summary_query)
         ).one()
 
@@ -380,6 +401,11 @@ class LiveDashboardService:
 
         total = int(total or 0)
         running = int(running or 0)
+        stopped = int(stopped or 0)
+        idle = int(idle or 0)
+        in_load = int(in_load or 0)
+        overconsumption = int(overconsumption or 0)
+        unknown = int(unknown or 0)
         devices_with_health_data = int(devices_with_health_data or 0)
 
         tariff = self._normalize_tariff(await TariffCache.get(tenant_id))
@@ -427,6 +453,17 @@ class LiveDashboardService:
                 "total_devices": total,
                 "running_devices": running,
                 "stopped_devices": max(0, total - running),
+                "idle_devices": idle,
+                "in_load_devices": in_load,
+                "overconsumption_devices": overconsumption,
+                "unknown_devices": unknown,
+                "status_counts": {
+                    "unknown": unknown,
+                    "stopped": stopped,
+                    "idle": idle,
+                    "running": in_load,
+                    "overconsumption": overconsumption,
+                },
                 "devices_with_health_data": devices_with_health_data,
                 "devices_with_uptime_configured": uptime_configured,
                 "devices_missing_uptime_config": max(0, total - uptime_configured),

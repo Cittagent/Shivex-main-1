@@ -74,6 +74,8 @@ async def _seed_running_idle_device(
             device_name="Machine 1",
             device_type="compressor",
             location="Plant 1",
+            full_load_current_a=20.0,
+            idle_threshold_pct_of_fla=0.25,
             idle_current_threshold=5.0,
             last_seen_timestamp=now,
             first_telemetry_timestamp=first_telemetry_timestamp or (now - timedelta(minutes=5)),
@@ -190,6 +192,7 @@ async def test_materialized_fleet_snapshot_uses_live_projection_load_state(sessi
         assert payload["devices"][0]["device_id"] == "DEVICE-1"
         assert payload["devices"][0]["runtime_status"] == "running"
         assert payload["devices"][0]["load_state"] == "idle"
+        assert payload["devices"][0]["operational_status"] == "idle"
         assert payload["devices"][0]["first_telemetry_timestamp"] is not None
         assert payload["devices"][0]["last_seen_timestamp"].startswith(now.replace(tzinfo=None).isoformat())
 
@@ -211,6 +214,7 @@ async def test_materialized_fleet_snapshot_marks_stale_projection_stopped(sessio
 
         assert payload["devices"][0]["runtime_status"] == "stopped"
         assert payload["devices"][0]["load_state"] == "unknown"
+        assert payload["devices"][0]["operational_status"] == "stopped"
         assert payload["devices"][0]["first_telemetry_timestamp"] is not None
 
 
@@ -231,6 +235,7 @@ async def test_live_dashboard_snapshot_marks_stale_projection_stopped(session_fa
 
         assert payload["devices"][0]["runtime_status"] == "stopped"
         assert payload["devices"][0]["load_state"] == "unknown"
+        assert payload["devices"][0]["operational_status"] == "stopped"
         assert payload["devices"][0]["first_telemetry_timestamp"] is not None
 
 
@@ -252,3 +257,45 @@ async def test_live_projection_snapshot_item_marks_stale_projection_stopped(sess
         assert payload["runtime_status"] == "stopped"
         assert payload["load_state"] == "unknown"
         assert payload["first_telemetry_timestamp"] is not None
+
+
+@pytest.mark.asyncio
+async def test_live_dashboard_snapshot_filters_by_operational_status(session_factory):
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        session.add_all(
+            [
+                Device(
+                    device_id="OVER-DEVICE",
+                    tenant_id="ORG-1",
+                    plant_id="PLANT-1",
+                    device_name="Over Device",
+                    device_type="compressor",
+                    location="Plant 1",
+                    full_load_current_a=20.0,
+                    idle_threshold_pct_of_fla=0.25,
+                    last_seen_timestamp=now,
+                    first_telemetry_timestamp=now - timedelta(minutes=10),
+                ),
+                DeviceLiveState(
+                    device_id="OVER-DEVICE",
+                    tenant_id="ORG-1",
+                    runtime_status="running",
+                    load_state="overconsumption",
+                    last_telemetry_ts=now,
+                    last_sample_ts=now,
+                    last_current_a=25.0,
+                    last_voltage_v=230.0,
+                    version=9,
+                ),
+            ]
+        )
+        await session.commit()
+
+        payload = await LiveDashboardService(session, _tenant_ctx()).get_fleet_snapshot(
+            tenant_id="ORG-1",
+            operational_status_filter="overconsumption",
+        )
+
+        assert [device["device_id"] for device in payload["devices"]] == ["OVER-DEVICE"]
+        assert payload["devices"][0]["operational_status"] == "overconsumption"

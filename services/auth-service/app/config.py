@@ -42,6 +42,7 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("EMAIL_FROM_ADDRESS", "EMAIL_SENDER", "EMAIL_SMTP_USERNAME"),
     )
+    PLATFORM_NAME: str = "Shivex"
     FRONTEND_BASE_URL: str = "http://localhost:3000"
     AUTH_ALLOWED_ORIGINS: str = ""
     REFRESH_COOKIE_NAME: str = "refresh_token"

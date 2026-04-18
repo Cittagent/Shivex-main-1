@@ -9,7 +9,6 @@ import {
   DashboardSummaryData,
   getFleetSnapshot,
   connectFleetStream,
-  FleetStreamEventData,
   getDashboardBootstrap,
   getTodayLossBreakdown,
   TodayLossBreakdownData,
@@ -41,6 +40,14 @@ import { OnboardDeviceModal } from "@/components/devices/OnboardDeviceModal";
 import { DeleteDeviceDialog } from "@/components/devices/DeleteDeviceDialog";
 import { resolveScopedTenantId, resolveVisiblePlants } from "@/lib/orgScope";
 import { useTenantStore } from "@/lib/tenantStore";
+import {
+  DEVICE_OPERATIONAL_STATUS_ORDER,
+  getOperationalStatusMeta,
+  preserveKnownStatusAgainstTransientUnknown,
+  resolveOperationalStatus,
+  type StatusMergeSource,
+  type DeviceOperationalStatus,
+} from "@/lib/deviceStatus";
 
 type MachineCard = {
   id: string;
@@ -49,6 +56,7 @@ type MachineCard = {
   plant_id: string | null;
   runtime_status: string;
   load_state: DeviceLoadState;
+  operational_status: DeviceOperationalStatus;
   location: string;
   first_telemetry_timestamp: string | null;
   last_seen_timestamp: string | null;
@@ -63,8 +71,10 @@ function mapFleetSnapshotDevice(
     device_name: string;
     device_type: string;
     plant_id?: string | null;
-    runtime_status: string;
-    load_state: DeviceLoadState;
+    runtime_status?: string | null;
+    load_state?: DeviceLoadState | null;
+    current_band?: string | null;
+    operational_status?: DeviceOperationalStatus;
     location: string | null;
     first_telemetry_timestamp: string | null;
     last_seen_timestamp: string | null;
@@ -79,8 +89,16 @@ function mapFleetSnapshotDevice(
     name: device.device_name,
     type: device.device_type,
     plant_id: device.plant_id ?? null,
-    runtime_status: device.runtime_status || "stopped",
+    runtime_status: device.runtime_status || "unknown",
     load_state: device.load_state || "unknown",
+    operational_status:
+      device.operational_status ||
+      resolveOperationalStatus({
+        runtimeStatus: device.runtime_status,
+        loadState: device.load_state,
+        currentBand: device.current_band,
+        hasTelemetry: Boolean(device.last_seen_timestamp),
+      }),
     location: device.location || "",
     first_telemetry_timestamp: device.first_telemetry_timestamp,
     last_seen_timestamp: device.last_seen_timestamp,
@@ -97,14 +115,22 @@ function mapBootstrapToMachineCard(bootstrap: DashboardBootstrapData, current: M
 
   const bootstrapHealth = bootstrap.health_score as { health_score?: number | null } | null;
   const bootstrapCurrentState = bootstrap.current_state as { state?: DeviceLoadState | null } | null;
+  const operationalStatus =
+    resolveOperationalStatus({
+      runtimeStatus: bootstrap.device.runtime_status || current?.runtime_status,
+      loadState: bootstrapCurrentState?.state || current?.load_state,
+      currentBand: bootstrap.current_state?.current_band,
+      hasTelemetry: Boolean(bootstrap.device.last_seen_timestamp || current?.last_seen_timestamp),
+    }) || current?.operational_status;
 
   return {
     id: bootstrap.device.id,
     name: bootstrap.device.name,
     type: bootstrap.device.type,
     plant_id: current?.plant_id ?? null,
-    runtime_status: bootstrap.device.runtime_status || current?.runtime_status || "stopped",
+    runtime_status: bootstrap.device.runtime_status || current?.runtime_status || "unknown",
     load_state: bootstrapCurrentState?.state || current?.load_state || "unknown",
+    operational_status: operationalStatus || "unknown",
     location: bootstrap.device.location || "",
     first_telemetry_timestamp: bootstrap.device.first_telemetry_timestamp,
     last_seen_timestamp: bootstrap.device.last_seen_timestamp,
@@ -133,6 +159,7 @@ export default function MachinesPage() {
   const [machines, setMachines] = useState<MachineCard[]>([]);
   const [plants, setPlants] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedPlantId, setSelectedPlantId] = useState<string | null>(null);
+  const [selectedOperationalStatus, setSelectedOperationalStatus] = useState<DeviceOperationalStatus | "all">("all");
   const [globalAlerts, setGlobalAlerts] = useState<ActivityEvent[]>([]);
   const [globalUnreadCount, setGlobalUnreadCount] = useState(0);
   const [showGlobalAlerts, setShowGlobalAlerts] = useState(false);
@@ -162,18 +189,11 @@ export default function MachinesPage() {
   const refetchAfterBackendRestartRef = useRef<() => Promise<void>>(async () => {});
   const targetedRefetchesRef = useRef<Set<string>>(new Set());
   const refetchSingleDeviceRef = useRef<(deviceId: string) => Promise<void>>(async () => {});
-  const role = me?.user.role ?? null;
   const currentOrgId = resolveScopedTenantId(me, selectedTenantId);
   const showPlantTabs = Boolean(currentOrgId);
   const visiblePlants = useMemo(() => resolveVisiblePlants(me, plants), [me, plants]);
   const canOnboardDevice = canCreateDevice && visiblePlants.length > 0;
-  const visibleDevices = useMemo(
-    () =>
-      selectedPlantId
-        ? machines.filter((d: any) => d.plant_id === selectedPlantId)
-        : machines,
-    [machines, selectedPlantId],
-  );
+  const visibleDevices = machines;
 
   const isIncomingFresher = useCallback((current: MachineCard | undefined, incoming: MachineCard): boolean => {
     if (!current) return true;
@@ -189,21 +209,57 @@ export default function MachinesPage() {
     return true;
   }, []);
 
-  const applyFleetUpdate = useCallback((snapshot: { devices?: MachineCard[]; total_pages?: number }) => {
+  const mergeMachineCard = useCallback((
+    current: MachineCard | undefined,
+    incoming: MachineCard,
+    source: StatusMergeSource,
+  ): MachineCard => {
+    if (!current) {
+      return incoming;
+    }
+    if (!isIncomingFresher(current, incoming)) {
+      return current;
+    }
+
+    const baseMerged: MachineCard = { ...current, ...incoming };
+    const stabilizedStatus = preserveKnownStatusAgainstTransientUnknown({
+      currentOperationalStatus: current.operational_status,
+      currentLoadState: current.load_state,
+      incomingOperationalStatus: incoming.operational_status,
+      incomingLoadState: incoming.load_state,
+      incomingRuntimeStatus: incoming.runtime_status,
+      incomingLastSeenTimestamp: incoming.last_seen_timestamp,
+      source,
+    });
+    baseMerged.load_state = stabilizedStatus.loadState;
+    baseMerged.operational_status = stabilizedStatus.operationalStatus;
+
+    const resolvedOperational = resolveOperationalStatus({
+      runtimeStatus: baseMerged.runtime_status,
+      loadState: baseMerged.load_state,
+      hasTelemetry: Boolean(baseMerged.last_seen_timestamp),
+    });
+    if (!(source === "stream_partial" && baseMerged.operational_status !== "unknown" && resolvedOperational === "unknown")) {
+      baseMerged.operational_status = resolvedOperational;
+    }
+    return baseMerged;
+  }, [isIncomingFresher]);
+
+  const applyFleetUpdate = useCallback((snapshot: { devices?: MachineCard[]; total_pages?: number }, source: StatusMergeSource = "snapshot") => {
     if (snapshot.devices) {
       setMachines((prev) => {
         const prevMap = new Map(prev.map((item) => [item.id, item]));
         const merged = snapshot.devices!.map((incoming) => {
           const current = prevMap.get(incoming.id);
-          return isIncomingFresher(current, incoming) ? incoming : current!;
+          return mergeMachineCard(current, incoming, source);
         });
         return merged.sort((a, b) => a.name.localeCompare(b.name));
       });
     }
     if (snapshot.total_pages) setTotalPages(snapshot.total_pages);
-  }, [isIncomingFresher]);
+  }, [mergeMachineCard]);
 
-  const applyFleetPartialUpdate = useCallback((updates: MachineCard[]) => {
+  const applyFleetPartialUpdate = useCallback((updates: MachineCard[], source: StatusMergeSource = "stream_partial") => {
     if (!updates.length) return;
     const staleDeviceIds: string[] = [];
     setMachines((prev) => {
@@ -215,8 +271,7 @@ export default function MachinesPage() {
           staleDeviceIds.push(update.id);
           continue;
         }
-        if (!isIncomingFresher(current, update)) continue;
-        map.set(update.id, { ...(current || update), ...update });
+        map.set(update.id, mergeMachineCard(current, update, source));
       }
       return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
     });
@@ -224,7 +279,7 @@ export default function MachinesPage() {
     staleDeviceIds.forEach((deviceId) => {
       void refetchSingleDeviceRef.current(deviceId);
     });
-  }, [isIncomingFresher]);
+  }, [mergeMachineCard]);
 
   const fetchGlobalAlerts = useCallback(async () => {
     try {
@@ -273,6 +328,10 @@ export default function MachinesPage() {
     }
   }, [selectedPlantId, visiblePlants]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [selectedPlantId, selectedOperationalStatus]);
+
   const configuredHealthCount = useMemo(
     () => machines.filter((m) => m.health_score !== null && m.health_score !== undefined).length,
     [machines]
@@ -282,29 +341,13 @@ export default function MachinesPage() {
     [machines]
   );
 
-  const loadBadge = (state: DeviceLoadState) => {
-    const cfg: Record<DeviceLoadState, { label: string; className: string }> = {
-      running: { label: "In Load", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
-      idle: { label: "Idle", className: "bg-amber-100 text-amber-800 border-amber-200" },
-      unloaded: { label: "Unloaded", className: "bg-orange-100 text-orange-800 border-orange-200" },
-      unknown: { label: "Unknown", className: "bg-slate-100 text-slate-700 border-slate-200" },
-    };
-    const item = cfg[state] || cfg.unknown;
+  const operationalStatusBadge = (status: DeviceOperationalStatus) => {
+    const item = getOperationalStatusMeta(status);
     return (
       <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${item.className}`}>
         {item.label}
       </span>
     );
-  };
-
-  const getEffectiveLoadState = (
-    runtimeStatus: string | undefined,
-    rawState: DeviceLoadState | undefined
-  ): DeviceLoadState => {
-    if ((runtimeStatus || "").toLowerCase() !== "running") {
-      return "unknown";
-    }
-    return rawState || "unknown";
   };
 
   const getHealthTone = (score: number | null) => {
@@ -381,6 +424,21 @@ export default function MachinesPage() {
   const costDataState = dashboard?.cost_data_state ?? "unavailable";
   const isCostFresh = costDataState === "fresh";
   const isLossCostFresh = (lossBreakdown?.cost_data_state ?? "unavailable") === "fresh";
+  const statusCounts = dashboard?.summary.status_counts ?? {
+    unknown: 0,
+    stopped: 0,
+    idle: 0,
+    running: 0,
+    overconsumption: 0,
+  };
+  const statusFilterOptions: Array<{ key: DeviceOperationalStatus | "all"; label: string; count: number }> = [
+    { key: "all", label: "All", count: dashboard?.summary.total_devices ?? machines.length },
+    ...DEVICE_OPERATIONAL_STATUS_ORDER.map((status) => ({
+      key: status,
+      label: getOperationalStatusMeta(status).label,
+      count: statusCounts[status] ?? 0,
+    })),
+  ];
 
   const requestBackendRestartRecovery = useCallback((sessionId: string | null) => {
     if (sessionId) {
@@ -422,7 +480,10 @@ export default function MachinesPage() {
   }, [machines.length, requestBackendRestartRecovery, selectedPlantId]);
 
   const loadFleetCards = useCallback(async () => {
-    const snapshot = await getFleetSnapshot(page, 60);
+    const snapshot = await getFleetSnapshot(page, 60, {
+      plantId: selectedPlantId,
+      operationalStatus: selectedOperationalStatus === "all" ? null : selectedOperationalStatus,
+    });
     const normalizedMachines: MachineCard[] = (snapshot.devices || []).map((device) =>
       mapFleetSnapshotDevice(device, snapshot.generated_at || null),
     );
@@ -430,11 +491,11 @@ export default function MachinesPage() {
       devices: normalizedMachines,
       total_pages: snapshot.total_pages || 1,
     };
-  }, [page]);
+  }, [page, selectedOperationalStatus, selectedPlantId]);
 
   const fetchFleetCards = useCallback(async () => {
     const snapshot = await loadFleetCards();
-    applyFleetUpdate(snapshot);
+    applyFleetUpdate(snapshot, "snapshot");
     return snapshot.devices;
   }, [applyFleetUpdate, loadFleetCards]);
 
@@ -442,7 +503,7 @@ export default function MachinesPage() {
     const stableDevices = await recoverStableFleetSnapshot<MachineCard>({
       fetchSnapshot: async () => {
         const snapshot = await loadFleetCards();
-        applyFleetUpdate(snapshot);
+        applyFleetUpdate(snapshot, "snapshot");
         return snapshot.devices;
       },
     });
@@ -463,7 +524,11 @@ export default function MachinesPage() {
             if (machine.id !== deviceId) {
               return machine;
             }
-            return mapBootstrapToMachineCard(bootstrap, machine) ?? machine;
+            const mapped = mapBootstrapToMachineCard(bootstrap, machine);
+            if (!mapped) {
+              return machine;
+            }
+            return mergeMachineCard(machine, mapped, "bootstrap");
           })
           .sort((a, b) => a.name.localeCompare(b.name)),
       );
@@ -476,7 +541,7 @@ export default function MachinesPage() {
     } finally {
       targetedRefetchesRef.current.delete(deviceId);
     }
-  }, [fetchFleetCards]);
+  }, [fetchFleetCards, mergeMachineCard]);
 
   refetchSingleDeviceRef.current = refetchSingleDevice;
 
@@ -593,6 +658,8 @@ export default function MachinesPage() {
   useEffect(() => {
     const stopStream = connectFleetStream({
       pageSize: 200,
+      plantId: selectedPlantId,
+      operationalStatus: selectedOperationalStatus === "all" ? undefined : selectedOperationalStatus,
       lastEventId: lastEventIdRef.current,
       onOpen: () => {
         if (!reconnectBannerActiveRef.current) {
@@ -628,9 +695,9 @@ export default function MachinesPage() {
           ),
         );
         if (parsed.partial) {
-          applyFleetPartialUpdate(normalizedMachines);
+          applyFleetPartialUpdate(normalizedMachines, "stream_partial");
         } else {
-          applyFleetUpdate({ devices: normalizedMachines });
+          applyFleetUpdate({ devices: normalizedMachines }, "stream_full");
         }
         const now = Date.now();
         if (now - lastSummaryRefreshRef.current > 750) {
@@ -646,7 +713,7 @@ export default function MachinesPage() {
     return () => {
       stopStream();
     };
-  }, [applyFleetPartialUpdate, applyFleetUpdate, fetchGlobalAlerts, recoverFleetCardsAfterReconnect, refetchAfterBackendRestart, refreshDashboardSummary, streamEpoch]);
+  }, [applyFleetPartialUpdate, applyFleetUpdate, fetchGlobalAlerts, recoverFleetCardsAfterReconnect, refetchAfterBackendRestart, refreshDashboardSummary, selectedOperationalStatus, selectedPlantId, streamEpoch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -902,6 +969,27 @@ export default function MachinesPage() {
         </div>
       ) : null}
 
+      <div className="surface-panel mb-4 flex flex-wrap items-center gap-2 px-3 py-3 sm:px-4">
+        <span className="text-sm font-medium text-[var(--text-secondary)]">Operational Status</span>
+        {statusFilterOptions.map((option) => {
+          const selected = selectedOperationalStatus === option.key;
+          return (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => setSelectedOperationalStatus(option.key)}
+              className={`rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
+                selected
+                  ? "border-[var(--text-primary)] bg-[var(--surface-1)] text-[var(--text-primary)]"
+                  : "border-[var(--border-subtle)] bg-[var(--surface-0)] text-[var(--text-secondary)] hover:bg-[var(--surface-1)] hover:text-[var(--text-primary)]"
+              }`}
+            >
+              {option.label} ({formatCompactNumber(option.count)})
+            </button>
+          );
+        })}
+      </div>
+
         {visibleDevices.length === 0 ? (
           <div className="surface-panel p-12 text-center">
             <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -944,7 +1032,7 @@ export default function MachinesPage() {
                           >
                             {machine.id}
                           </p>
-                          <div className="mt-2">{loadBadge(getEffectiveLoadState(machine.runtime_status, machine.load_state))}</div>
+                          <div className="mt-2">{operationalStatusBadge(machine.operational_status)}</div>
                         </div>
                         <div className="flex shrink-0 items-start gap-2">
                           <StatusBadge status={machine.runtime_status} />

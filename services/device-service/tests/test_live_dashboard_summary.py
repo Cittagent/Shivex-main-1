@@ -75,12 +75,14 @@ async def test_live_dashboard_summary_is_tenant_scoped_without_loading_full_flee
                     device_id="SHARED-DEVICE-A",
                     tenant_id="TENANT-A",
                     runtime_status="running",
+                    load_state="running",
                     health_score=82.5,
                     uptime_percentage=94.0,
                     day_bucket=local_day,
                     today_energy_kwh=14.5,
                     today_loss_kwh=1.5,
                     month_energy_kwh=70.0,
+                    last_telemetry_ts=datetime.now(timezone.utc),
                 ),
                 DeviceLiveState(
                     device_id="SHARED-DEVICE-B",
@@ -125,8 +127,19 @@ async def test_live_dashboard_summary_is_tenant_scoped_without_loading_full_flee
         payload = await LiveDashboardService(session).get_dashboard_summary(tenant_id="TENANT-A")
 
     assert payload["summary"]["total_devices"] == 1
-    assert payload["summary"]["running_devices"] == 0
-    assert payload["summary"]["stopped_devices"] == 1
+    assert payload["summary"]["running_devices"] == 1
+    assert payload["summary"]["stopped_devices"] == 0
+    assert payload["summary"]["idle_devices"] == 0
+    assert payload["summary"]["in_load_devices"] == 1
+    assert payload["summary"]["overconsumption_devices"] == 0
+    assert payload["summary"]["unknown_devices"] == 0
+    assert payload["summary"]["status_counts"] == {
+        "unknown": 0,
+        "stopped": 0,
+        "idle": 0,
+        "running": 1,
+        "overconsumption": 0,
+    }
     assert payload["summary"]["devices_with_health_data"] == 1
     assert payload["summary"]["devices_with_uptime_configured"] == 1
     assert payload["summary"]["devices_missing_uptime_config"] == 0
@@ -160,6 +173,7 @@ async def test_dashboard_summary_uses_live_loss_totals_even_when_energy_service_
                     device_id="LOSS-DEVICE",
                     tenant_id="TENANT-A",
                     runtime_status="running",
+                    load_state="overconsumption",
                     health_score=80.0,
                     uptime_percentage=90.0,
                     day_bucket=local_day,
@@ -170,6 +184,7 @@ async def test_dashboard_summary_uses_live_loss_totals_even_when_energy_service_
                     today_offhours_kwh=0.3,
                     today_overconsumption_kwh=0.8,
                     today_loss_kwh=1.5,
+                    last_telemetry_ts=datetime.now(timezone.utc),
                 ),
             ]
         )
@@ -207,6 +222,8 @@ async def test_dashboard_summary_uses_live_loss_totals_even_when_energy_service_
     assert payload["energy_widgets"]["today_loss_cost_inr"] == 15.0
     assert payload["energy_widgets"]["month_energy_kwh"] == 80.0
     assert payload["energy_widgets"]["month_energy_cost_inr"] == 800.0
+    assert payload["summary"]["status_counts"]["overconsumption"] == 1
+    assert payload["summary"]["overconsumption_devices"] == 1
 
 
 @pytest.mark.asyncio

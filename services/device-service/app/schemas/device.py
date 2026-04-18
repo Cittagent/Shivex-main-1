@@ -788,6 +788,7 @@ class DashboardDeviceItem(BaseModel):
     device_name: str
     device_type: str
     runtime_status: str
+    operational_status: str = "unknown"
     location: Optional[str] = None
     first_telemetry_timestamp: Optional[datetime] = None
     last_seen_timestamp: Optional[datetime] = None
@@ -802,6 +803,14 @@ class DashboardDeviceItem(BaseModel):
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
+
+
+class DashboardOperationalStatusCounts(BaseModel):
+    unknown: int = 0
+    stopped: int = 0
+    idle: int = 0
+    running: int = 0
+    overconsumption: int = 0
 
 
 class DashboardAlertsSummary(BaseModel):
@@ -819,6 +828,11 @@ class DashboardSystemSummary(BaseModel):
     total_devices: int = 0
     running_devices: int = 0
     stopped_devices: int = 0
+    idle_devices: int = 0
+    in_load_devices: int = 0
+    overconsumption_devices: int = 0
+    unknown_devices: int = 0
+    status_counts: DashboardOperationalStatusCounts = Field(default_factory=DashboardOperationalStatusCounts)
     devices_with_health_data: int = 0
     devices_with_uptime_configured: int = 0
     devices_missing_uptime_config: int = 0
@@ -851,6 +865,7 @@ class FleetSnapshotItem(BaseModel):
     runtime_status: str
     load_state: str = "unknown"
     current_band: Optional[str] = None
+    operational_status: str = "unknown"
     location: Optional[str] = None
     first_telemetry_timestamp: Optional[datetime] = None
     last_seen_timestamp: Optional[datetime] = None
