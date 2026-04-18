@@ -167,9 +167,12 @@ Source: [auth model](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittage
 | `role` | enum `userrole` | no | none | values: `super_admin`, `org_admin`, `plant_manager`, `operator`, `viewer` |
 | `permissions_version` | `Integer` | no | `0` | added by migration `0002_add_user_permissions_version.py`; `Confirmed from model`, migration name only scanned |
 | `is_active` | `Boolean` | no | true |  |
+| `invited_at` | `DateTime(timezone=True)` | yes | none | explicit onboarding timestamp added by `0009_user_lifecycle_timestamps.py`; used to distinguish invite lifecycle from activation lifecycle |
+| `activated_at` | `DateTime(timezone=True)` | yes | none | first successful invite acceptance / activation marker |
+| `deactivated_at` | `DateTime(timezone=True)` | yes | none | explicit deactivation timestamp for reactivation semantics |
 | `created_at` | `DateTime(timezone=True)` | no | current timestamp |  |
 | `updated_at` | `DateTime(timezone=True)` | no | current timestamp / on update |  |
-| `last_login_at` | `DateTime(timezone=True)` | yes | none |  |
+| `last_login_at` | `DateTime(timezone=True)` | yes | none | interactive-login audit timestamp; intended to move on successful login only, not on invite acceptance, password reset, or refresh |
 
 #### `user_plant_access`
 
@@ -213,6 +216,10 @@ Source: [auth model](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittage
 | `tenant_id` | `String(10)` | yes | none | index |
 | `metadata_json` | `String(2000)` | yes | none | stringified metadata, not JSON column |
 | `created_at` | `DateTime(timezone=True)` | no | current timestamp |  |
+
+Additional retention/index semantics:
+- `Confirmed from code`: cleanup/index hardening migration `0010_add_auth_action_token_cleanup_indexes.py` exists to support bounded purge of stale used and long-expired unused action tokens.
+- `Confirmed from code`: application cleanup policy is driven by `ACTION_TOKEN_RETENTION_HOURS` in auth config and enforced by `services/auth-service/app/services/token_cleanup_service.py`.
 
 ### Device service schemas
 
@@ -1045,6 +1052,8 @@ Text ERD grounded in model/migration truth:
 - `0003_add_auth_action_tokens.py`: adds invite/password-reset token table.
 - `0007_rename_org_id_to_tenant_id.py`: renames auth ownership columns to `tenant_id`.
 - `0008_hard_cut_sh_tenant_ids.py`: converts auth tenant IDs to 10-char SH business IDs and creates `tenant_id_sequences`.
+- `0009_user_lifecycle_timestamps.py`: adds `invited_at`, `activated_at`, and `deactivated_at` to `users` for explicit invite/reactivate/deactivate lifecycle handling.
+- `0010_add_auth_action_token_cleanup_indexes.py`: adds idempotent cleanup-support indexes for `auth_action_tokens` retention queries.
 
 ### Device
 
@@ -1114,7 +1123,7 @@ Text ERD grounded in model/migration truth:
 
 | Repository | Tables touched | Query shapes / notes |
 | --- | --- | --- |
-| [user_repository.py](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/auth-service/app/repositories/user_repository.py) | `users`, `user_plant_access` | Lookup by email/id, tenant-scoped user lookup, list-by-tenant ordered by `created_at desc`, replace-all plant access via delete+bulk insert |
+| [user_repository.py](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/auth-service/app/repositories/user_repository.py) | `users`, `user_plant_access` | Lookup by email/id, tenant-scoped user lookup, list-by-tenant ordered by `created_at desc`, replace-all plant access via delete+bulk insert, permissions-version bump for auth invalidation |
 | [org_repository.py](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/auth-service/app/repositories/org_repository.py) | `organizations`, `tenant_id_sequences` indirectly through allocator | create/list/update orgs, increment `entitlements_version` on entitlement changes |
 | [plant_repository.py](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/services/auth-service/app/repositories/plant_repository.py) | `plants` | list-by-tenant and list-by-ids-for-tenant |
 

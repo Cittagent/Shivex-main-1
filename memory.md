@@ -197,6 +197,7 @@
 - `Confirmed from code`: JWT access tokens signed with shared secret (`services/auth-service/app/services/token_service.py`).
 - `Confirmed from code`: refresh tokens stored hashed in MySQL.
 - `Confirmed from code`: HttpOnly cookie refresh for web; explicit refresh token storage for mobile.
+- `Confirmed from code`: browser refresh/logout flows are cookie-first, with origin checks on cookie-bound requests in auth-service.
 
 ### Storage
 
@@ -220,6 +221,7 @@
 - `Confirmed from code`: Dockerfiles per service, Docker Compose, initialization SQL scripts.
 - `Confirmed from code`: Mailpit for local email capture.
 - `Not found in repository`: Kubernetes, ECS task definitions, Terraform state, CD pipeline definitions.
+- `Confirmed from code`: auth-service currently pins `bcrypt==4.0.1` for compatibility with `passlib==1.7.4`; this is a deliberate runtime hygiene pin.
 
 ## 4. Project Structure
 
@@ -363,13 +365,15 @@
 
 - Folder: `services/auth-service/app`
 - Responsibility:
-  - `Confirmed from code`: login, refresh, logout, `/me`, invite acceptance, password reset, super-admin bootstrap, tenant/org/plant/user administration, feature entitlements.
+  - `Confirmed from code`: login, refresh, logout, `/me`, invite acceptance, password reset, super-admin bootstrap, tenant/org/plant/user administration, explicit invite/reactivate/deactivate lifecycle handling, auth token cleanup, feature entitlements.
 - Key files:
   - `services/auth-service/app/main.py`
   - `services/auth-service/app/api/v1/auth.py`
   - `services/auth-service/app/api/v1/admin.py`
   - `services/auth-service/app/api/v1/orgs.py`
   - `services/auth-service/app/services/auth_service.py`
+  - `services/auth-service/app/services/action_token_service.py`
+  - `services/auth-service/app/services/token_cleanup_service.py`
   - `services/auth-service/app/services/token_service.py`
   - `services/auth-service/app/config.py`
 - Dependencies:
@@ -377,6 +381,9 @@
 - Critical contracts:
   - access token claims include `sub`, `email`, `tenant_id`, `role`, `plant_ids`, `permissions_version`, `tenant_entitlements_version`, `jti` (`token_service.py:64-88`).
   - refresh cookie name/path/domain behavior in `auth.py` + `config.py`.
+  - user lifecycle now distinguishes `invited`, `invite_expired`, `active`, and `deactivated` through API/UI fields layered on top of `is_active`, `invited_at`, `activated_at`, and `deactivated_at`.
+  - `last_login_at` is intended to move only on successful interactive login, not on invite acceptance, password reset, or refresh.
+  - auth cleanup loop now purges stale `refresh_tokens` and stale `auth_action_tokens`.
   - exact endpoint map: [memory-appendix-api.md#auth-service](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/memory-appendix-api.md)
   - exact schema map: [memory-appendix-db.md#auth-service-schemas](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/memory-appendix-db.md)
 
@@ -647,7 +654,7 @@
   - analytics job worker(s)
   - reporting worker
   - export worker
-  - auth refresh-token cleanup service
+  - auth token cleanup service (refresh tokens plus stale action tokens)
   - analytics weekly retrainer
 
 ## 7. Core Data Flows
@@ -667,10 +674,12 @@
   - none required for basic login; auth-service startup also runs cleanup loop.
 - Output/result:
   - `Confirmed from code`: access token returned in response body; refresh token returned in cookie for browser and in body for mobile usage path.
+  - `Confirmed from code`: successful interactive login updates `users.last_login_at`; failed login, invite acceptance, password reset, and refresh do not.
 - Critical rules:
   - pending invite blocks login with `PASSWORD_SETUP_REQUIRED` (`auth_service.py:203-221`).
   - disabled account blocks login (`auth_service.py:223-228`).
   - org suspension blocks login (`auth_service.py:186-197`).
+  - browser auth is cookie-first for refresh/logout; the web app keeps access token in memory only and does not persist refresh tokens in browser JS storage.
   - access tokens carry `permissions_version` and `tenant_entitlements_version`; mismatch invalidates token (`token_service.py:64-88`, `auth_service.py:307-339`, `services/shared/auth_middleware.py:123-170`).
   - web refresh token cookie is HttpOnly, path-scoped to `/backend/auth/api/v1/auth` (`auth-service/app/config.py:40-44`, `auth.py` cookie setter).
   - web frontend keeps access token only in memory (`ui-web/lib/browserSession.ts`).
@@ -695,6 +704,8 @@
   - org admins cannot create `org_admin` or `super_admin` (`orgs.py:135-151`).
   - plant-scoped roles must have plant IDs; plant managers must assign exactly one plant (`orgs.py:176-204`).
   - invite acceptance hashes password, activates user, revokes prior tokens (`auth_service.py:86-111`).
+  - expired never-activated invites do not permanently poison an email address; the same logical user row is reused for reinvite/resend instead of creating a duplicate account.
+  - previously activated but later deactivated users must use `reactivate`, not reinvite.
 
 ### Telemetry ingest
 
@@ -886,7 +897,12 @@
 
 - Browser storage behavior:
   - `Confirmed from code`: web keeps access token in memory only and stores `/me` plus selected tenant in `sessionStorage`.
+  - `Confirmed from code`: web no longer stores refresh token in `sessionStorage` or `localStorage`.
   - `Confirmed from code`: mobile stores access token, refresh token, and cached profile in Expo SecureStore.
+
+- User lifecycle / audit semantics:
+  - `Confirmed from code`: tenant user APIs expose `lifecycle_state` values `invited`, `invite_expired`, `active`, and `deactivated`, plus action flags `can_resend_invite`, `can_reactivate`, and `can_deactivate`.
+  - `Confirmed from code`: `last_login_at` updates only on successful interactive login; invite acceptance and password reset do not fabricate login history.
 
 - Roles found:
   - `Confirmed from code`: `super_admin`, `org_admin`, `plant_manager`, `operator`, `viewer`.
@@ -1019,7 +1035,7 @@
 ### Auth refresh token cleanup service
 
 - Responsibility:
-  - background cleanup of expired refresh tokens.
+  - background cleanup of expired/revoked refresh tokens plus stale invite/password-reset action tokens.
 - Trigger type:
   - startup in auth-service lifespan.
 
@@ -1080,6 +1096,7 @@
 - `BOOTSTRAP_SUPER_ADMIN_FULL_NAME`
 - `INVITE_TOKEN_EXPIRE_MINUTES`
 - `PASSWORD_RESET_EXPIRE_MINUTES`
+- `ACTION_TOKEN_RETENTION_HOURS`
 - `LOGIN_RATE_LIMIT`
 - `PASSWORD_FORGOT_RATE_LIMIT`
 - `INVITATION_ACCEPT_RATE_LIMIT`
@@ -1437,18 +1454,24 @@
 ### Auth / tenant / entitlements
 
 - Files usually touched together:
-  - auth routes, `auth_service.py`, `token_service.py`, shared middleware, frontend auth context/api, mobile auth API.
+  - auth routes, `auth_service.py`, `action_token_service.py`, `token_cleanup_service.py`, `token_service.py`, shared middleware, frontend auth context/api, mobile auth API.
 - Regression risks:
   - web refresh cookie path/origin behavior
   - token freshness invalidation
   - super-admin tenant switching
   - invite/reset flow links
+  - incorrect `last_login_at` audit behavior
+  - reinvite/reactivate lifecycle drift
+  - cleanup logic deleting valid action tokens
 - Tests to run:
   - auth-service tests, top-level tenant scope/auth regression tests, web auth unit/e2e tests.
+  - `services/auth-service/tests/test_login_audit.py`
+  - `services/auth-service/tests/test_token_cleanup_service.py`
 - Common pitfalls:
   - forgetting `permissions_version` or `tenant_entitlements_version`
   - breaking cookie-based refresh while mobile still uses body token
   - bypassing tenant guards in service-to-service paths
+  - assuming invite acceptance counts as login for audit purposes when it should not
 - Exact API/DB references:
   - [memory-appendix-api.md#auth-service](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/memory-appendix-api.md)
   - [memory-appendix-db.md#auth-service-schemas](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/memory-appendix-db.md)
