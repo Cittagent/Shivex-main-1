@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { buildAdminOrgTabs } from "@/lib/hardwareAdmin";
 import { setSelectedTenantId } from "@/lib/tenantStore";
 import { useAuth } from "@/lib/authContext";
+import { getLifecycleActions, getLifecycleStatus } from "@/lib/userLifecycle";
 
 type TabKey = "plants" | "users" | "hardware" | "notification_usage";
 
@@ -75,6 +76,8 @@ export default function AdminOrgDetailPage() {
   const [isCreateOrgAdminOpen, setIsCreateOrgAdminOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [deactivatingUserId, setDeactivatingUserId] = useState<string | null>(null);
+  const [reactivatingUserId, setReactivatingUserId] = useState<string | null>(null);
+  const [resendingInviteUserId, setResendingInviteUserId] = useState<string | null>(null);
   const [hardwareCount, setHardwareCount] = useState(0);
 
   useEffect(() => {
@@ -166,6 +169,44 @@ export default function AdminOrgDetailPage() {
       setError(err instanceof Error ? err.message : "Failed to deactivate user");
     } finally {
       setDeactivatingUserId(null);
+    }
+  }
+
+  async function handleReactivateUser(userId: string): Promise<void> {
+    setReactivatingUserId(userId);
+    try {
+      await authApi.reactivateUser(tenantId, userId);
+      setUsers((current) =>
+        current.map((user) =>
+          user.id === userId
+            ? { ...user, is_active: true, lifecycle_state: "active", can_reactivate: false, can_deactivate: true }
+            : user,
+        ),
+      );
+      setToast("User reactivated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reactivate user");
+    } finally {
+      setReactivatingUserId(null);
+    }
+  }
+
+  async function handleResendInvite(user: UserProfile): Promise<void> {
+    setResendingInviteUserId(user.id);
+    try {
+      await authApi.resendInvitation(tenantId, user.id);
+      setUsers((current) =>
+        current.map((row) =>
+          row.id === user.id
+            ? { ...row, lifecycle_state: "invited", invite_status: "pending", can_resend_invite: true }
+            : row,
+        ),
+      );
+      setToast(user.invite_status === "pending" ? "Invite resent." : "New invite issued.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resend invite");
+    } finally {
+      setResendingInviteUserId(null);
     }
   }
 
@@ -281,7 +322,10 @@ export default function AdminOrgDetailPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {users.map((user) => (
+                  {users.map((user) => {
+                    const status = getLifecycleStatus(user);
+                    const actions = getLifecycleActions(user);
+                    return (
                     <TableRow key={user.id}>
                       <TableCell className="whitespace-normal">
                         <div>
@@ -293,31 +337,51 @@ export default function AdminOrgDetailPage() {
                         <RoleBadge role="org_admin" size="sm" />
                       </TableCell>
                       <TableCell>
-                        <Badge variant={user.is_active ? "success" : "error"}>
-                          {user.is_active ? "Active" : "Inactive"}
-                        </Badge>
+                        <Badge variant={status.variant}>{status.label}</Badge>
                       </TableCell>
                       <TableCell>
                         {user.last_login_at ? `${formatIST(user.last_login_at)} ${getRelativeTime(user.last_login_at)}`.trim() : "Never"}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="outline" size="sm" disabled>
-                            Edit
-                          </Button>
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            disabled={!user.is_active || deactivatingUserId === user.id}
-                            isLoading={deactivatingUserId === user.id}
-                            onClick={() => void handleDeactivateUser(user.id)}
-                          >
-                            Deactivate
-                          </Button>
+                          {actions.includes("resend_invite") || actions.includes("reinvite") ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              isLoading={resendingInviteUserId === user.id}
+                              disabled={resendingInviteUserId === user.id}
+                              onClick={() => void handleResendInvite(user)}
+                            >
+                              {actions.includes("resend_invite") ? "Resend invite" : "Reinvite"}
+                            </Button>
+                          ) : null}
+                          {actions.includes("reactivate") ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              isLoading={reactivatingUserId === user.id}
+                              disabled={reactivatingUserId === user.id}
+                              onClick={() => void handleReactivateUser(user.id)}
+                            >
+                              Reactivate
+                            </Button>
+                          ) : null}
+                          {actions.includes("deactivate") ? (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              disabled={deactivatingUserId === user.id}
+                              isLoading={deactivatingUserId === user.id}
+                              onClick={() => void handleDeactivateUser(user.id)}
+                            >
+                              Deactivate
+                            </Button>
+                          ) : null}
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}
@@ -351,8 +415,14 @@ export default function AdminOrgDetailPage() {
         isOpen={isCreateOrgAdminOpen}
         onClose={() => setIsCreateOrgAdminOpen(false)}
         onSuccess={(newUser) => {
-          setUsers((current) => [newUser, ...current]);
-          setToast("Org admin created. They can now log in with their email.");
+          setUsers((current) => {
+            const existingIndex = current.findIndex((user) => user.id === newUser.id);
+            if (existingIndex >= 0) {
+              return current.map((user) => (user.id === newUser.id ? newUser : user));
+            }
+            return [newUser, ...current];
+          });
+          setToast("Org admin invite issued.");
         }}
       />
     </>

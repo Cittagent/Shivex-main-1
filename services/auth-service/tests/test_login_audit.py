@@ -27,18 +27,26 @@ from app.services import auth_service
 
 
 class FakeResult:
+    def __init__(self, value=None):
+        self._value = value
+
     def scalar_one_or_none(self):
-        return None
+        return self._value
 
 
 class FakeDB:
-    def __init__(self):
+    def __init__(self, pending_invite_id=None):
+        self.pending_invite_id = pending_invite_id
+        self.execute_calls = 0
         self.executed = []
         self.added = []
         self.flushed = 0
 
     async def execute(self, statement, *args, **kwargs):
+        self.execute_calls += 1
         self.executed.append(statement)
+        if self.execute_calls == 1:
+            return FakeResult(self.pending_invite_id)
         return FakeResult()
 
     def add(self, instance):
@@ -78,7 +86,7 @@ def _make_user() -> User:
 
 
 @pytest.mark.asyncio
-async def test_login_does_not_update_last_login_at(monkeypatch):
+async def test_successful_login_updates_last_login_at(monkeypatch):
     fake_db = FakeDB()
     user = _make_user()
     fake_token_service = FakeTokenService()
@@ -93,4 +101,22 @@ async def test_login_does_not_update_last_login_at(monkeypatch):
     assert returned_user.id == user.id
     assert token_response.access_token == "access-token"
     assert token_response.refresh_token == "raw-refresh-token"
-    assert all(not str(statement).lstrip().upper().startswith("UPDATE") for statement in fake_db.executed)
+    assert user.last_login_at is not None
+    assert fake_db.flushed == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_login_does_not_update_last_login_at(monkeypatch):
+    fake_db = FakeDB()
+    user = _make_user()
+
+    monkeypatch.setattr(auth_service.user_repo, "get_by_email", AsyncMock(return_value=user))
+    monkeypatch.setattr(auth_service.pwd_ctx, "verify", lambda secret, hashed: False)
+
+    with pytest.raises(Exception) as exc:
+        await auth_service.AuthService().login(fake_db, user.email, "wrong-password")
+
+    assert exc.value.status_code == 401
+    assert exc.value.detail["code"] == "INVALID_CREDENTIALS"
+    assert user.last_login_at is None
+    assert fake_db.flushed == 0

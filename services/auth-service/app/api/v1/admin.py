@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from passlib.context import CryptContext
 from sqlalchemy import select
@@ -16,6 +18,7 @@ router = APIRouter(prefix="/api/admin", tags=["super-admin"], dependencies=[Depe
 org_repo = OrgRepository()
 user_repo = UserRepository()
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+UTC = timezone.utc
 
 
 @router.post("/tenants", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
@@ -86,6 +89,7 @@ async def create_user(body: CreateUserRequest, db=Depends(get_db)) -> UserRespon
         tenant_id=tenant_id,
         full_name=body.full_name,
     )
+    user.activated_at = datetime.now(UTC).replace(tzinfo=None)
     return UserResponse.model_validate(user)
 
 

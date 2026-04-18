@@ -103,6 +103,12 @@ class UserResponse(BaseModel):
     is_active: bool
     created_at: datetime
     last_login_at: datetime | None
+    lifecycle_state: Literal["invited", "invite_expired", "active", "deactivated"] | None = None
+    invite_status: Literal["pending", "expired", "none"] | None = None
+    pending_invite_expires_at: datetime | None = None
+    can_resend_invite: bool | None = None
+    can_reactivate: bool | None = None
+    can_deactivate: bool | None = None
 
 
 class TokenResponse(BaseModel):

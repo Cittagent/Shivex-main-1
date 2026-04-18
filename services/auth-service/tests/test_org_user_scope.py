@@ -125,6 +125,7 @@ def _make_user(*, user_id: str, tenant_id: str | None = None, role: UserRole) ->
         role=role,
         permissions_version=0,
         is_active=True,
+        activated_at=now,
         created_at=now,
         updated_at=now,
         last_login_at=None,
@@ -600,6 +601,152 @@ async def test_create_user_succeeds_when_invite_email_delivery_fails(client, mon
     invalidate_mock.assert_awaited_once()
     create_token_mock.assert_awaited_once()
     send_invite_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_user_reuses_existing_never_activated_email_with_reinvite(client, monkeypatch):
+    async_client, _ = client
+    caller = _make_user(user_id="admin-a", tenant_id="org-a", role=UserRole.ORG_ADMIN)
+    access_token = TokenService().create_access_token(caller, [])
+    existing_user = _make_user(user_id="existing-user", tenant_id="org-a", role=UserRole.VIEWER)
+    existing_user.is_active = False
+    existing_user.activated_at = None
+
+    monkeypatch.setattr(orgs_api.user_repo, "get_by_email", AsyncMock(return_value=existing_user))
+    monkeypatch.setattr(
+        orgs_api.org_repo,
+        "get_by_id",
+        AsyncMock(return_value=type("Org", (), {"id": "org-a", "is_active": True})()),
+    )
+    monkeypatch.setattr(
+        orgs_api.plant_repo,
+        "list_by_tenant",
+        AsyncMock(return_value=[_make_plant(plant_id="plant-a", tenant_id="org-a")]),
+    )
+    create_mock = AsyncMock()
+    set_access_mock = AsyncMock()
+    send_invite_mock = AsyncMock()
+
+    monkeypatch.setattr(orgs_api.user_repo, "create", create_mock)
+    monkeypatch.setattr(orgs_api.user_repo, "set_plant_access", set_access_mock)
+    monkeypatch.setattr(orgs_api.auth_svc, "send_invitation", send_invite_mock)
+    monkeypatch.setattr(orgs_api.pwd_ctx, "hash", lambda *_args, **_kwargs: "hashed-password")
+
+    response = await async_client.post(
+        "/api/v1/tenants/org-a/users",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "email": existing_user.email,
+            "full_name": "Viewer",
+            "role": "viewer",
+            "tenant_id": "org-a",
+            "plant_ids": ["plant-a"],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["id"] == existing_user.id
+    create_mock.assert_not_awaited()
+    set_access_mock.assert_awaited_once_with(ANY, existing_user.id, ["plant-a"])
+    send_invite_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_user_blocks_reinvite_for_deactivated_activated_user(client, monkeypatch):
+    async_client, _ = client
+    caller = _make_user(user_id="admin-a", tenant_id="org-a", role=UserRole.ORG_ADMIN)
+    access_token = TokenService().create_access_token(caller, [])
+    existing_user = _make_user(user_id="existing-user", tenant_id="org-a", role=UserRole.VIEWER)
+    existing_user.is_active = False
+
+    monkeypatch.setattr(orgs_api.user_repo, "get_by_email", AsyncMock(return_value=existing_user))
+    monkeypatch.setattr(
+        orgs_api.org_repo,
+        "get_by_id",
+        AsyncMock(return_value=type("Org", (), {"id": "org-a", "is_active": True})()),
+    )
+    monkeypatch.setattr(
+        orgs_api.plant_repo,
+        "list_by_tenant",
+        AsyncMock(return_value=[_make_plant(plant_id="plant-a", tenant_id="org-a")]),
+    )
+    monkeypatch.setattr(orgs_api.pwd_ctx, "hash", lambda *_args, **_kwargs: "hashed-password")
+
+    response = await async_client.post(
+        "/api/v1/tenants/org-a/users",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "email": existing_user.email,
+            "full_name": "Viewer",
+            "role": "viewer",
+            "tenant_id": "org-a",
+            "plant_ids": ["plant-a"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "USER_DEACTIVATED_USE_REACTIVATE"
+
+
+@pytest.mark.asyncio
+async def test_resend_invite_rejects_previously_activated_user(client, monkeypatch):
+    async_client, _ = client
+    caller = _make_user(user_id="admin-a", tenant_id="org-a", role=UserRole.ORG_ADMIN)
+    access_token = TokenService().create_access_token(caller, [])
+    target_user = _make_user(user_id="user-a", tenant_id="org-a", role=UserRole.VIEWER)
+    target_user.is_active = False
+
+    monkeypatch.setattr(orgs_api.user_repo, "get_by_id_for_tenant", AsyncMock(return_value=target_user))
+
+    response = await async_client.post(
+        "/api/v1/tenants/org-a/users/user-a/resend-invite",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "USER_DEACTIVATED_USE_REACTIVATE"
+
+
+@pytest.mark.asyncio
+async def test_reactivate_user_succeeds_for_previously_activated_user(client, monkeypatch):
+    async_client, _ = client
+    caller = _make_user(user_id="admin-a", tenant_id="org-a", role=UserRole.ORG_ADMIN)
+    access_token = TokenService().create_access_token(caller, [])
+    target_user = _make_user(user_id="user-a", tenant_id="org-a", role=UserRole.VIEWER)
+    target_user.is_active = False
+
+    monkeypatch.setattr(orgs_api.user_repo, "get_by_id_for_tenant", AsyncMock(return_value=target_user))
+    monkeypatch.setattr(orgs_api.user_repo, "increment_permissions_version", AsyncMock(return_value=target_user))
+    monkeypatch.setattr(orgs_api.token_svc, "revoke_all_user_tokens", AsyncMock())
+
+    response = await async_client.patch(
+        "/api/v1/tenants/org-a/users/user-a/reactivate",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "User reactivated"
+    assert target_user.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_reactivate_user_rejects_never_activated_invited_user(client, monkeypatch):
+    async_client, _ = client
+    caller = _make_user(user_id="admin-a", tenant_id="org-a", role=UserRole.ORG_ADMIN)
+    access_token = TokenService().create_access_token(caller, [])
+    target_user = _make_user(user_id="user-a", tenant_id="org-a", role=UserRole.VIEWER)
+    target_user.is_active = False
+    target_user.activated_at = None
+
+    monkeypatch.setattr(orgs_api.user_repo, "get_by_id_for_tenant", AsyncMock(return_value=target_user))
+
+    response = await async_client.patch(
+        "/api/v1/tenants/org-a/users/user-a/reactivate",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "REACTIVATE_NOT_ALLOWED_PENDING_INVITE"
 
 
 @pytest.mark.asyncio

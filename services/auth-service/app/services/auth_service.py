@@ -57,6 +57,10 @@ class AuthService:
         created_by_role: str | None,
         tenant_id: str | None,
     ) -> None:
+        user.invited_at = _now_utc_naive()
+        # Reinviting a never-activated account re-opens onboarding lifecycle.
+        if user.activated_at is None:
+            user.deactivated_at = None
         await action_token_svc.invalidate_open_tokens(
             db,
             user_id=user.id,
@@ -121,6 +125,9 @@ class AuthService:
         await self._assert_org_active(db, user)
         user.hashed_password = pwd_ctx.hash(password)
         user.is_active = True
+        if user.activated_at is None:
+            user.activated_at = _now_utc_naive()
+        user.deactivated_at = None
         user.updated_at = _now_utc_naive()
         await token_svc.revoke_all_user_tokens(db, user.id)
         await db.flush()
@@ -254,6 +261,10 @@ class AuthService:
             )
 
         await self._assert_org_active(db, user)
+        login_at = _now_utc_naive()
+        user.last_login_at = login_at
+        user.updated_at = login_at
+        await db.flush()
 
         tenant_entitlements_version = None
         tenant_id = user.tenant_id

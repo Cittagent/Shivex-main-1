@@ -59,7 +59,17 @@ class UserRepository:
                 detail={"code": "USER_NOT_FOUND", "message": "User not found"},
             )
 
-        allowed_keys = {"email", "hashed_password", "full_name", "role", "tenant_id", "is_active"}
+        allowed_keys = {
+            "email",
+            "hashed_password",
+            "full_name",
+            "role",
+            "tenant_id",
+            "is_active",
+            "invited_at",
+            "activated_at",
+            "deactivated_at",
+        }
         for key, value in updates.items():
             if key not in allowed_keys:
                 continue

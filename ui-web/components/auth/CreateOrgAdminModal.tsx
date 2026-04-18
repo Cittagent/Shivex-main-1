@@ -63,7 +63,9 @@ export function CreateOrgAdminModal({
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to create org admin";
       setError(
-        message.toLowerCase().includes("registered") || message.toLowerCase().includes("taken")
+        message.toLowerCase().includes("reactivate")
+          ? "This org admin exists but is deactivated. Use Reactivate from the org admin table."
+          : message.toLowerCase().includes("registered") || message.toLowerCase().includes("taken")
           ? "This email is already registered."
           : message,
       );

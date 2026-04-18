@@ -167,7 +167,9 @@ export function InviteUserModal({
       onClose();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to invite user";
-      if (message.toLowerCase().includes("registered") || message.toLowerCase().includes("taken")) {
+      if (message.toLowerCase().includes("reactivate")) {
+        setError("This user was previously active and is currently deactivated. Use Reactivate from the user table.");
+      } else if (message.toLowerCase().includes("registered") || message.toLowerCase().includes("taken")) {
         setError("This email is already registered in the system.");
       } else if (message.toLowerCase().includes("cannot create org_admin") || message.toLowerCase().includes("forbidden")) {
         setError("You cannot create that role from this panel.");

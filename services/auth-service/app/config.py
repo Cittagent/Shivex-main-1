@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     BOOTSTRAP_SUPER_ADMIN_FULL_NAME: str = "Shivex Super-Admin"
     INVITE_TOKEN_EXPIRE_MINUTES: int = 30
     PASSWORD_RESET_EXPIRE_MINUTES: int = 30
+    ACTION_TOKEN_RETENTION_HOURS: int = Field(default=168, ge=1)
     LOGIN_RATE_LIMIT: str = "10/minute"
     PASSWORD_FORGOT_RATE_LIMIT: str = "5/minute"
     INVITATION_ACCEPT_RATE_LIMIT: str = "5/minute"

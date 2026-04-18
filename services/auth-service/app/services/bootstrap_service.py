@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +10,7 @@ from app.config import settings
 from app.models.auth import User, UserRole
 
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+UTC = timezone.utc
 
 
 async def ensure_bootstrap_super_admin(db: AsyncSession) -> bool:
@@ -36,6 +39,7 @@ async def ensure_bootstrap_super_admin(db: AsyncSession) -> bool:
                 role=UserRole.SUPER_ADMIN,
                 tenant_id=None,
                 is_active=True,
+                activated_at=datetime.now(UTC).replace(tzinfo=None),
             )
         )
     else:
@@ -44,6 +48,8 @@ async def ensure_bootstrap_super_admin(db: AsyncSession) -> bool:
         conflicting_user.role = UserRole.SUPER_ADMIN
         conflicting_user.tenant_id = None
         conflicting_user.is_active = True
+        conflicting_user.activated_at = datetime.now(UTC).replace(tzinfo=None)
+        conflicting_user.deactivated_at = None
 
     await db.commit()
     return True

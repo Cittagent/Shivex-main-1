@@ -13,6 +13,7 @@ import { InviteUserModal } from "@/components/auth/InviteUserModal";
 import { EditUserModal } from "@/components/auth/EditUserModal";
 import { OrgFeatureAccessEditor } from "@/components/auth/OrgFeatureAccessEditor";
 import { resolveVisiblePlants } from "@/lib/orgScope";
+import { getLifecycleActions, getLifecycleStatus } from "@/lib/userLifecycle";
 import {
   Table,
   TableBody,
@@ -178,6 +179,30 @@ export default function OrgUsersPage() {
     }
   }
 
+  async function resendOrReinviteUser(user: UserProfile): Promise<void> {
+    if (!orgId) return;
+    try {
+      await authApi.resendInvitation(orgId, user.id);
+      const refreshed = await authApi.listTenantUsers(orgId);
+      setUsers(refreshed);
+      setToast(user.invite_status === "pending" ? "Invite resent." : "New invite issued.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to resend invite");
+    }
+  }
+
+  async function reactivateUser(userId: string): Promise<void> {
+    if (!orgId) return;
+    try {
+      await authApi.reactivateUser(orgId, userId);
+      const refreshed = await authApi.listTenantUsers(orgId);
+      setUsers(refreshed);
+      setToast("User reactivated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reactivate user");
+    }
+  }
+
   return (
     <>
       <div className="space-y-5">
@@ -274,6 +299,8 @@ export default function OrgUsersPage() {
                       ? "All plants"
                       : `${plantIds.length} plant${plantIds.length === 1 ? "" : "s"}`;
                     const relative = user.last_login_at ? getRelativeTime(user.last_login_at).replace(/[()]/g, "") : "";
+                    const status = getLifecycleStatus(user);
+                    const actions = getLifecycleActions(user);
 
                     return (
                       <TableRow key={user.id}>
@@ -293,11 +320,25 @@ export default function OrgUsersPage() {
                         </TableCell>
                         <TableCell>{plantLabel}</TableCell>
                         <TableCell>
-                          {user.is_active ? (
+                          {status.label === "Active" ? (
                             <Badge variant="success">
                               <span className="flex items-center gap-1.5">
                                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                                 Active
+                              </span>
+                            </Badge>
+                          ) : status.label === "Invited" ? (
+                            <Badge variant="default">
+                              <span className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                                Invited
+                              </span>
+                            </Badge>
+                          ) : status.label === "Invite expired" ? (
+                            <Badge variant="warning">
+                              <span className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                                Invite expired
                               </span>
                             </Badge>
                           ) : (
@@ -313,7 +354,7 @@ export default function OrgUsersPage() {
                           {user.last_login_at ? (relative || formatIST(user.last_login_at, "Never")) : "Never"}
                         </TableCell>
                         <TableCell className="text-right">
-                          {!user.is_active ? null : confirmingUserId === user.id ? (
+                          {confirmingUserId === user.id ? (
                             <div className="flex justify-end gap-2">
                               <span className="self-center text-xs text-[var(--text-secondary)]">Confirm?</span>
                               <Button
@@ -336,14 +377,26 @@ export default function OrgUsersPage() {
                             </div>
                           ) : (
                             <div className="flex justify-end gap-2">
-                              {user.role !== "org_admin" ? (
+                              {user.role !== "org_admin" && actions.includes("deactivate") ? (
                                 <Button size="sm" variant="outline" onClick={() => setEditingUser(user)}>
                                   Edit
                                 </Button>
                               ) : null}
-                              <Button size="sm" variant="danger" onClick={() => setConfirmingUserId(user.id)}>
-                                Deactivate
-                              </Button>
+                              {actions.includes("resend_invite") || actions.includes("reinvite") ? (
+                                <Button size="sm" variant="outline" onClick={() => void resendOrReinviteUser(user)}>
+                                  {actions.includes("resend_invite") ? "Resend invite" : "Reinvite"}
+                                </Button>
+                              ) : null}
+                              {actions.includes("reactivate") ? (
+                                <Button size="sm" variant="outline" onClick={() => void reactivateUser(user.id)}>
+                                  Reactivate
+                                </Button>
+                              ) : null}
+                              {actions.includes("deactivate") ? (
+                                <Button size="sm" variant="danger" onClick={() => setConfirmingUserId(user.id)}>
+                                  Deactivate
+                                </Button>
+                              ) : null}
                             </div>
                           )}
                         </TableCell>
@@ -365,7 +418,13 @@ export default function OrgUsersPage() {
           availablePlants={accessiblePlants}
           onClose={() => setInviteOpen(false)}
           onSuccess={(user, plantIds) => {
-            setUsers((current) => [user, ...current]);
+            setUsers((current) => {
+              const existingIndex = current.findIndex((item) => item.id === user.id);
+              if (existingIndex >= 0) {
+                return current.map((item) => (item.id === user.id ? user : item));
+              }
+              return [user, ...current];
+            });
             setUserPlantAccess((current) => ({ ...current, [user.id]: plantIds }));
           }}
         />

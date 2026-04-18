@@ -170,6 +170,7 @@ def _make_user(
         role=role,
         permissions_version=permissions_version,
         is_active=True,
+        activated_at=now,
         created_at=now,
         updated_at=now,
         last_login_at=None,
@@ -425,6 +426,7 @@ async def test_auth_service_accept_invitation_activates_user_and_revokes_tokens(
 
     assert user.is_active is True
     assert user.hashed_password == "hashed::Password123!"
+    assert user.last_login_at is None
     revoke_all.assert_awaited_once_with(ANY, user.id)
 
 
@@ -453,6 +455,35 @@ async def test_auth_service_password_reset_revokes_all_sessions(monkeypatch):
 
     assert user.hashed_password == "hashed::Password123!"
     revoke_all.assert_awaited_once_with(ANY, user.id)
+
+
+@pytest.mark.asyncio
+async def test_auth_service_refresh_does_not_update_last_login_at(monkeypatch):
+    user = _make_user(user_id="user-8", tenant_id="org-1", role=UserRole.VIEWER, permissions_version=2)
+    prior_login = datetime.now(UTC) - timedelta(days=2)
+    user.last_login_at = prior_login
+
+    monkeypatch.setattr(
+        auth_service_module.token_svc,
+        "validate_refresh_token",
+        AsyncMock(return_value=type("Refresh", (), {"user_id": user.id})()),
+    )
+    monkeypatch.setattr(user_repo, "get_by_id", AsyncMock(return_value=user))
+    monkeypatch.setattr(org_repo, "get_by_id", AsyncMock(return_value=type("Org", (), {"is_active": True, "entitlements_version": 0})()))
+    monkeypatch.setattr(auth_service_module.token_svc, "revoke_refresh_token", AsyncMock())
+    monkeypatch.setattr(
+        auth_service_module.token_svc,
+        "generate_refresh_token_pair",
+        Mock(return_value=("raw-refresh-token", "hashed-refresh-token")),
+    )
+    monkeypatch.setattr(auth_service_module.token_svc, "create_access_token", Mock(return_value="access-token"))
+    monkeypatch.setattr(auth_service_module.token_svc, "store_refresh_token", AsyncMock())
+    monkeypatch.setattr(user_repo, "get_plant_ids", AsyncMock(return_value=["plant-1"]))
+
+    token_response = await AuthService().refresh(db=object(), raw_refresh_token="refresh-token")
+
+    assert token_response.access_token == "access-token"
+    assert user.last_login_at == prior_login
 
 
 @pytest.mark.asyncio

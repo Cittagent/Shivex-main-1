@@ -20,6 +20,12 @@ export interface UserProfile {
   is_active: boolean;
   created_at: string;
   last_login_at: string | null;
+  lifecycle_state?: "invited" | "invite_expired" | "active" | "deactivated" | null;
+  invite_status?: "pending" | "expired" | "none" | null;
+  pending_invite_expires_at?: string | null;
+  can_resend_invite?: boolean | null;
+  can_reactivate?: boolean | null;
+  can_deactivate?: boolean | null;
 }
 
 export interface TenantProfile {
@@ -472,6 +478,12 @@ export const authApi = {
 
   async deactivateUser(tenantId: string, userId: string): Promise<void> {
     await authFetch<{ message: string }>(`/api/v1/tenants/${tenantId}/users/${userId}/deactivate`, {
+      method: "PATCH",
+    });
+  },
+
+  async reactivateUser(tenantId: string, userId: string): Promise<void> {
+    await authFetch<{ message: string }>(`/api/v1/tenants/${tenantId}/users/${userId}/reactivate`, {
       method: "PATCH",
     });
   },

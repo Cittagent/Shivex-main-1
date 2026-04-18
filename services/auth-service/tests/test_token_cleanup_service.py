@@ -1,7 +1,6 @@
 import asyncio
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -94,7 +93,7 @@ class FakeRedis:
         self.values[key] = value
         return True
 
-    def eval(self, script, numkeys, key, value):
+    def eval(self, script, numkeys, key, value, *args):
         if self.values.get(key) == value:
             del self.values[key]
             return 1
@@ -118,6 +117,37 @@ async def test_purge_refresh_tokens_batches_expired_and_revoked_rows(monkeypatch
     compiled_select = str(session.statements[0].compile(compile_kwargs={"literal_binds": True}))
     assert "refresh_tokens.expires_at <" in compiled_select
     assert "refresh_tokens.revoked_at IS NOT NULL" in compiled_select
+
+
+@pytest.mark.asyncio
+async def test_purge_action_tokens_removes_only_rows_older_than_retention(monkeypatch):
+    session = FakeDBSession(
+        batches=[
+            ["refresh-expired"],
+            ["action-used-old", "action-expired-old"],
+        ]
+    )
+    service = TokenCleanupService(session_factory=FakeSessionFactory(session))
+
+    deleted = await service.purge_until_empty(session, batch_size=5)
+
+    assert deleted == 3
+    assert session.commit_calls == 2
+    compiled_action_select = str(session.statements[2].compile(compile_kwargs={"literal_binds": True}))
+    assert "auth_action_tokens.used_at <" in compiled_action_select
+    assert "auth_action_tokens.used_at IS NULL" in compiled_action_select
+    assert "auth_action_tokens.expires_at <" in compiled_action_select
+
+
+@pytest.mark.asyncio
+async def test_purge_action_tokens_once_skips_currently_valid_rows():
+    session = FakeDBSession(batches=[[]])
+    service = TokenCleanupService(session_factory=FakeSessionFactory(session))
+
+    deleted = await service.purge_action_tokens_once(session, batch_size=10)
+
+    assert deleted == 0
+    assert session.commit_calls == 0
 
 
 @pytest.mark.asyncio

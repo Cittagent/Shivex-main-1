@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from redis import Redis
@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import AsyncSessionFactory
-from app.models.auth import RefreshToken
+from app.models.auth import AuthActionToken, RefreshToken
 
 UTC = timezone.utc
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ class TokenCleanupService:
         except RedisError as exc:
             logger.warning("Failed to refresh refresh token cleanup lock", extra={"error": str(exc)})
 
-    async def purge_once(self, db: AsyncSession, *, batch_size: int = CLEANUP_BATCH_SIZE) -> int:
+    async def purge_refresh_tokens_once(self, db: AsyncSession, *, batch_size: int = CLEANUP_BATCH_SIZE) -> int:
         now = datetime.now(UTC)
         result = await db.execute(
             select(RefreshToken.id)
@@ -118,6 +118,31 @@ class TokenCleanupService:
         await db.commit()
         return len(token_ids)
 
+    async def purge_action_tokens_once(self, db: AsyncSession, *, batch_size: int = CLEANUP_BATCH_SIZE) -> int:
+        retention_cutoff = datetime.now(UTC) - timedelta(hours=settings.ACTION_TOKEN_RETENTION_HOURS)
+        result = await db.execute(
+            select(AuthActionToken.id)
+            .where(
+                or_(
+                    AuthActionToken.used_at < retention_cutoff,
+                    (AuthActionToken.used_at.is_(None) & (AuthActionToken.expires_at < retention_cutoff)),
+                )
+            )
+            .order_by(
+                AuthActionToken.used_at.asc(),
+                AuthActionToken.expires_at.asc(),
+                AuthActionToken.id.asc(),
+            )
+            .limit(batch_size)
+        )
+        token_ids = list(result.scalars().all())
+        if not token_ids:
+            return 0
+
+        await db.execute(delete(AuthActionToken).where(AuthActionToken.id.in_(token_ids)))
+        await db.commit()
+        return len(token_ids)
+
     async def purge_until_empty(
         self,
         db: AsyncSession,
@@ -127,11 +152,18 @@ class TokenCleanupService:
     ) -> int:
         total_deleted = 0
         while True:
-            deleted = await self.purge_once(db, batch_size=batch_size)
-            total_deleted += deleted
+            deleted_refresh_tokens = await self.purge_refresh_tokens_once(db, batch_size=batch_size)
+            total_deleted += deleted_refresh_tokens
             if lock_value is not None:
                 self._refresh_lock(lock_value)
-            if deleted < batch_size:
+            if deleted_refresh_tokens == batch_size:
+                continue
+
+            deleted_action_tokens = await self.purge_action_tokens_once(db, batch_size=batch_size)
+            total_deleted += deleted_action_tokens
+            if lock_value is not None:
+                self._refresh_lock(lock_value)
+            if deleted_action_tokens < batch_size:
                 return total_deleted
 
     async def run_cycle(
@@ -155,7 +187,7 @@ class TokenCleanupService:
                     deleted = await self.run_cycle(batch_size=batch_size, lock_value=lock_value)
                     if deleted:
                         logger.info(
-                            "Purged refresh tokens",
+                            "Purged auth tokens",
                             extra={"deleted": deleted, "interval_seconds": CLEANUP_INTERVAL_SECONDS},
                         )
                 finally:
