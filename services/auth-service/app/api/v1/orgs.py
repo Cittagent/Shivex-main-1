@@ -3,9 +3,11 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import case, func, select
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import (
     assert_tenant_access,
@@ -34,7 +36,7 @@ from services.shared.feature_entitlements import (
     validate_premium_grants,
     validate_role_feature_matrix,
 )
-from services.shared.tenant_context import TenantContext
+from services.shared.tenant_context import TenantContext, build_internal_headers
 from services.shared.tenant_guards import assert_plants_belong_to_tenant, assert_same_tenant
 
 router = APIRouter(prefix="/api/v1/tenants", tags=["tenants"])
@@ -74,6 +76,87 @@ async def _assert_fresh_token(db, claims: dict) -> None:
     if db is None or not hasattr(db, "sync_session"):
         return
     await auth_svc.get_user_by_token_claims(db, claims)
+
+
+async def _get_tenant_or_404(db, tenant_id: str):
+    org = await org_repo.get_by_id(db, tenant_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ORG_NOT_FOUND", "message": "Organization not found"},
+        )
+    return org
+
+
+async def _get_plant_or_404(db, tenant_id: str, plant_id: str):
+    plant = await plant_repo.get_by_id_for_tenant(db, tenant_id, plant_id)
+    if plant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "PLANT_NOT_FOUND", "message": "Plant not found"},
+        )
+    return plant
+
+
+async def _get_plant_device_count(tenant_id: str, plant_id: str) -> int:
+    base_url = settings.DEVICE_SERVICE_BASE_URL.rstrip("/")
+    if not base_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "PLANT_DELETE_GUARD_UNAVAILABLE",
+                "message": "Plant dependency guard is not configured.",
+            },
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                f"{base_url}/api/v1/devices/internal/plants/{plant_id}/device-count",
+                headers=build_internal_headers("auth-service", tenant_id),
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "PLANT_DELETE_GUARD_UNAVAILABLE",
+                "message": "Unable to verify attached devices right now. Please try again.",
+            },
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "PLANT_DELETE_GUARD_UNAVAILABLE",
+                "message": "Unable to verify attached devices right now. Please try again.",
+            },
+        ) from exc
+
+    if response.status_code == status.HTTP_404_NOT_FOUND:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "PLANT_NOT_FOUND", "message": "Plant not found"},
+        )
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "PLANT_DELETE_GUARD_UNAVAILABLE",
+                "message": "Unable to verify attached devices right now. Please try again.",
+            },
+        )
+
+    payload = response.json()
+    count = payload.get("device_count")
+    if not isinstance(count, int):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "PLANT_DELETE_GUARD_UNAVAILABLE",
+                "message": "Plant dependency guard returned an unexpected response.",
+            },
+        )
+    return count
 
 
 def _entitlements_response(org, role: str) -> FeatureEntitlementsResponse:
@@ -178,12 +261,8 @@ async def create_plant(
 ) -> PlantResponse:
     await _assert_fresh_token(db, claims)
     assert_tenant_access(claims, tenant_id)
-    org = await org_repo.get_by_id(db, tenant_id)
-    if org is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "ORG_NOT_FOUND", "message": "Organization not found"},
-        )
+    await _get_tenant_or_404(db, tenant_id)
+    await auth_svc.assert_org_active_for_write(db, tenant_id)
 
     plant = await plant_repo.create(db, tenant_id, body.name, body.location, body.timezone)
     return PlantResponse.model_validate(plant)
@@ -266,6 +345,7 @@ async def create_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "ORG_NOT_FOUND", "message": "Organization not found"},
         )
+    await auth_svc.assert_org_active_for_write(db, tenant_id)
 
     validated_plant_ids: list[str] = []
     if user_role in {UserRole.PLANT_MANAGER, UserRole.OPERATOR, UserRole.VIEWER}:
@@ -292,6 +372,11 @@ async def create_user(
             assert_plants_belong_to_tenant(validated_plant_ids, caller_plant_ids & valid_plant_ids, ctx)
         else:
             assert_plants_belong_to_tenant(validated_plant_ids, valid_plant_ids, ctx)
+        await auth_svc.assert_plants_active_for_assignment(
+            db,
+            tenant_id=tenant_id,
+            plant_ids=validated_plant_ids,
+        )
 
     supplied_password = body.password.strip() if body.password else None
 
@@ -524,6 +609,11 @@ async def update_user(
         org_plants = await plant_repo.list_by_tenant(db, tenant_id)
         valid_plant_ids = {plant.id for plant in org_plants}
         assert_plants_belong_to_tenant(validated_plant_ids, valid_plant_ids, ctx)
+        await auth_svc.assert_plants_active_for_assignment(
+            db,
+            tenant_id=tenant_id,
+            plant_ids=validated_plant_ids,
+        )
 
     updated_user = await user_repo.update(db, user_id, updates)
 
@@ -605,6 +695,7 @@ async def resend_user_invite(
         target_plant_ids = set(await user_repo.get_plant_ids(db, user_id))
         assert_plants_belong_to_tenant(list(target_plant_ids), caller_plant_ids, ctx)
 
+    await auth_svc.assert_org_active_for_write(db, tenant_id)
     await auth_svc.resend_invitation(
         db,
         user=target_user,
@@ -672,3 +763,69 @@ async def reactivate_user(
     await user_repo.increment_permissions_version(db, user_id)
     await token_svc.revoke_all_user_tokens(db, user_id)
     return {"message": "User reactivated"}
+
+
+@router.patch("/{tenant_id}/plants/{plant_id}/deactivate", response_model=PlantResponse, status_code=status.HTTP_200_OK)
+async def deactivate_plant(
+    tenant_id: str,
+    plant_id: str,
+    claims: dict = Depends(require_tenant_admin_or_above),
+    db=Depends(get_db),
+) -> PlantResponse:
+    await _assert_fresh_token(db, claims)
+    assert_tenant_access(claims, tenant_id)
+    plant = await _get_plant_or_404(db, tenant_id, plant_id)
+    if not plant.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "PLANT_ALREADY_INACTIVE", "message": "Plant is already inactive"},
+        )
+
+    plant = await plant_repo.update(db, plant_id, {"is_active": False})
+    return PlantResponse.model_validate(plant)
+
+
+@router.patch("/{tenant_id}/plants/{plant_id}/reactivate", response_model=PlantResponse, status_code=status.HTTP_200_OK)
+async def reactivate_plant(
+    tenant_id: str,
+    plant_id: str,
+    claims: dict = Depends(require_tenant_admin_or_above),
+    db=Depends(get_db),
+) -> PlantResponse:
+    await _assert_fresh_token(db, claims)
+    assert_tenant_access(claims, tenant_id)
+    plant = await _get_plant_or_404(db, tenant_id, plant_id)
+    if plant.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "PLANT_ALREADY_ACTIVE", "message": "Plant is already active"},
+        )
+
+    plant = await plant_repo.update(db, plant_id, {"is_active": True})
+    return PlantResponse.model_validate(plant)
+
+
+@router.get("/{tenant_id}/plants/{plant_id}/delete-guard", status_code=status.HTTP_200_OK)
+async def get_plant_delete_guard(
+    tenant_id: str,
+    plant_id: str,
+    claims: dict = Depends(require_tenant_admin_or_above),
+    db=Depends(get_db),
+) -> dict:
+    await _assert_fresh_token(db, claims)
+    assert_tenant_access(claims, tenant_id)
+    await _get_plant_or_404(db, tenant_id, plant_id)
+    device_count = await _get_plant_device_count(tenant_id, plant_id)
+    if device_count > 0:
+        return {
+            "can_delete": False,
+            "device_count": device_count,
+            "code": "PLANT_DELETE_BLOCKED_DEVICES_EXIST",
+            "message": "Plant deletion is blocked because devices are still attached to this plant.",
+        }
+
+    return {
+        "can_delete": True,
+        "device_count": 0,
+        "message": "This plant currently has no attached devices.",
+    }

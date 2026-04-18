@@ -108,6 +108,18 @@ class DeviceRepository(TenantScopedRepository[Device]):
             await self._session.delete(device)
             await self._session.flush()
 
+    async def count_active_by_plant(self, plant_id: str) -> int:
+        query = (
+            select(func.count(Device.device_id))
+            .where(
+                Device.plant_id == plant_id,
+                Device.deleted_at.is_(None),
+            )
+        )
+        query = self._apply_tenant_scope_select(query)
+        result = await self._session.execute(query)
+        return int(result.scalar() or 0)
+
     async def exists(self, device_id: str) -> bool:
         return await super().exists(
             device_id,

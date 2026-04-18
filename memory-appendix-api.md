@@ -74,6 +74,8 @@ Endpoint group refs:
 |---|---|---|---|---|---|---|---|---|---|
 | `POST` | `/api/admin/tenants` | Create tenant/org | Yes | `super_admin` only | none | `CreateTenantRequest { name, slug }` | `TenantResponse` | `409 SLUG_TAKEN`, `503 TENANT_ID_ALLOCATION_FAILED` | `admin.py:21`; `OrgRepository.create` |
 | `GET` | `/api/admin/tenants` | List all tenants | Yes | `super_admin` only | none | none | `list[TenantResponse]` | none explicit | `admin.py:42`; `OrgRepository.list_all` |
+| `PATCH` | `/api/admin/tenants/{tenant_id}/suspend` | Suspend organization/tenant | Yes | `super_admin` only | `tenant_id` | none | `TenantResponse` | `404 ORG_NOT_FOUND`, `409 ORG_ALREADY_SUSPENDED` | `admin.py`; `OrgRepository.update` |
+| `PATCH` | `/api/admin/tenants/{tenant_id}/reactivate` | Reactivate suspended organization/tenant | Yes | `super_admin` only | `tenant_id` | none | `TenantResponse` | `404 ORG_NOT_FOUND`, `409 ORG_ALREADY_ACTIVE` | `admin.py`; `OrgRepository.update` |
 | `POST` | `/api/admin/users` | Create org admin | Yes | `super_admin` only | none | `CreateUserRequest`; role must be `org_admin`, password required | `UserResponse` | `422 INVALID_ROLE`, `404 TENANT_NOT_FOUND`, `409 EMAIL_TAKEN`, `422 PASSWORD_REQUIRED` | `admin.py:48`; `UserRepository.create` |
 | `GET` | `/api/admin/users` | List users globally or by tenant | Yes | `super_admin` only | `tenant_id?` | none | `list[UserResponse]` | none explicit | `admin.py:92`; direct DB query or `UserRepository.list_by_tenant` |
 
@@ -83,6 +85,9 @@ Endpoint group refs:
 |---|---|---|---|---|---|---|---|---|---|
 | `POST` | `/api/v1/tenants/{tenant_id}/plants` | Create plant | Yes | `require_tenant_admin_or_above`; tenant match enforced | `tenant_id` | `CreatePlantRequest { name, location?, timezone }` | `PlantResponse` | `404 ORG_NOT_FOUND` | `orgs.py:88`; `PlantRepository.create` |
 | `GET` | `/api/v1/tenants/{tenant_id}/plants` | List plants | Yes | any authenticated within tenant | `tenant_id` | none | `list[PlantResponse]` | tenant scope errors | `orgs.py:108`; `PlantRepository.list_by_tenant` |
+| `PATCH` | `/api/v1/tenants/{tenant_id}/plants/{plant_id}/deactivate` | Mark plant inactive | Yes | tenant admin or above | `tenant_id`, `plant_id` | none | `PlantResponse` | `404 PLANT_NOT_FOUND`, `409 PLANT_ALREADY_INACTIVE` if implemented that way | `orgs.py`; `PlantRepository.update` |
+| `PATCH` | `/api/v1/tenants/{tenant_id}/plants/{plant_id}/reactivate` | Mark plant active again | Yes | tenant admin or above | `tenant_id`, `plant_id` | none | `PlantResponse` | `404 PLANT_NOT_FOUND`, `409 PLANT_ALREADY_ACTIVE` if implemented that way | `orgs.py`; `PlantRepository.update` |
+| `GET` | `/api/v1/tenants/{tenant_id}/plants/{plant_id}/delete-guard` | Check whether plant can be safely deleted | Yes | tenant admin or above | `tenant_id`, `plant_id` | none | guard JSON including `device_count` and blocking code/message when devices exist | `404 PLANT_NOT_FOUND`, `409 PLANT_DELETE_BLOCKED_DEVICES_EXIST` or equivalent blocked response | `orgs.py`; auth-service calls device-service internal count endpoint |
 | `POST` | `/api/v1/tenants/{tenant_id}/users` | Create tenant user or reinvite never-activated existing user | Yes | `super_admin`, `org_admin`, `plant_manager`; role restrictions enforced | `tenant_id` | `CreateUserRequest { email, full_name?, role, tenant_id, plant_ids, password? }` | `UserResponse` including lifecycle fields | `403 FORBIDDEN`, `403 ROLE_ESCALATION_FORBIDDEN`, `422 TENANT_ID_MISMATCH`, `409 EMAIL_TAKEN`, `409 USER_DEACTIVATED_USE_REACTIVATE`, `403 INVALID_PLANT_IDS`, `404 ORG_NOT_FOUND` | `orgs.py:120`; `UserRepository.create` or same-row reuse, `AuthService.send_invitation` |
 | `GET` | `/api/v1/tenants/{tenant_id}/users` | List tenant users | Yes | tenant admin or above | `tenant_id` | none | `list[UserResponse]` with lifecycle fields `lifecycle_state`, `invite_status`, `pending_invite_expires_at`, `can_resend_invite`, `can_reactivate`, `can_deactivate` | tenant scope errors | `orgs.py:246`; `UserRepository.list_by_tenant` + invite-state enrichment |
 | `GET` | `/api/v1/tenants/{tenant_id}/entitlements` | Get effective entitlements | Yes | tenant admin or above | `tenant_id` | none | `FeatureEntitlementsResponse` | `404 ORG_NOT_FOUND` | `orgs.py:258`; `build_feature_entitlement_state` |
@@ -478,6 +483,10 @@ Endpoint refs:
 - `Confirmed from code`: web refresh uses HttpOnly cookie rotation; mobile codepaths also support explicit refresh token submission. Source of record for token storage remains auth-service plus frontend/mobile clients, summarized in [memory.md](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/memory.md#8-authentication-and-authorization).
 - `Confirmed from code`: browser app no longer persists refresh token in browser JS storage; refresh/logout are cookie-first for web.
 - `Confirmed from code`: tenant user APIs return lifecycle-specific fields used by admin/org user tables: `lifecycle_state`, `invite_status`, `pending_invite_expires_at`, `can_resend_invite`, `can_reactivate`, `can_deactivate`.
+- `Confirmed from code`: org/plant lifecycle now uses existing `is_active` fields as operational state:
+  - tenant/org `is_active=false` => suspended
+  - plant `is_active=false` => inactive
+- `Confirmed from code`: auth/device write paths now depend on active-org / active-plant guards, not just raw tenant identity.
 
 ### Shared telemetry contract
 

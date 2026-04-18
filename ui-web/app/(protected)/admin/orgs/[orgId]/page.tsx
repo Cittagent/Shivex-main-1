@@ -79,6 +79,8 @@ export default function AdminOrgDetailPage() {
   const [reactivatingUserId, setReactivatingUserId] = useState<string | null>(null);
   const [resendingInviteUserId, setResendingInviteUserId] = useState<string | null>(null);
   const [hardwareCount, setHardwareCount] = useState(0);
+  const [updatingOrg, setUpdatingOrg] = useState(false);
+  const [updatingPlantId, setUpdatingPlantId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!toast) {
@@ -151,6 +153,39 @@ export default function AdminOrgDetailPage() {
     }
   }, [activeTab, tabs]);
 
+  async function handleToggleOrg(): Promise<void> {
+    if (!org) {
+      return;
+    }
+    setUpdatingOrg(true);
+    setError(null);
+    try {
+      const updated = org.is_active ? await authApi.suspendTenant(tenantId) : await authApi.reactivateTenant(tenantId);
+      setOrg(updated);
+      setToast(updated.is_active ? "Organisation reactivated." : "Organisation suspended. Login, refresh, invites, and new resource creation are now blocked.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update organisation status");
+    } finally {
+      setUpdatingOrg(false);
+    }
+  }
+
+  async function handleTogglePlant(plant: PlantProfile): Promise<void> {
+    setUpdatingPlantId(plant.id);
+    setError(null);
+    try {
+      const updated = plant.is_active
+        ? await authApi.deactivatePlant(tenantId, plant.id)
+        : await authApi.reactivatePlant(tenantId, plant.id);
+      setPlants((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+      setToast(updated.is_active ? "Plant reactivated." : "Plant deactivated. New user assignments and device onboarding are now blocked.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update plant status");
+    } finally {
+      setUpdatingPlantId(null);
+    }
+  }
+
   async function handleDeactivateUser(userId: string): Promise<void> {
     const confirmed = window.confirm("Are you sure? This will immediately log out the user.");
     if (!confirmed) {
@@ -216,7 +251,25 @@ export default function AdminOrgDetailPage() {
         <PageHeader
           title={org?.name ?? "Organisation"}
           subtitle={org ? `Slug: ${org.slug}` : "Loading organisation context"}
+          actions={org ? (
+            <Button
+              variant={org.is_active ? "danger" : "outline"}
+              onClick={() => void handleToggleOrg()}
+              disabled={updatingOrg}
+              isLoading={updatingOrg}
+            >
+              {org.is_active ? "Suspend Organisation" : "Reactivate Organisation"}
+            </Button>
+          ) : undefined}
         />
+
+        {org ? (
+          <div className={`rounded-2xl border px-4 py-3 text-sm ${org.is_active ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+            {org.is_active
+              ? "Organisation is active."
+              : "Organisation is suspended. Users cannot log in or refresh sessions, and new invites, users, plants, and other important create flows are blocked until reactivation."}
+          </div>
+        ) : null}
 
         {tenantId ? <OrgFeatureAccessEditor tenantId={tenantId} mode="org_grants" /> : null}
 
@@ -264,7 +317,7 @@ export default function AdminOrgDetailPage() {
             )}
           >
             {isLoading ? (
-              <DataSkeletonTable columns={["Name", "Location", "Timezone", "Status", "Created"]} />
+              <DataSkeletonTable columns={["Name", "Location", "Timezone", "Status", "Created", "Actions"]} />
             ) : plants.length === 0 ? (
               <EmptyState message="No plants yet. Add the first plant to start assigning users and devices." />
             ) : (
@@ -276,6 +329,7 @@ export default function AdminOrgDetailPage() {
                     <TableHead>Timezone</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Created</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -290,6 +344,19 @@ export default function AdminOrgDetailPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>{formatIST(plant.created_at, "Unknown")}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end">
+                          <Button
+                            size="sm"
+                            variant={plant.is_active ? "danger" : "outline"}
+                            disabled={updatingPlantId === plant.id}
+                            isLoading={updatingPlantId === plant.id}
+                            onClick={() => void handleTogglePlant(plant)}
+                          >
+                            {plant.is_active ? "Deactivate" : "Reactivate"}
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

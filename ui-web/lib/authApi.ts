@@ -45,6 +45,13 @@ export interface FeatureEntitlements {
   entitlements_version: number;
 }
 
+export interface PlantDeleteGuard {
+  can_delete: boolean;
+  device_count: number;
+  code?: string;
+  message: string;
+}
+
 export interface PlantProfile {
   id: string;
   tenant_id: string;
@@ -368,6 +375,18 @@ export const authApi = {
     });
   },
 
+  async suspendTenant(tenantId: string): Promise<TenantProfile> {
+    return authFetch<TenantProfile>(`/api/admin/tenants/${tenantId}/suspend`, {
+      method: "PATCH",
+    });
+  },
+
+  async reactivateTenant(tenantId: string): Promise<TenantProfile> {
+    return authFetch<TenantProfile>(`/api/admin/tenants/${tenantId}/reactivate`, {
+      method: "PATCH",
+    });
+  },
+
   async getTenantEntitlements(tenantId: string): Promise<FeatureEntitlements> {
     return authFetch<FeatureEntitlements>(`/api/v1/tenants/${tenantId}/entitlements`, {
       method: "GET",
@@ -421,6 +440,24 @@ export const authApi = {
 
   async listPlants(tenantId: string): Promise<PlantProfile[]> {
     return authFetch<PlantProfile[]>(`/api/v1/tenants/${tenantId}/plants`, {
+      method: "GET",
+    });
+  },
+
+  async deactivatePlant(tenantId: string, plantId: string): Promise<PlantProfile> {
+    return authFetch<PlantProfile>(`/api/v1/tenants/${tenantId}/plants/${plantId}/deactivate`, {
+      method: "PATCH",
+    });
+  },
+
+  async reactivatePlant(tenantId: string, plantId: string): Promise<PlantProfile> {
+    return authFetch<PlantProfile>(`/api/v1/tenants/${tenantId}/plants/${plantId}/reactivate`, {
+      method: "PATCH",
+    });
+  },
+
+  async getPlantDeleteGuard(tenantId: string, plantId: string): Promise<PlantDeleteGuard> {
+    return authFetch<PlantDeleteGuard>(`/api/v1/tenants/${tenantId}/plants/${plantId}/delete-guard`, {
       method: "GET",
     });
   },

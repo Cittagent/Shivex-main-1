@@ -37,6 +37,7 @@ export default function AdminOrgsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [updatingOrgId, setUpdatingOrgId] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -66,6 +67,19 @@ export default function AdminOrgsPage() {
       isMounted = false;
     };
   }, []);
+
+  async function handleToggleOrg(org: TenantProfile): Promise<void> {
+    setUpdatingOrgId(org.id);
+    setError(null);
+    try {
+      const updated = org.is_active ? await authApi.suspendTenant(org.id) : await authApi.reactivateTenant(org.id);
+      setOrgs((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update organisation status");
+    } finally {
+      setUpdatingOrgId(null);
+    }
+  }
 
   return (
     <>
@@ -127,14 +141,25 @@ export default function AdminOrgsPage() {
                     <TableCell className="font-mono text-xs text-[var(--text-secondary)]">{org.slug}</TableCell>
                     <TableCell>
                       <Badge variant={org.is_active ? "success" : "error"}>
-                        {org.is_active ? "Active" : "Inactive"}
+                        {org.is_active ? "Active" : "Suspended"}
                       </Badge>
                     </TableCell>
                     <TableCell>{formatIST(org.created_at, "Unknown")}</TableCell>
                     <TableCell className="text-right">
-                      <Link href={`/admin/tenants/${org.id}`}>
-                        <Button variant="outline" size="sm">View</Button>
-                      </Link>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant={org.is_active ? "danger" : "outline"}
+                          size="sm"
+                          disabled={updatingOrgId === org.id}
+                          isLoading={updatingOrgId === org.id}
+                          onClick={() => void handleToggleOrg(org)}
+                        >
+                          {org.is_active ? "Suspend" : "Reactivate"}
+                        </Button>
+                        <Link href={`/admin/tenants/${org.id}`}>
+                          <Button variant="outline" size="sm">View</Button>
+                        </Link>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

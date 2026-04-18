@@ -52,6 +52,7 @@ export function InviteUserModal({
   onSuccess,
 }: InviteUserModalProps) {
   const titleId = useId();
+  const activePlants = useMemo(() => availablePlants.filter((plant) => plant.is_active), [availablePlants]);
   const allowedRoles = ROLE_OPTIONS_BY_CALLER[callerRole] ?? ROLE_OPTIONS_BY_CALLER.viewer;
   const plantManagerMode = callerRole === "plant_manager";
   const [fullName, setFullName] = useState("");
@@ -63,8 +64,8 @@ export function InviteUserModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const plantManagerSelectedPlant = useMemo(
-    () => availablePlants.find((plant) => plant.id === selectedPlantId) ?? null,
-    [availablePlants, selectedPlantId],
+    () => activePlants.find((plant) => plant.id === selectedPlantId) ?? null,
+    [activePlants, selectedPlantId],
   );
 
   useEffect(() => {
@@ -84,34 +85,34 @@ export function InviteUserModal({
     setIsSubmitting(false);
 
     if (plantManagerMode) {
-      const firstPlantId = availablePlants[0]?.id ?? "";
+      const firstPlantId = activePlants[0]?.id ?? "";
       setSelectedPlantId(firstPlantId);
       setSelectedPlantIds(firstPlantId ? [firstPlantId] : []);
     } else {
       setSelectedPlantIds([]);
       setSelectedPlantId("");
     }
-  }, [allowedRoles, availablePlants, isOpen, plantManagerMode]);
+  }, [activePlants, allowedRoles, isOpen, plantManagerMode]);
 
   useEffect(() => {
     if (!plantManagerMode) {
       return;
     }
 
-    if (!selectedPlantId && availablePlants.length > 0) {
-      const firstPlantId = availablePlants[0].id;
+    if (!selectedPlantId && activePlants.length > 0) {
+      const firstPlantId = activePlants[0].id;
       setSelectedPlantId(firstPlantId);
       setSelectedPlantIds([firstPlantId]);
       return;
     }
 
-    if (selectedPlantId && !availablePlants.some((plant) => plant.id === selectedPlantId)) {
-      const fallbackPlantId = availablePlants[0]?.id ?? "";
+    if (selectedPlantId && !activePlants.some((plant) => plant.id === selectedPlantId)) {
+      const fallbackPlantId = activePlants[0]?.id ?? "";
       setSelectedPlantId(fallbackPlantId);
       setSelectedPlantIds(fallbackPlantId ? [fallbackPlantId] : []);
       setError(null);
     }
-  }, [availablePlants, plantManagerMode, selectedPlantId]);
+  }, [activePlants, plantManagerMode, selectedPlantId]);
 
   function togglePlant(plantId: string): void {
     setSelectedPlantIds((current) =>
@@ -139,11 +140,11 @@ export function InviteUserModal({
       : selectedPlantIds;
 
     if (plantManagerMode) {
-      if (availablePlants.length === 0) {
+      if (activePlants.length === 0) {
         setError("You do not have any assigned plants to invite users into.");
         return;
       }
-      if (plantIds.length !== 1 || !availablePlants.some((plant) => plant.id === plantIds[0])) {
+      if (plantIds.length !== 1 || !activePlants.some((plant) => plant.id === plantIds[0])) {
         setError("Plant managers must choose exactly one of their assigned plants.");
         return;
       }
@@ -186,8 +187,8 @@ export function InviteUserModal({
   }
 
   const plantInviteDisabled = plantManagerMode
-    ? isSubmitting || availablePlants.length === 0 || !selectedPlantId
-    : isSubmitting || availablePlants.length === 0 || selectedPlantIds.length === 0;
+    ? isSubmitting || activePlants.length === 0 || !selectedPlantId
+    : isSubmitting || activePlants.length === 0 || selectedPlantIds.length === 0;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4">
@@ -266,9 +267,9 @@ export function InviteUserModal({
 
             {plantManagerMode ? (
               <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-3">
-                {availablePlants.length === 0 ? (
+                {activePlants.length === 0 ? (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
-                    You do not have any assigned plants yet. Ask an org admin to assign you to a plant before inviting users.
+                    You do not have any active assigned plants yet. Ask an org admin to assign or reactivate a plant before inviting users.
                   </div>
                 ) : (
                   <label className="block space-y-2">
@@ -280,11 +281,11 @@ export function InviteUserModal({
                         setSelectedPlantId(nextPlantId);
                         setSelectedPlantIds(nextPlantId ? [nextPlantId] : []);
                       }}
-                      disabled={isSubmitting || availablePlants.length === 1}
+                      disabled={isSubmitting || activePlants.length === 1}
                       className="block h-10 w-full rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-0)] px-3 text-sm text-[var(--text-primary)] shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
                     >
                       <option value="">Select a plant</option>
-                      {availablePlants.map((plant) => (
+                      {activePlants.map((plant) => (
                         <option key={plant.id} value={plant.id}>
                           {plant.name}
                         </option>
@@ -300,11 +301,11 @@ export function InviteUserModal({
               </div>
             ) : (
               <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-3">
-                {availablePlants.length === 0 ? (
-                  <p className="text-sm text-[var(--text-secondary)]">No plants available yet. Add a plant first.</p>
+                {activePlants.length === 0 ? (
+                  <p className="text-sm text-[var(--text-secondary)]">No active plants available yet. Inactive plants cannot be used for new invites.</p>
                 ) : (
                   <div className="grid gap-2 sm:grid-cols-2">
-                    {availablePlants.map((plant) => (
+                    {activePlants.map((plant) => (
                       <label
                         key={plant.id}
                         className="flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-0)] px-3 py-2 text-sm text-[var(--text-primary)]"

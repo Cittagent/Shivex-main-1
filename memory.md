@@ -384,6 +384,8 @@
   - user lifecycle now distinguishes `invited`, `invite_expired`, `active`, and `deactivated` through API/UI fields layered on top of `is_active`, `invited_at`, `activated_at`, and `deactivated_at`.
   - `last_login_at` is intended to move only on successful interactive login, not on invite acceptance, password reset, or refresh.
   - auth cleanup loop now purges stale `refresh_tokens` and stale `auth_action_tokens`.
+  - organization lifecycle now uses `organizations.is_active` as an `Active` / `Suspended` state, and plant lifecycle uses `plants.is_active` as an `Active` / `Inactive` state.
+  - plant deletion is intentionally not exposed as a destructive workflow; instead there is a device-count guard path to prevent orphaned devices.
   - exact endpoint map: [memory-appendix-api.md#auth-service](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/memory-appendix-api.md)
   - exact schema map: [memory-appendix-db.md#auth-service-schemas](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/memory-appendix-db.md)
 
@@ -707,6 +709,40 @@
   - expired never-activated invites do not permanently poison an email address; the same logical user row is reused for reinvite/resend instead of creating a duplicate account.
   - previously activated but later deactivated users must use `reactivate`, not reinvite.
 
+### Organization suspension lifecycle
+
+- Trigger:
+  - super admin suspends or reactivates an organization/tenant.
+- Services touched:
+  - `auth-service`, then any tenant-authenticated service on subsequent requests.
+- Persistence points:
+  - `organizations.is_active`.
+- Async boundaries:
+  - none required; enforcement happens on subsequent login/refresh/write requests.
+- Output/result:
+  - suspended org cannot log in, refresh, invite users, or create new plants/users.
+- Critical rules:
+  - super-admin visibility into suspended orgs remains intact.
+  - suspended orgs fail closed on login/refresh with `ORG_SUSPENDED`.
+  - old tenant tokens become unusable for protected writes because auth freshness checks re-read tenant state.
+
+### Plant inactive lifecycle
+
+- Trigger:
+  - tenant/org admin deactivates or reactivates a plant.
+- Services touched:
+  - `auth-service` for plant admin actions and user assignment checks; `device-service` for onboarding checks; web admin/org pages.
+- Persistence points:
+  - `plants.is_active`.
+- Async boundaries:
+  - none required.
+- Output/result:
+  - inactive plant remains readable for history/admin visibility, but cannot be used for new user-plant assignments or new device onboarding.
+- Critical rules:
+  - inactive plants are filtered out of active assignment/onboarding dropdowns in the web app.
+  - inactive plants cause create/update flows to fail with `PLANT_INACTIVE`.
+  - plant delete itself is still intentionally unavailable; delete behavior is represented by a guard check only.
+
 ### Telemetry ingest
 
 - Trigger:
@@ -881,6 +917,7 @@
 
 - Auth model:
   - `Confirmed from code`: JWT access token + DB-backed refresh token model.
+  - `Confirmed from code`: tenant and plant lifecycle enforcement are layered on top of the auth/tenant model rather than using a separate lifecycle service.
 
 - Token/session model:
   - `Confirmed from code`: access tokens are signed JWTs with revocation via Redis `token:revoked:{jti}` (`token_service.py:24-46`, `154-165`).
@@ -918,6 +955,7 @@
     - tenant-scoped repositories
     - copilot SQL tenant injection
     - frontend super-admin gate
+    - active-org and active-plant write guards in auth/device flows
 
 - Super-admin / tenant switching:
   - `Confirmed from code`: super admins are treated as org-admin for entitlement display but can switch target tenant via header/query/UI selector.
@@ -1038,6 +1076,13 @@
   - background cleanup of expired/revoked refresh tokens plus stale invite/password-reset action tokens.
 - Trigger type:
   - startup in auth-service lifespan.
+
+### Org / plant lifecycle guard paths
+
+- Responsibility:
+  - enforce org suspension and plant inactivity for write paths, plus safe pre-delete checks for plants.
+- Trigger type:
+  - synchronous API calls from super-admin/admin/org UI and downstream auth/device checks.
 
 ## 11. Environment Variables and Configuration
 
@@ -1463,15 +1508,20 @@
   - incorrect `last_login_at` audit behavior
   - reinvite/reactivate lifecycle drift
   - cleanup logic deleting valid action tokens
+  - org suspension not being enforced consistently across login, invite, and create-resource paths
+  - inactive plants still appearing in assignment/onboarding flows
 - Tests to run:
   - auth-service tests, top-level tenant scope/auth regression tests, web auth unit/e2e tests.
   - `services/auth-service/tests/test_login_audit.py`
   - `services/auth-service/tests/test_token_cleanup_service.py`
+  - `services/auth-service/tests/test_org_plant_lifecycle.py`
+  - `services/device-service/tests/test_plant_lifecycle_guards.py`
 - Common pitfalls:
   - forgetting `permissions_version` or `tenant_entitlements_version`
   - breaking cookie-based refresh while mobile still uses body token
   - bypassing tenant guards in service-to-service paths
   - assuming invite acceptance counts as login for audit purposes when it should not
+  - allowing plant deletion or reassignment flows to orphan devices
 - Exact API/DB references:
   - [memory-appendix-api.md#auth-service](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/memory-appendix-api.md)
   - [memory-appendix-db.md#auth-service-schemas](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittagent-Obeya-main/memory-appendix-db.md)

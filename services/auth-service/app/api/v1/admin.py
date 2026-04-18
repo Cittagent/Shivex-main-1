@@ -66,6 +66,14 @@ async def create_user(body: CreateUserRequest, db=Depends(get_db)) -> UserRespon
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found"},
         )
+    if not org.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "ORG_SUSPENDED",
+                "message": "Organization is suspended. New invites and resource creation are blocked.",
+            },
+        )
 
     existing = await user_repo.get_by_email(db, body.email)
     if existing is not None:
@@ -91,6 +99,42 @@ async def create_user(body: CreateUserRequest, db=Depends(get_db)) -> UserRespon
     )
     user.activated_at = datetime.now(UTC).replace(tzinfo=None)
     return UserResponse.model_validate(user)
+
+
+@router.patch("/tenants/{tenant_id}/suspend", response_model=TenantResponse, status_code=status.HTTP_200_OK)
+async def suspend_tenant(tenant_id: str, db=Depends(get_db)) -> TenantResponse:
+    org = await org_repo.get_by_id(db, tenant_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ORG_NOT_FOUND", "message": "Organization not found"},
+        )
+    if not org.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "ORG_ALREADY_SUSPENDED", "message": "Organization is already suspended"},
+        )
+
+    org = await org_repo.update(db, tenant_id, {"is_active": False})
+    return TenantResponse.model_validate(org)
+
+
+@router.patch("/tenants/{tenant_id}/reactivate", response_model=TenantResponse, status_code=status.HTTP_200_OK)
+async def reactivate_tenant(tenant_id: str, db=Depends(get_db)) -> TenantResponse:
+    org = await org_repo.get_by_id(db, tenant_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ORG_NOT_FOUND", "message": "Organization not found"},
+        )
+    if org.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "ORG_ALREADY_ACTIVE", "message": "Organization is already active"},
+        )
+
+    org = await org_repo.update(db, tenant_id, {"is_active": True})
+    return TenantResponse.model_validate(org)
 
 
 @router.get("/users", response_model=list[UserResponse], status_code=status.HTTP_200_OK)

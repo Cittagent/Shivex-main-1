@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.auth import AuthActionToken, AuthActionType, User, UserRole
 from app.repositories.org_repository import OrgRepository
+from app.repositories.plant_repository import PlantRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import ActionTokenStatusResponse, TokenResponse
 from app.services.action_token_service import action_token_svc
@@ -20,6 +21,7 @@ pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 user_repo = UserRepository()
 org_repo = OrgRepository()
+plant_repo = PlantRepository()
 token_svc = TokenService()
 
 UTC = timezone.utc
@@ -37,6 +39,57 @@ def _as_utc_datetime(value: datetime) -> datetime:
 
 
 class AuthService:
+    async def assert_org_active_for_write(self, db: AsyncSession, tenant_id: str) -> None:
+        org = await org_repo.get_by_id(db, tenant_id)
+        if org is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "ORG_NOT_FOUND", "message": "Organization not found"},
+            )
+        if not org.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "ORG_SUSPENDED",
+                    "message": "Organization is suspended. New invites and resource creation are blocked.",
+                },
+            )
+
+    async def assert_plants_active_for_assignment(
+        self,
+        db: AsyncSession,
+        *,
+        tenant_id: str,
+        plant_ids: list[str],
+    ) -> None:
+        unique_plant_ids = list(dict.fromkeys(plant_ids))
+        if not unique_plant_ids:
+            return
+
+        plants = await plant_repo.list_by_ids_for_tenant(db, tenant_id, unique_plant_ids)
+        plant_by_id = {plant.id: plant for plant in plants}
+        missing_ids = [plant_id for plant_id in unique_plant_ids if plant_id not in plant_by_id]
+        if missing_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "INVALID_PLANT_IDS",
+                    "message": "One or more selected plants are not available in this organization.",
+                    "rejected_ids": missing_ids,
+                },
+            )
+
+        inactive_ids = [plant_id for plant_id, plant in plant_by_id.items() if not plant.is_active]
+        if inactive_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "PLANT_INACTIVE",
+                    "message": "Inactive plants cannot be used for new assignments or onboarding.",
+                    "plant_ids": inactive_ids,
+                },
+            )
+
     def _build_frontend_link(self, path: str, token: str) -> str:
         base = settings.FRONTEND_BASE_URL.rstrip("/")
         return f"{base}{path}?token={token}"
@@ -57,6 +110,8 @@ class AuthService:
         created_by_role: str | None,
         tenant_id: str | None,
     ) -> None:
+        if tenant_id is not None:
+            await self.assert_org_active_for_write(db, tenant_id)
         user.invited_at = _now_utc_naive()
         # Reinviting a never-activated account re-opens onboarding lifecycle.
         if user.activated_at is None:

@@ -33,6 +33,7 @@ export function EditUserModal({
   onSuccess,
 }: EditUserModalProps) {
   const titleId = useId();
+  const activePlants = useMemo(() => availablePlants.filter((plant) => plant.is_active), [availablePlants]);
   const [fullName, setFullName] = useState(user.full_name ?? "");
   const [role, setRole] = useState<EditableRole>((user.role === "plant_manager" || user.role === "operator" || user.role === "viewer") ? user.role : "viewer");
   const [plantIds, setPlantIds] = useState<string[]>(currentPlantIds);
@@ -44,12 +45,12 @@ export function EditUserModal({
     if (isOpen) {
       setFullName(user.full_name ?? "");
       setRole((user.role === "plant_manager" || user.role === "operator" || user.role === "viewer") ? user.role : "viewer");
-      setPlantIds(currentPlantIds);
+      setPlantIds(currentPlantIds.filter((plantId) => activePlants.some((plant) => plant.id === plantId)));
       setIsActive(user.is_active);
       setError(null);
       setIsSubmitting(false);
     }
-  }, [isOpen, user, currentPlantIds]);
+  }, [activePlants, currentPlantIds, isOpen, user]);
 
   const hasChanges = useMemo(
     () =>
@@ -170,7 +171,7 @@ export function EditUserModal({
               </p>
             </div>
             <div className="grid gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)] p-3 sm:grid-cols-2">
-              {availablePlants.map((plant) => (
+              {activePlants.map((plant) => (
                 <label
                   key={plant.id}
                   className="flex items-center gap-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-0)] px-3 py-2 text-sm text-[var(--text-primary)]"
@@ -186,6 +187,11 @@ export function EditUserModal({
                 </label>
               ))}
             </div>
+            {activePlants.length === 0 ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                No active plants are available. Inactive plants cannot be used for new user assignments.
+              </div>
+            ) : null}
           </div>
 
           <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-3">
@@ -213,7 +219,7 @@ export function EditUserModal({
 
           {!isActive && user.is_active ? (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              Deactivating will immediately end this user's session.
+              Deactivating will immediately end this user&apos;s session.
             </div>
           ) : null}
 

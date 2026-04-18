@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     )
     PLATFORM_NAME: str = "Shivex"
     FRONTEND_BASE_URL: str = "http://localhost:3000"
+    DEVICE_SERVICE_BASE_URL: str = "http://localhost:8000"
     AUTH_ALLOWED_ORIGINS: str = ""
     REFRESH_COOKIE_NAME: str = "refresh_token"
     REFRESH_COOKIE_DOMAIN: str | None = None

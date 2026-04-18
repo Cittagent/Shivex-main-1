@@ -83,6 +83,7 @@ export default function OrgUsersPage() {
   const [confirmingUserId, setConfirmingUserId] = useState<string | null>(null);
   const [processingDeactivateId, setProcessingDeactivateId] = useState<string | null>(null);
   const accessiblePlants = useMemo(() => resolveVisiblePlants(me, plants), [me, plants]);
+  const activeAccessiblePlants = useMemo(() => accessiblePlants.filter((plant) => plant.is_active), [accessiblePlants]);
 
   useEffect(() => {
     if (!toast) {
@@ -246,14 +247,14 @@ export default function OrgUsersPage() {
             title="Invite users"
             subtitle={
               accessiblePlants.length > 0
-                ? `${accessiblePlants.length} assigned plant${accessiblePlants.length === 1 ? "" : "s"} available for invite scoping.`
+                ? `${activeAccessiblePlants.length} active assigned plant${activeAccessiblePlants.length === 1 ? "" : "s"} available for invite scoping.`
                 : "No plants are assigned to your account yet."
             }
           >
-            {accessiblePlants.length > 0 ? (
+            {activeAccessiblePlants.length > 0 ? (
               <div className="space-y-4">
                 <div className="flex flex-wrap gap-2">
-                  {accessiblePlants.map((plant) => (
+                  {activeAccessiblePlants.map((plant) => (
                     <span
                       key={plant.id}
                       className="inline-flex items-center rounded-full border border-[var(--border-subtle)] bg-[var(--surface-1)] px-3 py-1 text-sm text-[var(--text-primary)]"
@@ -268,7 +269,7 @@ export default function OrgUsersPage() {
                 <Button onClick={() => setInviteOpen(true)}>Invite User</Button>
               </div>
             ) : (
-              <EmptyState message="No plants are assigned to your account yet. Ask an org admin to assign you to a plant before inviting users." />
+              <EmptyState message="No active plants are assigned to your account yet. Ask an org admin to assign or reactivate a plant before inviting users." />
             )}
           </SectionCard>
         ) : (
@@ -415,7 +416,7 @@ export default function OrgUsersPage() {
           isOpen={inviteOpen}
           tenantId={orgId}
           callerRole={currentRole ?? "viewer"}
-          availablePlants={accessiblePlants}
+          availablePlants={activeAccessiblePlants}
           onClose={() => setInviteOpen(false)}
           onSuccess={(user, plantIds) => {
             setUsers((current) => {
@@ -436,7 +437,7 @@ export default function OrgUsersPage() {
           tenantId={orgId}
           user={editingUser}
           currentPlantIds={userPlantAccess[editingUser.id] ?? []}
-          availablePlants={plants}
+          availablePlants={plants.filter((plant) => plant.is_active)}
           onClose={() => setEditingUser(null)}
           onSuccess={(updated, plantIds) => {
             setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));

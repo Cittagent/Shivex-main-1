@@ -36,7 +36,10 @@ export function OnboardDeviceModal({ isOpen, onClose, onSuccess }: OnboardDevice
   const [location, setLocation] = useState("");
 
   const plants = useMemo(
-    () => (userRole === "plant_manager" ? orgPlants.filter((plant) => userPlantIds.includes(plant.id)) : orgPlants),
+    () =>
+      (userRole === "plant_manager" ? orgPlants.filter((plant) => userPlantIds.includes(plant.id)) : orgPlants).filter(
+        (plant) => plant.is_active,
+      ),
     [orgPlants, userPlantIds, userRole],
   );
   const hasOrgPlants = orgPlants.length > 0;
@@ -240,16 +243,16 @@ export function OnboardDeviceModal({ isOpen, onClose, onSuccess }: OnboardDevice
                 ) : (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
                     {hasOrgPlants
-                      ? "No plants are assigned to your account yet. Ask an org admin to assign you to a plant before adding a device."
-                      : "Create a plant first. Devices must belong to a plant before they can be added."}
+                      ? "No active plants are assigned to your account yet. Ask an org admin to assign or reactivate a plant before adding a device."
+                      : "Create an active plant first. Devices must belong to an active plant before they can be added."}
                   </div>
                 )}
                 {hasSelectablePlants ? (
                   <p className="mt-1 text-xs text-gray-400">Choose the plant this device belongs to.</p>
                 ) : hasOrgPlants ? (
-                  <p className="mt-1 text-xs text-gray-400">No plants are assigned to your account yet.</p>
+                  <p className="mt-1 text-xs text-gray-400">Inactive plants cannot be used for new device onboarding.</p>
                 ) : (
-                  <p className="mt-1 text-xs text-gray-400">A plant must exist before a machine can be registered.</p>
+                  <p className="mt-1 text-xs text-gray-400">An active plant must exist before a machine can be registered.</p>
                 )}
               </div>
 

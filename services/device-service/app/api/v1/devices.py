@@ -60,6 +60,7 @@ from app.schemas.device import (
     DeviceHardwareMappingListResponse,
     DeviceHardwareMappingResponse,
 )
+from app.repositories.device import DeviceRepository
 from app.repositories.device_state_intervals import DeviceStateIntervalRepository
 from app.services.device import DeviceService
 from app.services.device_errors import (
@@ -484,10 +485,17 @@ async def _validate_org_plant_access(
     *,
     tenant_id: str,
     plant_id: str,
-) -> None:
+) -> dict:
     plants = await _list_tenant_plants(request, tenant_id)
-    valid_plant_ids = {str(plant.get("id")) for plant in plants if isinstance(plant, dict) and plant.get("id")}
-    if plant_id not in valid_plant_ids:
+    selected_plant = next(
+        (
+            plant
+            for plant in plants
+            if isinstance(plant, dict) and str(plant.get("id")) == plant_id
+        ),
+        None,
+    )
+    if selected_plant is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
@@ -495,6 +503,15 @@ async def _validate_org_plant_access(
                 "message": "Selected plant does not exist in this organization.",
             },
         )
+    if not bool(selected_plant.get("is_active", True)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "PLANT_INACTIVE",
+                "message": "Inactive plants cannot be used for new device onboarding.",
+            },
+        )
+    return selected_plant
 
 
 # =====================================================
@@ -1172,6 +1189,25 @@ async def create_device(
                 "timestamp": datetime.utcnow().isoformat(),
             },
         )
+
+
+@router.get(
+    "/internal/plants/{plant_id}/device-count",
+    status_code=status.HTTP_200_OK,
+)
+async def get_plant_device_count(
+    plant_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    tenant_id = get_required_tenant_id(request)
+    repository = DeviceRepository(db, TenantContext.from_request(request))
+    device_count = await repository.count_active_by_plant(plant_id)
+    return {
+        "plant_id": plant_id,
+        "tenant_id": tenant_id,
+        "device_count": device_count,
+    }
 
 
 @router.post(

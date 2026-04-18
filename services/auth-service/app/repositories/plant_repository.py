@@ -39,8 +39,28 @@ class PlantRepository:
         result = await db.execute(select(Plant).where(Plant.id == plant_id))
         return result.scalar_one_or_none()
 
+    async def get_by_id_for_tenant(self, db: AsyncSession, tenant_id: str, plant_id: str) -> Plant | None:
+        result = await db.execute(
+            select(Plant).where(
+                Plant.id == plant_id,
+                Plant.tenant_id == tenant_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def list_by_tenant(self, db: AsyncSession, tenant_id: str) -> list[Plant]:
         result = await db.execute(select(Plant).where(Plant.tenant_id == tenant_id).order_by(Plant.created_at.desc()))
+        return list(result.scalars().all())
+
+    async def list_active_by_tenant(self, db: AsyncSession, tenant_id: str) -> list[Plant]:
+        result = await db.execute(
+            select(Plant)
+            .where(
+                Plant.tenant_id == tenant_id,
+                Plant.is_active.is_(True),
+            )
+            .order_by(Plant.created_at.desc())
+        )
         return list(result.scalars().all())
 
     async def list_by_ids_for_tenant(self, db: AsyncSession, tenant_id: str, plant_ids: list[str]) -> list[Plant]:

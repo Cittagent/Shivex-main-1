@@ -135,7 +135,7 @@ Source: [auth model](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittage
 | `id` | `String(10)` | no | allocator-generated | PK; SH-prefixed tenant ID after hard cut. `Confirmed from model/migration` |
 | `name` | `String(255)` | no | none |  |
 | `slug` | `String(100)` | no | none | unique; index `ix_organizations_slug` |
-| `is_active` | `Boolean` | no | true |  |
+| `is_active` | `Boolean` | no | true | operational org lifecycle flag; current policy uses `true = Active`, `false = Suspended` |
 | `entitlements_version` | `Integer` | no | `0` |  |
 | `premium_feature_grants_json` | `JSON` | no | `[]` |  |
 | `role_feature_matrix_json` | `JSON` | no | `{}` |  |
@@ -151,7 +151,7 @@ Source: [auth model](/Users/vedanthshetty/Desktop/GIT-Testing/FactoryOPS-Cittage
 | `name` | `String(255)` | no | none |  |
 | `location` | `String(500)` | yes | none |  |
 | `timezone` | `String(64)` | no | `Asia/Kolkata` |  |
-| `is_active` | `Boolean` | no | true |  |
+| `is_active` | `Boolean` | no | true | operational plant lifecycle flag; current policy uses `true = Active`, `false = Inactive` |
 | `created_at` | `DateTime(timezone=True)` | no | current timestamp |  |
 | `updated_at` | `DateTime(timezone=True)` | no | current timestamp / on update |  |
 
