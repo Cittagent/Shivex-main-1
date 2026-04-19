@@ -15,6 +15,7 @@ venv/
 *.log
 
 # local env
+.env.local
 
 
 # local runtime
