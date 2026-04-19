@@ -474,6 +474,8 @@ class APIClient:
         default_tenant = _discover_default_tenant(required_premium_features)
         _ensure_org_premium_features(token, default_tenant, required_premium_features)
         default_plant_id = _ensure_default_plant(token, default_tenant)
+        self.default_tenant = default_tenant
+        self.default_plant_id = default_plant_id
         headers = {
             "Authorization": f"Bearer {token}",
             "X-Target-Tenant-Id": default_tenant,

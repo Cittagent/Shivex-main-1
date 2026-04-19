@@ -1,6 +1,7 @@
 """Result formatter for dashboard-ready analytics payloads."""
 
 from collections import defaultdict
+from copy import deepcopy
 from typing import Any, Dict, List
 
 from src.services.analytics.confidence import get_confidence
@@ -115,28 +116,26 @@ class ResultFormatter:
         )
         gauge_color = "green" if anomaly_rate < 3.0 else "amber" if anomaly_rate < 7.0 else "red"
         ensemble_data = ensemble or {}
-        timeline_vote = (ensemble_data.get("timeline") or {}).get("vote_count") or []
         timeline_conf = (ensemble_data.get("timeline") or {}).get("confidence") or []
-        summary_vote_count = int(max(timeline_vote)) if timeline_vote else int(ensemble_data.get("vote_count") or 0)
         confidence_order = {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "NORMAL": 0}
         if timeline_conf:
             summary_confidence = max(timeline_conf, key=lambda c: confidence_order.get(str(c), 0))
         else:
             summary_confidence = str(ensemble_data.get("confidence") or "NORMAL")
 
-        per_model = ensemble_data.get("per_model") or {}
-        iso_scores = (per_model.get("isolation_forest") or {}).get("score") or []
-        iso_flags = (per_model.get("isolation_forest") or {}).get("is_anomaly") or []
-        lstm_scores = (per_model.get("lstm_autoencoder") or {}).get("score") or []
-        lstm_flags = (per_model.get("lstm_autoencoder") or {}).get("is_anomaly") or []
-        cusum_scores = (per_model.get("cusum") or {}).get("score") or []
-        cusum_flags = (per_model.get("cusum") or {}).get("is_anomaly") or []
-
-        def _avg(xs):
-            return round(float(sum(xs) / max(1, len(xs))), 4) if xs else 0.0
-
-        def _flagged(fs):
-            return bool(any(fs)) if fs else False
+        confidence_summary = self._build_confidence_summary(
+            title="Analysis Confidence",
+            level=confidence["level"],
+            evidence_strength=self._evidence_strength(confidence["level"], summary_confidence),
+            summary=(reasoning or {}).get("summary"),
+            interpretation=(
+                f"Health impact is {health_impact.lower()} based on {total_points} analyzed data points "
+                f"across {round(days_analyzed, 1)} day(s)."
+            ),
+            recommended_action=(reasoning or {}).get("recommended_action")
+            or (recommendations[0]["action"] if recommendations else "Continue monitoring."),
+            factors=list((reasoning or {}).get("affected_parameters") or [row["parameter"] for row in parameter_breakdown[:3]]),
+        )
 
         return {
             "analysis_type": "anomaly_detection",
@@ -146,6 +145,7 @@ class ResultFormatter:
             "hours_available": round(days_analyzed * 24, 1),
             "confidence_badge": confidence,
             "health_score": health_score,
+            "confidence_summary": confidence_summary,
             "confidence": {
                 "level": confidence["level"],
                 "badge_color": confidence["badge_color"],
@@ -174,7 +174,6 @@ class ResultFormatter:
             "anomaly_list": anomaly_list,
             "recommendations": recommendations,
             "metadata": {
-                "model_used": "hybrid_ensemble_v2",
                 "data_completeness_pct": float((metadata or {}).get("data_completeness_pct", 100.0)),
                 "parameters_analyzed": len(parameter_breakdown),
                 "fallback_mode": bool((metadata or {}).get("fallback_mode", False)),
@@ -186,31 +185,7 @@ class ResultFormatter:
                     "points_analyzed": total_points,
                 }
             },
-            "ensemble": {
-                "vote_count": summary_vote_count,
-                "confidence": summary_confidence,
-                "models_voted": ensemble_data.get("models_voted", []),
-                "per_model": {
-                    "isolation_forest": {
-                        "score": _avg(iso_scores),
-                        "flagged": _flagged(iso_flags),
-                        "is_trained": bool((per_model.get("isolation_forest") or {}).get("is_trained", True)),
-                    },
-                    "lstm_autoencoder": {
-                        "score": _avg(lstm_scores),
-                        "flagged": _flagged(lstm_flags),
-                        "is_trained": bool((per_model.get("lstm_autoencoder") or {}).get("is_trained", False)),
-                    },
-                    "cusum": {
-                        "score": _avg(cusum_scores),
-                        "flagged": _flagged(cusum_flags),
-                        "drift_params": (per_model.get("cusum") or {}).get("drift_params", []),
-                        "is_trained": True,
-                    },
-                },
-                "timeline": ensemble_data.get("timeline", {}),
-            },
-            "reasoning": reasoning or {},
+            "reasoning": self._sanitize_reasoning(reasoning),
             "data_quality_flags": normalized_quality_flags,
         }
 
@@ -290,6 +265,18 @@ class ResultFormatter:
             data_quality_flags or [],
             confidence,
         )
+        attention_required = str((ensemble or {}).get("verdict") or "").upper() in {"WATCH", "WARNING", "CRITICAL"}
+        confidence_summary = self._build_confidence_summary(
+            title="Prediction Confidence",
+            level=confidence["level"],
+            evidence_strength=self._evidence_strength(confidence["level"], model_confidence),
+            summary=(reasoning or {}).get("summary"),
+            interpretation=(
+                f"Maintenance urgency is {urgency.lower()} with estimated remaining life {remaining_life}."
+            ),
+            recommended_action=recs[0]["action"] if recs else "Continue monitoring and schedule a maintenance review.",
+            factors=list((reasoning or {}).get("top_risk_factors") or [rf.get("parameter", "system") for rf in display_factors[:3]]),
+        )
         return {
             "analysis_type": "failure_prediction",
             "device_id": device_id,
@@ -298,6 +285,8 @@ class ResultFormatter:
             "hours_available": round(normalized_days * 24, 1),
             "confidence_badge": confidence,
             "health_score": health_score,
+            "attention_required": attention_required,
+            "confidence_summary": confidence_summary,
             "confidence": {
                 "level": confidence["level"],
                 "badge_color": confidence["badge_color"],
@@ -331,6 +320,7 @@ class ResultFormatter:
                 "data_completeness_pct": float((metadata or {}).get("data_completeness_pct", 100.0)),
                 "fallback_mode": bool((metadata or {}).get("fallback_mode", False)),
                 "insufficient_trend_signal": insufficient_trend_signal,
+                "attention_required": attention_required,
             },
             "execution_metadata": {
                 "data_window": {
@@ -339,9 +329,8 @@ class ResultFormatter:
                     "points_analyzed": int((metadata or {}).get("data_points_analyzed", 0)),
                 }
             },
-            "ensemble": ensemble or {},
             "time_to_failure": time_to_failure or {},
-            "reasoning": reasoning or {},
+            "reasoning": self._sanitize_reasoning(reasoning),
             "degradation_series": degradation_series or [],
             "data_quality_flags": normalized_quality_flags,
         }
@@ -397,6 +386,60 @@ class ResultFormatter:
         if not replaced:
             out.insert(0, canonical)
         return out
+
+    @staticmethod
+    def _evidence_strength(*levels: Any) -> str:
+        rank = {
+            "VERY HIGH": 4,
+            "HIGH": 3,
+            "MEDIUM": 2,
+            "MODERATE": 2,
+            "LOW": 1,
+            "NORMAL": 1,
+        }
+        best = 0
+        for level in levels:
+            best = max(best, rank.get(str(level or "").strip().upper(), 0))
+        if best >= 3:
+            return "Strong"
+        if best == 2:
+            return "Moderate"
+        if best == 1:
+            return "Developing"
+        return "Limited"
+
+    @staticmethod
+    def _build_confidence_summary(
+        *,
+        title: str,
+        level: str,
+        evidence_strength: str,
+        summary: Any,
+        interpretation: str,
+        recommended_action: str,
+        factors: List[Any],
+    ) -> Dict[str, Any]:
+        clean_factors = [str(item).strip() for item in factors if str(item).strip()][:5]
+        return {
+            "title": title,
+            "level": str(level or "Moderate"),
+            "evidence_strength": evidence_strength,
+            "summary": str(summary or "Analysis completed successfully."),
+            "interpretation": interpretation,
+            "recommended_action": recommended_action,
+            "factors": clean_factors,
+        }
+
+    @staticmethod
+    def _sanitize_reasoning(reasoning: Dict[str, Any] | None) -> Dict[str, Any]:
+        if not reasoning:
+            return {}
+        clean = deepcopy(reasoning)
+        if "agreement_text" in clean and "evidence_text" not in clean:
+            clean["evidence_text"] = clean.pop("agreement_text")
+        clean.pop("models_voted", None)
+        clean.pop("per_model", None)
+        return clean
 
     def format_fleet_results(
         self,

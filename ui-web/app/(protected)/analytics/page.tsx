@@ -29,12 +29,15 @@ import {
   AnalyticsJobListItem,
   ApiError,
 } from "@/lib/analyticsApi";
+import {
+  getAnalyticsConfidenceSummary,
+  sanitizeAnalyticsNarrative,
+} from "@/lib/analyticsPresentation";
 
 type Screen = "wizard" | "anomaly" | "failure" | "fleet";
 type AnalysisType = "anomaly" | "failure_prediction";
 type Preset = "quick" | "recommended" | "deep" | "custom";
 type ResultType = AnomalyFormattedResult | FailureFormattedResult | FleetFormattedResult;
-type ModelVoteRecord = Record<string, unknown>;
 type FleetExecItem = { device_id: string; reason?: string; message?: string };
 type FleetExecMeta = {
   devices_skipped?: FleetExecItem[];
@@ -151,50 +154,58 @@ function formatProgressMessage(status: {
   return phaseText;
 }
 
-function ModelVotingPanel({
-  ensemble,
+function ConfidenceSummaryPanel({
+  result,
 }: {
-  ensemble?: unknown;
+  result: AnomalyFormattedResult | FailureFormattedResult;
 }) {
-  if (!ensemble || typeof ensemble !== "object") return null;
-  const parsed = ensemble as {
-    per_model?: Record<string, unknown>;
-    verdict?: string;
-    confidence?: string;
-    votes?: number;
-    vote_count?: number;
-  };
-  if (!parsed.per_model || typeof parsed.per_model !== "object") return null;
+  const summary = getAnalyticsConfidenceSummary(result);
   return (
     <div style={panelStyle()}>
-      <h3 style={titleStyle()}>Model Confirmation</h3>
-      <div style={{ display: "grid", gap: 6 }}>
-        {Object.entries(parsed.per_model).map(([name, model]) => {
-          const m = model as ModelVoteRecord;
-          const flagged = Boolean((m.voted_high ?? m.flagged) as boolean | undefined);
-          const probability = typeof m.probability_pct === "number" ? m.probability_pct : null;
-          const score = typeof m.score === "number" ? m.score : null;
-          const trendType = typeof m.trend_type === "string" ? m.trend_type : "—";
-          const value = probability != null ? `${probability}% probability` : score != null ? `Score: ${(score * 100).toFixed(0)}` : trendType;
-          return (
-            <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 11 }}>
-              <span style={{ fontFamily: "monospace", fontSize: 10 }}>{name}</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span>{value}</span>
-                <span style={{ padding: "2px 6px", borderRadius: 999, fontSize: 10, background: flagged ? "#fee2e2" : "#dcfce7", color: flagged ? "#b91c1c" : "#15803d" }}>
-                  {flagged ? "HIGH RISK" : "Normal"}
-                </span>
-                {m.is_trained === false && (
-                  <span style={{ color: COLORS.muted, fontSize: 10 }}>(not trained)</span>
-                )}
-              </div>
-            </div>
-          );
-        })}
+      <h3 style={titleStyle()}>Confidence Summary</h3>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 }}>
+        <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10 }}>
+          <div style={{ fontSize: 10, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 1 }}>
+            Analysis Confidence
+          </div>
+          <div style={{ marginTop: 4, fontSize: 16, fontWeight: 700 }}>{summary.level}</div>
+        </div>
+        <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10 }}>
+          <div style={{ fontSize: 10, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 1 }}>
+            Evidence Strength
+          </div>
+          <div style={{ marginTop: 4, fontSize: 16, fontWeight: 700 }}>{summary.evidenceStrength}</div>
+        </div>
       </div>
-      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #e2e8f0", fontSize: 11, fontWeight: 600 }}>
-        Verdict: {parsed.verdict ?? parsed.confidence ?? "N/A"} · {(parsed.votes ?? parsed.vote_count ?? 0)}/3 models agree
+      <div style={{ marginTop: 10, fontSize: 11, fontWeight: 600 }}>{summary.summary}</div>
+      <div style={{ marginTop: 6, color: COLORS.muted, fontSize: 11 }}>{summary.interpretation}</div>
+      <div style={{ marginTop: 8, fontSize: 11 }}>
+        <span style={{ fontWeight: 600 }}>Recommended action:</span> {summary.recommendedAction}
       </div>
+      {summary.factors.length > 0 ? (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 10, color: COLORS.muted, textTransform: "uppercase", letterSpacing: 1 }}>
+            Key contributing factors
+          </div>
+          <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {summary.factors.map((factor) => (
+              <span
+                key={factor}
+                style={{
+                  padding: "4px 8px",
+                  borderRadius: 999,
+                  background: "#eff6ff",
+                  color: "#1d4ed8",
+                  fontSize: 10,
+                  fontWeight: 600,
+                }}
+              >
+                {factor}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -216,7 +227,7 @@ function DataQualityBanner({ flags }: { flags?: Array<Record<string, unknown>> }
                 : { background: "#eff6ff", color: "#1d4ed8" };
         return (
           <div key={`dq-${i}`} style={{ ...style, borderRadius: 8, padding: 8, fontSize: 11 }}>
-            ℹ Confidence: {String(flag.confidence_level ?? "Unknown")} — {String(flag.message ?? "")}
+            Analysis confidence: {String(flag.confidence_level ?? "Unknown")} — {String(flag.message ?? "")}
           </div>
         );
       })}
@@ -998,7 +1009,7 @@ function AnalyticsPageContent() {
             </div>
           </div>
 
-          <ModelVotingPanel ensemble={result.ensemble} />
+          <ConfidenceSummaryPanel result={result} />
 
           {result.reasoning && (
             <div style={{ ...panelStyle(), background: "#f8fafc" }}>
@@ -1136,7 +1147,7 @@ function AnalyticsPageContent() {
             </div>
           </div>
 
-          <ModelVotingPanel ensemble={result.ensemble} />
+          <ConfidenceSummaryPanel result={result} />
 
           {result.time_to_failure && (
             <div style={panelStyle()}>
@@ -1160,8 +1171,13 @@ function AnalyticsPageContent() {
             <div style={{ ...panelStyle(), background: "#f8fafc" }}>
               <h3 style={titleStyle()}>Why is this flagged?</h3>
               <div style={{ fontSize: 11, fontWeight: 600 }}>{result.reasoning.summary ?? "No summary available."}</div>
-              {result.reasoning.agreement_text ? (
-                <div style={{ marginTop: 4, color: COLORS.muted, fontSize: 11 }}>{result.reasoning.agreement_text}</div>
+              {(result.reasoning.evidence_text || (result.reasoning as { agreement_text?: string }).agreement_text) ? (
+                <div style={{ marginTop: 4, color: COLORS.muted, fontSize: 11 }}>
+                  {sanitizeAnalyticsNarrative(
+                    result.reasoning.evidence_text || (result.reasoning as { agreement_text?: string }).agreement_text,
+                    "Evidence strength reflects the consistency of the observed telemetry pattern.",
+                  )}
+                </div>
               ) : null}
               {result.reasoning.top_risk_factors?.length ? (
                 <div style={{ marginTop: 6 }}>

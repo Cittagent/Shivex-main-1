@@ -84,16 +84,18 @@ class AccuracyEvaluator:
         for job_row in jobs:
             results = job_row.results or {}
             formatted = results.get("formatted", {}) if isinstance(results, dict) else {}
-            ensemble = formatted.get("ensemble", {}) if isinstance(formatted, dict) else {}
-            verdict = str((ensemble or {}).get("verdict") or "").upper()
-            if not verdict:
+            attention_required = bool(formatted.get("attention_required")) if isinstance(formatted, dict) else False
+            summary = formatted.get("summary", {}) if isinstance(formatted, dict) else {}
+            risk_level = str((summary or {}).get("failure_risk") or "").strip().lower()
+            positive = attention_required or risk_level in {"medium", "high", "critical"}
+            if not positive and not risk_level:
                 continue
             predictions.append(
                 {
                     "job_id": job_row.job_id,
                     "device_id": job_row.device_id,
                     "time": job_row.completed_at or job_row.created_at or now,
-                    "positive": verdict in AccuracyEvaluator.POSITIVE_VERDICTS,
+                    "positive": positive,
                 }
             )
 

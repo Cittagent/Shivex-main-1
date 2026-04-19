@@ -1,5 +1,6 @@
 """Rule repository layer - data access abstraction."""
 
+import asyncio
 from typing import Optional, List, Dict, Any
 import logging
 
@@ -7,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from uuid import UUID
 
 from sqlalchemy import select, func, and_, or_, false, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.rule import Rule, RuleScope, RuleStatus, CooldownMode, Alert, ActivityEvent, RuleTriggerState
@@ -202,7 +203,7 @@ class RuleRepository(TenantScopedRepository[Rule]):
         not suppress alerts for another machine under the same rule.
         """
         now = datetime.now(timezone.utc)
-        for _ in range(2):
+        for attempt in range(4):
             try:
                 async with self._session.begin_nested():
                     state_stmt = (
@@ -257,7 +258,15 @@ class RuleRepository(TenantScopedRepository[Rule]):
                     await self._session.execute(metadata_stmt.values(**metadata_values))
                     return True
             except IntegrityError:
+                await self._session.rollback()
                 continue
+            except OperationalError as exc:
+                if "database is locked" not in str(exc).lower():
+                    raise
+                if attempt == 3:
+                    raise
+                await self._session.rollback()
+                await asyncio.sleep(0.05 * (attempt + 1))
         return False
     
     async def update_status(self, rule_id: str, status: RuleStatus) -> Optional[Rule]:

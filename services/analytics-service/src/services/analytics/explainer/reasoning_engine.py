@@ -32,31 +32,27 @@ class ReasoningEngine:
         risk = verdict.get("verdict", "NORMAL")
         conf = verdict.get("confidence", "LOW")
         votes = int(verdict.get("votes", 0))
-        voted = verdict.get("models_voted", [])
         hours = verdict.get("hours_to_failure")
         ci = verdict.get("ttf_confidence_interval")
 
         time_desc = self._time_desc(hours)
         ci_text = self._ci_text(ci)
 
-        icons = {"CRITICAL": "🔴", "WARNING": "🟠", "WATCH": "🟡", "NORMAL": "🟢"}
-        icon = icons.get(risk, "⚪")
-
         if risk == "CRITICAL":
-            summary = f"{icon} Failure predicted {time_desc}{ci_text}."
+            summary = f"Failure is likely {time_desc}{ci_text}."
         elif risk == "WARNING":
-            suffix = f" — {time_desc}" if time_desc else ""
-            summary = f"{icon} Elevated failure risk{suffix}."
+            suffix = f" {time_desc}" if time_desc else ""
+            summary = f"Elevated failure risk detected{suffix}."
         elif risk == "WATCH":
-            summary = f"{icon} Early warning — monitor closely."
+            summary = "Early signs of degradation were detected. Monitor closely."
         else:
-            summary = f"{icon} Machine operating normally."
+            summary = "Current telemetry indicates stable machine behavior."
 
-        agree_map = {
-            3: "All three models agree — highest confidence.",
-            2: f"{' and '.join(voted)} agree. One model shows normal — treat as strong warning." if voted else "Two models agree on risk.",
-            1: f"Only {voted[0]} flagged this. Early signal — do not ignore." if voted else "Only one model flagged this.",
-            0: "No models flagged failure risk.",
+        evidence_map = {
+            3: "Evidence strength is high because multiple analytics signals indicate the same risk pattern.",
+            2: "Evidence strength is moderate because several analytics signals point to emerging risk.",
+            1: "Evidence strength is developing because an early warning pattern was detected in the telemetry.",
+            0: "Evidence strength is limited because current telemetry does not show a sustained risk pattern.",
         }
 
         trend = degradation.get("trend_type", "stable")
@@ -95,7 +91,7 @@ class ReasoningEngine:
 
         return {
             "summary": summary,
-            "agreement_text": agree_map.get(votes, ""),
+            "evidence_text": evidence_map.get(votes, ""),
             "trend_text": trend_text,
             "top_risk_factors": plain_factors,
             "recommended_actions": actions,
@@ -106,16 +102,16 @@ class ReasoningEngine:
         conf = vote_result.get("confidence", "NORMAL")
 
         if conf == "HIGH":
-            summary = "⚠ Confirmed anomaly — both pattern models agree."
+            summary = "A confirmed abnormal operating pattern was detected."
             action = "Inspect machine immediately."
         elif conf == "MEDIUM":
-            summary = "⚡ Probable anomaly detected — monitor closely."
+            summary = "A likely abnormal operating pattern was detected."
             action = "Schedule inspection within 24 hours."
         elif conf == "LOW":
-            summary = "ℹ Possible deviation — log and monitor."
+            summary = "A small deviation from normal behavior was detected."
             action = "Continue monitoring. Log observation."
         else:
-            summary = "✓ Operating normally."
+            summary = "Operating conditions appear normal."
             action = "No action required."
 
         return {

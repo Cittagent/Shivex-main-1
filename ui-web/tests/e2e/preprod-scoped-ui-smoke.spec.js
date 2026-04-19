@@ -110,8 +110,9 @@ test.describe.serial("pre-production scoped UI smoke", () => {
     await expect(page.getByRole("button", { name: plants.B, exact: true })).toHaveCount(0);
 
     await page.goto(`/machines/${deviceIds.A}`);
-    await expect(page.getByRole("button", { name: "Overview" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Telemetry" })).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/machines/${deviceIds.A}$`), { timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Overview" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "Telemetry" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "Parameter Configuration" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Configure Rules" })).toHaveCount(0);
     await expect(page.getByText("Waste & Loss Today")).toBeVisible();

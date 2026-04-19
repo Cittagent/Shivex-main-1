@@ -8,6 +8,7 @@ import {
   formatSignedKwh,
   formatHiddenCost,
   getHiddenDeviceDisplayName,
+  getHiddenInsightDailyBreakdown,
   getDifferenceVsBaselineKwh,
   getHiddenBaselineStatus,
   getUsableHiddenDeviceRows,
@@ -238,7 +239,7 @@ test("device name falls back to device id when missing", () => {
 
 test("absent hidden insight contract remains safe through nullish handling", () => {
   const hiddenInsight: HiddenOverconsumptionInsight | null = null;
-  const rows = getUsableHiddenInsightRows(hiddenInsight?.daily_breakdown);
+  const rows = getUsableHiddenInsightRows(getHiddenInsightDailyBreakdown(hiddenInsight));
   assert.equal(rows.length, 0);
   assert.equal(
     energyPageSource.includes("const hiddenInsight = result?.hidden_overconsumption_insight ?? null;"),

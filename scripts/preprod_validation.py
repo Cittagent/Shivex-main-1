@@ -30,6 +30,7 @@ ARTIFACTS_ROOT = REPO_ROOT / "artifacts" / "preprod-validation"
 UI_ROOT = REPO_ROOT / "ui-web"
 DEFAULT_PASSWORD = os.environ.get("CERTIFY_SEED_PASSWORD", "Validate123!")
 DEFAULT_TIMEOUT = float(os.environ.get("PREPROD_HTTP_TIMEOUT", "30"))
+VALIDATION_JWT_SECRET = "validation-jwt-secret-key-at-least-32-characters"
 
 SERVICE_ENDPOINTS = {
     "auth-service": os.environ.get("AUTH_URL", "http://localhost:8090").rstrip("/") + "/health",
@@ -464,6 +465,16 @@ def shell_join(command: Sequence[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
 
 
+def with_pythonpath(env: dict[str, str], *paths: Path) -> dict[str, str]:
+    updated = env.copy()
+    existing = updated.get("PYTHONPATH", "")
+    ordered = [str(path) for path in paths if path]
+    if existing:
+        ordered.append(existing)
+    updated["PYTHONPATH"] = os.pathsep.join(ordered)
+    return updated
+
+
 def slugify(value: str) -> str:
     safe = "".join(ch.lower() if ch.isalnum() else "-" for ch in value)
     while "--" in safe:
@@ -798,6 +809,7 @@ class PreprodValidationRunner:
                 "UI_WEB_BASE_URL": self.config.ui_url,
             }
         )
+        env.setdefault("JWT_SECRET_KEY", VALIDATION_JWT_SECRET)
         return env
 
     def _ensure_primary_bundle(self) -> None:
@@ -1077,7 +1089,7 @@ class PreprodValidationRunner:
         tenant_id = primary["id"]
         org_admin_token = self.auth.login(primary["org_admin"]["email"], primary["org_admin"]["password"])
         smoke_device = primary["smoke_devices"][0]
-        simulator = TelemetrySimulator("localhost", 1883, smoke_device["device_id"])
+        simulator = TelemetrySimulator("localhost", 1883, smoke_device["device_id"], tenant_id)
         try:
             simulator.send_normal(count=4, interval_sec=0.2)
             simulator.send_spike(count=3, interval_sec=0.2)
@@ -1239,7 +1251,7 @@ from(bucket: "telemetry")
                 evidence=rule_evidence,
             )
 
-        simulator = TelemetrySimulator("localhost", 1883, smoke_device["device_id"])
+        simulator = TelemetrySimulator("localhost", 1883, smoke_device["device_id"], tenant_id)
         try:
             simulator.send_spike(count=2, interval_sec=0.2)
         finally:
@@ -1481,6 +1493,12 @@ from(bucket: "telemetry")
                     "-q",
                 ],
                 ("financial_consistency",),
+                with_pythonpath(
+                    env,
+                    REPO_ROOT,
+                    REPO_ROOT / "services" / "device-service",
+                    REPO_ROOT / "services" / "energy-service",
+                ),
             ),
             (
                 "Notification and settings regression tests",
@@ -1494,6 +1512,12 @@ from(bucket: "telemetry")
                     "-q",
                 ],
                 ("per_rule_notification_recipients", "settings", "legacy_notification_migration_behavior"),
+                with_pythonpath(
+                    env,
+                    REPO_ROOT,
+                    REPO_ROOT / "services" / "rule-engine-service",
+                    REPO_ROOT / "services" / "reporting-service",
+                ),
             ),
             (
                 "Scheduled report reliability tests",
@@ -1506,13 +1530,80 @@ from(bucket: "telemetry")
                     "-q",
                 ],
                 ("scheduled_reports",),
+                with_pythonpath(
+                    env,
+                    REPO_ROOT,
+                    REPO_ROOT / "services" / "reporting-service",
+                ),
             ),
         ]
+        if self.config.mode == "full-validation":
+            targeted_commands.extend(
+                [
+                    (
+                        "Hardware lifecycle regression tests",
+                        [
+                            self.config.cert_python,
+                            "-m",
+                            "pytest",
+                            "services/device-service/tests/test_hardware_inventory.py",
+                            "services/device-service/tests/test_hardware_decommission_precision.py",
+                            "-q",
+                        ],
+                        ("hardware_lifecycle",),
+                        with_pythonpath(
+                            env,
+                            REPO_ROOT,
+                            REPO_ROOT / "services" / "device-service",
+                        ),
+                    ),
+                    (
+                        "Hardware integrity regression tests",
+                        [
+                            self.config.cert_python,
+                            "-m",
+                            "pytest",
+                            "services/device-service/tests/test_hardware_inventory_schema.py",
+                            "services/device-service/tests/test_hardware_inventory_migration.py",
+                            "services/device-service/tests/test_hardware_legacy_remediation.py",
+                            "-q",
+                        ],
+                        ("hardware_integrity",),
+                        with_pythonpath(
+                            env,
+                            REPO_ROOT,
+                            REPO_ROOT / "services" / "device-service",
+                        ),
+                    ),
+                    (
+                        "Hardware error-handling regression tests",
+                        [
+                            self.config.cert_python,
+                            "-m",
+                            "pytest",
+                            "services/device-service/tests/test_hardware_inventory.py::test_user_cannot_submit_manual_hardware_unit_id",
+                            "services/device-service/tests/test_hardware_inventory.py::test_metadata_json_is_not_accepted_in_hardware_unit_contract",
+                            "services/device-service/tests/test_hardware_inventory.py::test_invalid_unit_type_is_rejected_by_backend",
+                            "services/device-service/tests/test_hardware_inventory.py::test_invalid_installation_role_is_rejected_by_backend",
+                            "services/device-service/tests/test_hardware_inventory.py::test_invalid_hardware_role_pairing_is_rejected",
+                            "services/device-service/tests/test_hardware_inventory.py::test_installation_rejects_tenant_and_plant_mismatch",
+                            "services/device-service/tests/test_hardware_inventory.py::test_installation_service_rejects_tenant_mismatch",
+                            "-q",
+                        ],
+                        ("error_handling",),
+                        with_pythonpath(
+                            env,
+                            REPO_ROOT,
+                            REPO_ROOT / "services" / "device-service",
+                        ),
+                    ),
+                ]
+            )
         if self.config.mode in {"quick-gate", "current-live", "full-validation", "full-reset"}:
-            for name, command, item_ids in targeted_commands:
+            for name, command, item_ids, command_env in targeted_commands:
                 if self.abort_for_defect:
                     break
-                result = self.run_command(name, command, env=env)
+                result = self.run_command(name, command, env=command_env)
                 stdout = Path(result.stdout_path).read_text(encoding="utf-8")
                 stderr = Path(result.stderr_path).read_text(encoding="utf-8")
                 output = f"{stdout}\n{stderr}".strip()
@@ -1624,6 +1715,18 @@ from(bucket: "telemetry")
         recommendation = self._recommendation()
         if recommendation["decision"] == "GO":
             self.mark_pass("final_go_no_go", recommendation["reason"])
+        elif self.config.mode in {"quick-gate", "current-live"} and not any(
+            item.status == "FAIL" for item in self.checklist.values() if item.item_id != "final_go_no_go"
+        ):
+            final_gate = self.checklist["final_go_no_go"]
+            final_gate.status = "NOT_EXECUTED"
+            final_gate.evidence_summary = "Release GO / NO-GO remains reserved for full validation mode."
+            final_gate.command = None
+            final_gate.error_output = None
+            final_gate.affected_module = None
+            final_gate.classification = None
+            final_gate.production_blocking = False
+            final_gate.evidence = []
         else:
             self.mark_fail(
                 "final_go_no_go",
@@ -1735,6 +1838,11 @@ from(bucket: "telemetry")
         print(f"Preprod validation report: {report_path}")
         print(f"Preprod validation summary: {summary_path}")
         recommendation = self._recommendation()
+        if self.config.mode in {"quick-gate", "current-live"}:
+            has_runtime_failures = any(
+                item.status == "FAIL" for item in self.checklist.values() if item.item_id != "final_go_no_go"
+            )
+            return 1 if has_runtime_failures else 0
         return 0 if recommendation["decision"] == "GO" else 1
 
 

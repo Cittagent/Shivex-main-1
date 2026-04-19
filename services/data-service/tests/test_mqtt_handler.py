@@ -15,13 +15,24 @@ class _FakeClient:
         self._succeed_after = succeed_after
         self.calls = 0
         self.subscriptions = []
+        self.connected = False
 
-    def reconnect(self) -> None:
+    def connect(self, host: str, port: int, keepalive: int) -> None:
         self.calls += 1
+        self.connected = True
         if self.calls >= self._succeed_after:
-            self._handler._connected = True
-        else:
-            raise RuntimeError("temporary reconnect failure")
+            self._handler._on_connect(self, None, {}, 0)
+            return
+        raise RuntimeError("temporary reconnect failure")
+
+    def loop_start(self) -> None:
+        return None
+
+    def loop_stop(self) -> None:
+        self.connected = False
+
+    def disconnect(self) -> None:
+        self.connected = False
 
     def subscribe(self, topic):
         self.subscriptions.append(topic)
@@ -57,7 +68,8 @@ async def test_reconnect_loop_retries_until_connected(monkeypatch):
     handler._connected = False
     handler._shutdown_requested = False
     handler._reconnect_interval = 0
-    handler.client = _FakeClient(handler, succeed_after=3)  # type: ignore[assignment]
+    fake_client = _FakeClient(handler, succeed_after=3)
+    monkeypatch.setattr(handler, "_build_client", lambda: setattr(handler, "client", fake_client))
     monkeypatch.setattr("src.handlers.mqtt_handler.random.uniform", lambda _a, _b: 0.0)
 
     await asyncio.wait_for(handler._reconnect_loop(), timeout=3)

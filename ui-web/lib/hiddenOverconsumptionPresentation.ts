@@ -82,6 +82,12 @@ export function getUsableHiddenInsightRows(
   );
 }
 
+export function getHiddenInsightDailyBreakdown(
+  insight: HiddenOverconsumptionInsight | null | undefined,
+): HiddenOverconsumptionDailyRow[] | null | undefined {
+  return insight?.daily_breakdown;
+}
+
 export function getDifferenceVsBaselineKwh(row: HiddenOverconsumptionDailyRow): number | null {
   if (!isFiniteNumber(row.actual_energy_kwh) || !isFiniteNumber(row.baseline_energy_kwh)) {
     return null;

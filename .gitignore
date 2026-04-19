@@ -6,6 +6,11 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
+.validation-venv/
+.venv-reporting/
+artifacts/
+test-results/
 
 
 # mac
@@ -25,3 +30,6 @@ data/
 
 # mqtt / local state
 mosquitto/
+
+
+cd /Users/vedanthshetty/Desktop/GIT-Testing/Shivex-Main && printf '\nProject-docs/\nProject-Documentation/\n' >> .gitignore && git rm -r --cached --ignore-unmatch Project-docs Project-Documentation && git add .gitignore

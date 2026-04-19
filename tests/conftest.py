@@ -79,11 +79,12 @@ def api():
 
 
 @pytest.fixture(scope="session")
-def simulator(device_id):
+def simulator(device_id, api):
     sim = TelemetrySimulator(
         broker_host="localhost",
         broker_port=1883,
         device_id=device_id,
+        tenant_id=api.default_tenant,
     )
     yield sim
     sim.disconnect()
@@ -136,20 +137,33 @@ def verify_all_services_healthy(request: pytest.FixtureRequest):
     for name, url in health_map.items():
         ok = False
         last_err = None
+        last_detail = None
         for _ in range(12):
             try:
                 resp = httpx.get(url, timeout=5)
                 if resp.status_code == 200:
-                    ok = True
-                    break
+                    body = resp.json() if "application/json" in resp.headers.get("content-type", "") else None
+                    if name == "data-service" and isinstance(body, dict):
+                        checks = body.get("checks") or {}
+                        if body.get("status") == "healthy" and checks.get("mqtt") == "connected":
+                            ok = True
+                            break
+                        last_detail = body
+                    else:
+                        ok = True
+                        break
+                else:
+                    last_detail = resp.text
             except Exception as exc:  # pragma: no cover
                 last_err = exc
             time.sleep(5)
         if not ok:
+            detail_block = f"Last response: {last_detail}\n" if last_detail is not None else ""
             pytest.fail(
                 f"\n{'=' * 60}\n"
                 f"SERVICE NOT READY: {name}\n"
                 f"URL: {url}\n"
+                f"{detail_block}"
                 f"Last error: {last_err}\n"
                 f"Fix: docker-compose up -d && wait 30s\n"
                 f"{'=' * 60}"

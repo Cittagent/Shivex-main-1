@@ -89,6 +89,24 @@ def test_recommendation_requires_full_run_for_go(tmp_path: Path) -> None:
         full_runner.close()
 
 
+def test_build_report_leaves_release_decision_not_executed_for_quick_gate_without_failures(tmp_path: Path) -> None:
+    runner = preprod_validation.PreprodValidationRunner(_config(tmp_path, mode="quick-gate"))
+    try:
+        for item_id, item in runner.checklist.items():
+            if item_id == "final_go_no_go":
+                continue
+            runner.mark_pass(item_id, f"{item.title} passed.")
+
+        report = runner.build_report()
+        final_gate = next(item for item in report["validation_results"] if item["item_id"] == "final_go_no_go")
+
+        assert report["production_recommendation"]["decision"] == "NO-GO"
+        assert final_gate["status"] == "NOT_EXECUTED"
+        assert final_gate["evidence_summary"] == "Release GO / NO-GO remains reserved for full validation mode."
+    finally:
+        runner.close()
+
+
 def test_build_report_includes_required_sections(tmp_path: Path) -> None:
     runner = preprod_validation.PreprodValidationRunner(_config(tmp_path))
     try:
@@ -152,5 +170,39 @@ def test_full_reset_purges_standalone_simulators_before_compose_reset(tmp_path: 
             "docker compose down -v --remove-orphans",
             "docker compose up -d --build",
         ]
+    finally:
+        runner.close()
+
+
+def test_full_validation_runs_hardware_and_error_regressions(tmp_path: Path) -> None:
+    runner = preprod_validation.PreprodValidationRunner(_config(tmp_path, mode="full-validation"))
+    calls: list[str] = []
+
+    def _fake_run_command(name: str, command: list[str], env=None, **_kwargs):  # noqa: ANN001
+        calls.append(name)
+        stdout_path = tmp_path / f"{name}.stdout"
+        stderr_path = tmp_path / f"{name}.stderr"
+        stdout_path.write_text("", encoding="utf-8")
+        stderr_path.write_text("", encoding="utf-8")
+        return preprod_validation.CommandResult(
+            name=name,
+            command=" ".join(command),
+            status="PASS",
+            returncode=0,
+            duration_seconds=0.0,
+            stdout_path=str(stdout_path),
+            stderr_path=str(stderr_path),
+        )
+
+    try:
+        runner.run_command = _fake_run_command  # type: ignore[method-assign]
+        runner.run_isolation_and_targeted_suites()
+
+        assert "Hardware lifecycle regression tests" in calls
+        assert "Hardware integrity regression tests" in calls
+        assert "Hardware error-handling regression tests" in calls
+        assert runner.checklist["hardware_lifecycle"].status == "PASS"
+        assert runner.checklist["hardware_integrity"].status == "PASS"
+        assert runner.checklist["error_handling"].status == "PASS"
     finally:
         runner.close()

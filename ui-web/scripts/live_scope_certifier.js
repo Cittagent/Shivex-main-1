@@ -36,13 +36,52 @@ async function ensureTenant(page) {
   await page.goto(`${UI_BASE_URL}/analytics`);
   await page.waitForLoadState("networkidle");
   if (await page.getByText("Select an organisation to continue").count()) {
-    const selector = page.locator("select");
+    const selector = page.locator("select").first();
     if (TENANT_LABEL) {
       await selector.selectOption({ label: TENANT_LABEL });
     } else {
       await selector.selectOption(TENANT_ID);
     }
-    await page.getByRole("button", { name: "Continue" }).click();
+    await page.waitForFunction(
+      ({ tenantId, tenantLabel }) => {
+        const select = document.querySelector("select");
+        if (!(select instanceof HTMLSelectElement)) {
+          return false;
+        }
+        const selectedOption = select.selectedOptions.item(0);
+        if (!selectedOption) {
+          return false;
+        }
+        return select.value === tenantId || selectedOption.textContent?.trim() === tenantLabel;
+      },
+      { tenantId: TENANT_ID, tenantLabel: TENANT_LABEL },
+      { timeout: 10000 },
+    );
+
+    const continueButton = page.getByRole("button", { name: "Continue" });
+    await continueButton.waitFor({ state: "visible", timeout: 10000 });
+    await continueButton.waitFor({ state: "attached", timeout: 10000 });
+    await page.waitForFunction(
+      () => {
+        const button = Array.from(document.querySelectorAll("button")).find((candidate) =>
+          candidate.textContent?.trim() === "Continue",
+        );
+        return button instanceof HTMLButtonElement && !button.disabled;
+      },
+      undefined,
+      { timeout: 10000 },
+    );
+    await continueButton.click();
+    await page.waitForFunction(
+      (tenantId) => window.sessionStorage.getItem("factoryops_selected_tenant") === tenantId,
+      TENANT_ID,
+      { timeout: 10000 },
+    );
+    await page.waitForFunction(
+      () => !document.body.innerText.includes("Select an organisation to continue"),
+      undefined,
+      { timeout: 15000 },
+    );
     await page.waitForLoadState("networkidle");
   }
 }

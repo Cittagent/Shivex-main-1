@@ -4,6 +4,7 @@ import asyncio
 import json
 import random
 import re
+import threading
 import uuid
 from concurrent.futures import Future
 from typing import Any, Dict, Optional
@@ -75,6 +76,7 @@ class MQTTHandler:
         self.telemetry_service = telemetry_service
         self.client: Optional[mqtt.Client] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._client_lock = threading.Lock()
 
         self._connected = False
         self._shutdown_requested = False
@@ -95,23 +97,8 @@ class MQTTHandler:
         """Connect to MQTT broker and start network loop."""
         self._loop = asyncio.get_running_loop()
         self._shutdown_requested = False
-        self._build_client()
-
-        if self.client is None:
-            raise RuntimeError("MQTT client not initialized")
-
         try:
-            self.client.connect(
-                host=settings.mqtt_broker_host,
-                port=settings.mqtt_broker_port,
-                keepalive=settings.mqtt_keepalive,
-            )
-            self.client.loop_start()
-            logger.info(
-                "MQTT client connecting",
-                host=settings.mqtt_broker_host,
-                port=settings.mqtt_broker_port,
-            )
+            self._replace_client_and_start()
         except Exception as exc:
             logger.error("Failed to connect to MQTT broker", error=str(exc))
             self._schedule_reconnect()
@@ -124,15 +111,7 @@ class MQTTHandler:
         if self._loop and self._reconnect_task:
             self._loop.call_soon_threadsafe(self._reconnect_task.cancel)
 
-        if self.client:
-            try:
-                self.client.disconnect()
-            except Exception as exc:
-                logger.warning("Error disconnecting MQTT client", error=str(exc))
-            try:
-                self.client.loop_stop()
-            except Exception as exc:
-                logger.warning("Error stopping MQTT loop", error=str(exc))
+        self._close_client()
 
         logger.info("MQTT client disconnected")
 
@@ -149,6 +128,45 @@ class MQTTHandler:
 
         if settings.mqtt_username and settings.mqtt_password:
             self.client.username_pw_set(settings.mqtt_username, settings.mqtt_password)
+
+    def _close_client(self) -> None:
+        with self._client_lock:
+            client = self.client
+            self.client = None
+
+        if client is None:
+            return
+
+        try:
+            client.loop_stop()
+        except Exception as exc:
+            logger.warning("Error stopping MQTT loop", error=str(exc))
+
+        try:
+            client.disconnect()
+        except Exception as exc:
+            logger.warning("Error disconnecting MQTT client", error=str(exc))
+
+    def _replace_client_and_start(self) -> None:
+        self._close_client()
+        with self._client_lock:
+            self._build_client()
+            client = self.client
+
+        if client is None:
+            raise RuntimeError("MQTT client not initialized")
+
+        client.connect(
+            host=settings.mqtt_broker_host,
+            port=settings.mqtt_broker_port,
+            keepalive=settings.mqtt_keepalive,
+        )
+        client.loop_start()
+        logger.info(
+            "MQTT client connecting",
+            host=settings.mqtt_broker_host,
+            port=settings.mqtt_broker_port,
+        )
 
     def _on_connect(
         self,
@@ -303,12 +321,11 @@ class MQTTHandler:
                 return
 
             try:
-                if self.client:
-                    self.client.reconnect()
-                    await asyncio.sleep(1.0)
-                    if self._connected:
-                        logger.info("MQTT reconnected successfully")
-                        return
+                self._replace_client_and_start()
+                await asyncio.sleep(1.0)
+                if self._connected:
+                    logger.info("MQTT reconnected successfully")
+                    return
             except Exception as exc:
                 logger.warning("MQTT reconnect attempt failed", attempt=self._connect_attempt, error=str(exc))
 

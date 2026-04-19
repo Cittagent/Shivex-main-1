@@ -11,7 +11,7 @@ FactoryOPS is a multi-service industrial monitoring platform with:
 - `waste-analysis-service` for waste and idle analysis
 - `copilot-service` for assistant-style queries
 - `auth-service` for authentication and org/tenant scope
-- supporting services like MySQL, Redis, InfluxDB, MinIO, EMQX, Prometheus, Grafana, and Mailpit
+- supporting services like MySQL, Redis, InfluxDB, MinIO, and EMQX
 
 ## What You Need
 
@@ -40,7 +40,11 @@ Ports used by the default compose stack:
 | Redis | `6379` |
 | InfluxDB | `8086` |
 | MinIO API / Console | `9000` / `9001` |
-| Mailpit SMTP / UI | `1025` / `8025` |
+
+Optional monitoring profile ports:
+
+| Service | Port |
+|---|---|
 | Prometheus | `9090` |
 | Alertmanager | `9093` |
 | Grafana | `3001` |
@@ -65,10 +69,16 @@ At minimum, check:
 - `MINIO_EXTERNAL_URL`
 - email/SMTP settings if you want notifications
 
-3. Start the full stack.
+3. Start the default app stack.
 
 ```bash
 docker compose up -d --build
+```
+
+To include the optional local monitoring stack later, run:
+
+```bash
+docker compose --profile monitoring up -d --build
 ```
 
 4. Confirm the services are healthy.
@@ -280,6 +290,7 @@ npm run build
 ## Safety Notes
 
 - Do not run `docker compose down -v` unless you intentionally want to remove the named volumes.
-- The stack uses persistent volumes for MySQL, InfluxDB, MinIO, Prometheus, Alertmanager, and Grafana.
+- The default stack uses persistent volumes for MySQL, InfluxDB, and MinIO.
+- The optional `monitoring` profile adds persistent volumes for Prometheus, Alertmanager, and Grafana.
 - If you change secrets or service URLs, keep `.env` and `docker-compose.yml` aligned.
 - Migrations run automatically in the services that manage Alembic on startup.

@@ -68,6 +68,15 @@ export interface AnomalyFormattedResult {
   device_id: string;
   job_id: string;
   health_score: number;
+  confidence_summary?: {
+    title: string;
+    level: string;
+    evidence_strength: string;
+    summary: string;
+    interpretation: string;
+    recommended_action: string;
+    factors: string[];
+  };
   confidence?: {
     level: string;
     badge_color: string;
@@ -120,17 +129,6 @@ export interface AnomalyFormattedResult {
     parameter?: string;
   }>;
   metadata: Record<string, unknown>;
-  ensemble?: {
-    vote_count?: number;
-    confidence?: string;
-    models_voted?: string[][];
-    per_model?: Record<string, unknown>;
-    timeline?: {
-      vote_count?: number[];
-      confidence?: string[];
-      models_voted?: string[][];
-    };
-  };
   reasoning?: {
     summary?: string;
     affected_parameters?: string[];
@@ -145,6 +143,16 @@ export interface FailureFormattedResult {
   device_id: string;
   job_id: string;
   health_score: number;
+  attention_required?: boolean;
+  confidence_summary?: {
+    title: string;
+    level: string;
+    evidence_strength: string;
+    summary: string;
+    interpretation: string;
+    recommended_action: string;
+    factors: string[];
+  };
   confidence?: {
     level: string;
     badge_color: string;
@@ -181,14 +189,6 @@ export interface FailureFormattedResult {
     parameter?: string;
   }>;
   metadata: Record<string, unknown>;
-  ensemble?: {
-    verdict?: string;
-    votes?: number;
-    confidence?: string;
-    models_voted?: string[];
-    combined_probability?: number;
-    per_model?: Record<string, unknown>;
-  };
   time_to_failure?: {
     hours?: number | null;
     label?: string;
@@ -199,7 +199,7 @@ export interface FailureFormattedResult {
   };
   reasoning?: {
     summary?: string;
-    agreement_text?: string;
+    evidence_text?: string;
     trend_text?: string;
     top_risk_factors?: string[];
     recommended_actions?: string[];

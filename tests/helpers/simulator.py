@@ -12,13 +12,14 @@ import paho.mqtt.client as mqtt
 
 
 class TelemetrySimulator:
-    TOPIC = "devices/{device_id}/telemetry"
+    TOPIC = "{tenant_id}/devices/{device_id}/telemetry"
 
-    def __init__(self, broker_host: str, broker_port: int, device_id: str):
+    def __init__(self, broker_host: str, broker_port: int, device_id: str, tenant_id: str):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.device_id = device_id
-        self.topic = self.TOPIC.format(device_id=device_id)
+        self.tenant_id = tenant_id
+        self.topic = self.TOPIC.format(tenant_id=tenant_id, device_id=device_id)
         self._client = None
 
     def _connect(self):
@@ -32,9 +33,13 @@ class TelemetrySimulator:
     def _pub(self, payload: dict):
         self._connect()
         payload["device_id"] = self.device_id
+        payload["tenant_id"] = self.tenant_id
         payload["timestamp"] = datetime.now(timezone.utc).isoformat()
         payload["schema_version"] = "v1"
-        self._client.publish(self.topic, json.dumps(payload), qos=1)
+        info = self._client.publish(self.topic, json.dumps(payload), qos=1)
+        info.wait_for_publish()
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            raise RuntimeError(f"MQTT publish failed with code {info.rc}")
 
     def send_normal(self, count: int = 5, interval_sec: float = 1.0):
         for i in range(count):

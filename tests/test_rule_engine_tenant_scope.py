@@ -19,10 +19,24 @@ from sqlalchemy.pool import StaticPool
 
 RULE_ENGINE_ROOT = Path(__file__).resolve().parents[1] / "services" / "rule-engine-service"
 SERVICES_ROOT = Path(__file__).resolve().parents[1] / "services"
-if str(RULE_ENGINE_ROOT) not in sys.path:
-    sys.path.insert(0, str(RULE_ENGINE_ROOT))
-if str(SERVICES_ROOT) not in sys.path:
-    sys.path.insert(0, str(SERVICES_ROOT))
+REPO_ROOT = SERVICES_ROOT.parent
+for existing in list(sys.path):
+    try:
+        existing_path = Path(existing).resolve()
+    except Exception:
+        continue
+    if existing_path.parent == SERVICES_ROOT.resolve() and existing_path != RULE_ENGINE_ROOT.resolve():
+        sys.path.remove(existing)
+for module_name, module in list(sys.modules.items()):
+    if module_name == "app" or module_name.startswith("app."):
+        module_file = Path(getattr(module, "__file__", "") or "")
+        if str(module_file) and RULE_ENGINE_ROOT.resolve() not in module_file.resolve().parents:
+            sys.modules.pop(module_name, None)
+for path in (REPO_ROOT, SERVICES_ROOT, RULE_ENGINE_ROOT):
+    path_str = str(path)
+    if path_str in sys.path:
+        sys.path.remove(path_str)
+    sys.path.insert(0, path_str)
 
 os.environ.setdefault("REPORTING_SERVICE_URL", "http://reporting-service")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
@@ -88,10 +102,18 @@ async def rule_session_ctx():
 @asynccontextmanager
 async def rule_file_session_ctx(tmp_path: Path):
     db_path = tmp_path / "rule-engine-concurrency.sqlite3"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{db_path}",
+        connect_args={"timeout": 30},
+    )
 
     @event.listens_for(engine.sync_engine, "connect")
     def _register_sqlite_json_contains_file(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout = 30000")
+        cursor.close()
+
         def _json_contains(document: str | None, candidate: str | None) -> int:
             if document is None or candidate is None:
                 return 0

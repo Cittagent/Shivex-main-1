@@ -81,6 +81,13 @@ def test_prepare_certification_env_applies_seed_output():
     assert "VALIDATE_CERTIFICATION_SEED_JSON" in env
 
 
+def test_prepare_certification_env_without_seed_leaves_live_browser_org_scope_unset(monkeypatch):
+    monkeypatch.delenv("CERTIFY_TENANT_ID", raising=False)
+    env = certify_release_contracts.prepare_certification_env()
+
+    assert "CERTIFY_TENANT_ID" not in env
+
+
 def test_resolve_certification_python_prefers_env_override_with_required_deps(monkeypatch):
     monkeypatch.setenv("CERTIFY_PYTHON", "/tmp/cert-python")
     monkeypatch.setattr(certify_release_contracts, "REPO_ROOT", Path("/tmp/repo"))

@@ -1124,15 +1124,6 @@ services:
       retries: 5
       start_period: 60s
 
-  mailpit:
-    image: axllent/mailpit:v1.21.5
-    container_name: mailpit
-    ports:
-      - "1025:1025"
-      - "8025:8025"
-    networks:
-      - energy-net
-
   ui-web:
     build: ./ui-web
     container_name: ui-web
@@ -1172,6 +1163,8 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.1
     container_name: prometheus
+    profiles:
+      - monitoring
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -1190,6 +1183,8 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.27.0
     container_name: alertmanager
+    profiles:
+      - monitoring
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
     volumes:
@@ -1203,6 +1198,8 @@ services:
   grafana:
     image: grafana/grafana:11.1.4
     container_name: grafana
+    profiles:
+      - monitoring
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin123

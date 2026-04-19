@@ -11,8 +11,25 @@ from zoneinfo import ZoneInfo
 import pytest
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1] / "services" / "energy-service"
-if str(SERVICE_ROOT) not in sys.path:
-    sys.path.insert(0, str(SERVICE_ROOT))
+SERVICES_ROOT = SERVICE_ROOT.parent
+REPO_ROOT = SERVICE_ROOT.parent.parent
+for existing in list(sys.path):
+    try:
+        existing_path = Path(existing).resolve()
+    except Exception:
+        continue
+    if existing_path.parent == SERVICES_ROOT.resolve() and existing_path != SERVICE_ROOT.resolve():
+        sys.path.remove(existing)
+for module_name, module in list(sys.modules.items()):
+    if module_name == "app" or module_name.startswith("app."):
+        module_file = Path(getattr(module, "__file__", "") or "")
+        if str(module_file) and SERVICE_ROOT.resolve() not in module_file.resolve().parents:
+            sys.modules.pop(module_name, None)
+for path in (REPO_ROOT, SERVICES_ROOT, SERVICE_ROOT):
+    path_str = str(path)
+    if path_str in sys.path:
+        sys.path.remove(path_str)
+    sys.path.insert(0, path_str)
 
 from app.services.energy_engine import EnergyEngine
 from app.services import energy_engine as energy_engine_module

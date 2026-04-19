@@ -47,7 +47,7 @@ report_common = load_reporting_module("src.handlers.report_common", "report_comm
 energy_reports = load_reporting_module("src.handlers.energy_reports", "energy_reports.py")
 comparison_reports = load_reporting_module("src.handlers.comparison_reports", "comparison_reports.py")
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 from src.handlers.report_common import ScheduleCreateRequest
 from src.repositories.report_repository import ReportRepository
 from src.repositories.scheduled_repository import ScheduledRepository
@@ -186,6 +186,7 @@ async def test_schedule_and_tariff_repositories_persist_tenant_id():
 @pytest.mark.asyncio
 async def test_consumption_report_submission_uses_auth_tenant_and_processes():
     captured = {}
+    queued_jobs = []
 
     class FakeReportRepository:
         def __init__(self, db, ctx=None, allow_cross_tenant=False):
@@ -207,11 +208,15 @@ async def test_consumption_report_submission_uses_auth_tenant_and_processes():
         captured["validated"] = (device_id, ctx.require_tenant())
         return {"device_id": device_id}
 
+    class FakeQueue:
+        async def enqueue(self, job):  # noqa: ANN001
+            queued_jobs.append(job)
+
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(energy_reports, "ReportRepository", FakeReportRepository)
     monkeypatch.setattr(energy_reports, "validate_device_for_reporting", fake_validate_device_for_reporting)
+    monkeypatch.setattr(energy_reports, "get_report_queue", lambda: FakeQueue())
     try:
-        background_tasks = BackgroundTasks()
         request = ConsumptionReportRequest(
             device_id="DEV-1",
             start_date=date.today() - timedelta(days=1),
@@ -223,7 +228,6 @@ async def test_consumption_report_submission_uses_auth_tenant_and_processes():
         response = await energy_reports.create_energy_consumption_report(
             request=request,
             app_request=app_request,
-            background_tasks=background_tasks,
             db=object(),
         )
     finally:
@@ -232,7 +236,9 @@ async def test_consumption_report_submission_uses_auth_tenant_and_processes():
     assert response.status == "processing"
     assert captured["create"]["tenant_id"] == "TENANT-AUTH"
     assert captured["validated"] == ("DEV-1", "TENANT-AUTH")
-    assert len(background_tasks.tasks) == 1
+    assert len(queued_jobs) == 1
+    assert queued_jobs[0].tenant_id == "TENANT-AUTH"
+    assert queued_jobs[0].report_type == "consumption"
 
 
 def test_resolve_submission_tenant_id_accepts_tenant_id_query():
@@ -252,7 +258,6 @@ def test_resolve_submission_tenant_id_rejects_conflicting_body_and_request_tenan
 
 @pytest.mark.asyncio
 async def test_consumption_report_submission_requires_tenant_scope():
-    background_tasks = BackgroundTasks()
     request = ConsumptionReportRequest(
         device_id="DEV-1",
         start_date=date.today() - timedelta(days=1),
@@ -266,7 +271,6 @@ async def test_consumption_report_submission_requires_tenant_scope():
         await energy_reports.create_energy_consumption_report(
             request=request,
             app_request=app_request,
-            background_tasks=background_tasks,
             db=object(),
         )
 
@@ -276,6 +280,7 @@ async def test_consumption_report_submission_requires_tenant_scope():
 @pytest.mark.asyncio
 async def test_comparison_report_submission_uses_auth_tenant():
     captured = {}
+    queued_jobs = []
 
     class FakeReportRepository:
         def __init__(self, db, ctx=None, allow_cross_tenant=False):
@@ -294,11 +299,15 @@ async def test_comparison_report_submission_uses_auth_tenant():
         captured.setdefault("validated", []).append((device_id, ctx.require_tenant()))
         return {"device_id": device_id}
 
+    class FakeQueue:
+        async def enqueue(self, job):  # noqa: ANN001
+            queued_jobs.append(job)
+
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(comparison_reports, "ReportRepository", FakeReportRepository)
     monkeypatch.setattr(comparison_reports, "validate_device_for_reporting", fake_validate_device)
+    monkeypatch.setattr(comparison_reports, "get_report_queue", lambda: FakeQueue())
     try:
-        background_tasks = BackgroundTasks()
         request = ComparisonReportRequest(
             comparison_type="machine_vs_machine",
             tenant_id="TENANT-AUTH",
@@ -311,16 +320,17 @@ async def test_comparison_report_submission_uses_auth_tenant():
         response = await comparison_reports.create_comparison_report(
             request=request,
             app_request=app_request,
-            background_tasks=background_tasks,
             db=object(),
         )
     finally:
         monkeypatch.undo()
 
-    assert response.status == "pending"
+    assert response.status == "processing"
     assert captured["create"]["tenant_id"] == "TENANT-AUTH"
     assert captured["validated"] == [("DEV-A", "TENANT-AUTH"), ("DEV-B", "TENANT-AUTH")]
-    assert len(background_tasks.tasks) == 1
+    assert len(queued_jobs) == 1
+    assert queued_jobs[0].tenant_id == "TENANT-AUTH"
+    assert queued_jobs[0].report_type == "comparison"
 
 
 @pytest.mark.asyncio

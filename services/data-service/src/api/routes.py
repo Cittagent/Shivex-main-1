@@ -94,13 +94,24 @@ def create_router() -> APIRouter:
         tags=["Health"],
     )
     async def health_check() -> HealthResponse:
+        from src.main import app_state
+
+        mqtt_state = "connected"
+        reasons: list[str] = []
+        if settings.app_role == "api":
+            mqtt_connected = bool(app_state.mqtt_handler and app_state.mqtt_handler.is_connected)
+            if not mqtt_connected:
+                mqtt_state = "disconnected"
+                reasons.append("mqtt_disconnected")
+        status_value = "healthy" if not reasons else "degraded"
         return HealthResponse(
-            status="healthy",
+            status=status_value,
             version=settings.app_version,
             timestamp=datetime.utcnow().isoformat(),
             checks={
                 "influxdb": "connected",
-                "mqtt": "connected",
+                "mqtt": mqtt_state,
+                "reasons": reasons,
             },
         )
 

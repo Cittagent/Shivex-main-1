@@ -157,12 +157,15 @@ def test_reasoning_engine_outputs():
         {"trend_type": "linear", "trend_r2": 0.81},
     )
     assert isinstance(failure["summary"], str) and failure["summary"]
-    assert isinstance(failure["agreement_text"], str)
+    assert isinstance(failure["evidence_text"], str)
     assert isinstance(failure["recommended_actions"], list) and failure["recommended_actions"]
+    assert "xgboost" not in failure["evidence_text"].lower()
+    assert "models agree" not in failure["evidence_text"].lower()
 
     anomaly = engine.generate_anomaly_reasoning({"confidence": "LOW"}, ["temperature"])
     assert isinstance(anomaly["summary"], str) and anomaly["summary"]
     assert anomaly["affected_parameters"] == ["temperature"]
+    assert "models agree" not in anomaly["summary"].lower()
 
 
 def test_json_safe_recurses_nested_nan_inf():

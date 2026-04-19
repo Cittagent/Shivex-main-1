@@ -6,9 +6,11 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Sequence
@@ -28,6 +30,18 @@ DEFAULT_LIVE_STACK_PASSWORD = os.environ.get(
     os.environ.get("BOOTSTRAP_SUPER_ADMIN_PASSWORD", "Shivex@2706"),
 )
 REQUIRED_TEST_MODULES = ("pytest", "fastapi", "pydantic", "pytest_asyncio")
+MAX_OUTPUT_CHARS = 16000
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
+CROSS_SERVICE_E2E_TIMEOUT_SECONDS = 900
+LIVE_BROWSER_TIMEOUT_SECONDS = 600
+
+
+def _truncate_output(output: str | bytes | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    return output[-MAX_OUTPUT_CHARS:]
 
 
 @dataclass
@@ -106,6 +120,24 @@ def write_report(report: CertificationReport) -> Path:
     return output_path
 
 
+def print_summary(report: CertificationReport, output_path: Path) -> None:
+    print("")
+    print("======================================")
+    print(" Release Certification Summary")
+    print("======================================")
+    print(f" Passed : {report.passed}")
+    print(f" Failed : {report.failed}")
+    print(f" Blocked: {report.blocked}")
+    print(f" Report : {output_path}")
+    print("")
+
+
+def finish(report: CertificationReport, exit_code: int) -> int:
+    output_path = write_report(report)
+    print_summary(report, output_path)
+    return exit_code
+
+
 def run_command(
     report: CertificationReport,
     name: str,
@@ -113,6 +145,7 @@ def run_command(
     *,
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
+    timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     allow_blocked: bool = False,
     blocked_reason: str | None = None,
 ) -> None:
@@ -129,16 +162,43 @@ def run_command(
         return
 
     started = time.time()
-    completed = subprocess.run(
+    process = subprocess.Popen(
         list(command),
         cwd=str(cwd or REPO_ROOT),
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
+        start_new_session=True,
     )
+    timed_out = False
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout = _truncate_output(exc.stdout)
+        stderr = _truncate_output(exc.stderr)
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            extra_stdout, extra_stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            extra_stdout, extra_stderr = process.communicate()
+        stdout = _truncate_output(stdout + (extra_stdout or ""))
+        stderr = _truncate_output(stderr + (extra_stderr or ""))
     duration = time.time() - started
-    status = "PASS" if completed.returncode == 0 else "FAIL"
-    detail = f"exit_code={completed.returncode}"
+    if timed_out:
+        status = "FAIL"
+        detail = f"timeout after {timeout_seconds}s"
+    else:
+        status = "PASS" if process.returncode == 0 else "FAIL"
+        detail = f"exit_code={process.returncode}"
     append_result(
         report,
         name=name,
@@ -146,8 +206,8 @@ def run_command(
         command=command_text,
         duration_seconds=duration,
         detail=detail,
-        stdout=completed.stdout[-16000:],
-        stderr=completed.stderr[-16000:],
+        stdout=_truncate_output(stdout),
+        stderr=_truncate_output(stderr),
     )
 
 
@@ -221,11 +281,32 @@ def wait_for_http_200(url: str, *, timeout_seconds: int = 90, interval_seconds: 
     return False, f"{url} did not become healthy within {timeout_seconds}s ({last_error})"
 
 
+def probe_http_200(url: str, *, timeout_seconds: int = 5) -> tuple[bool, str | None]:
+    try:
+        with request.urlopen(url, timeout=timeout_seconds) as response:
+            if response.status == 200:
+                return True, None
+            return False, f"HTTP {response.status}"
+    except Exception as exc:  # pragma: no cover - depends on local stack state
+        return False, str(exc)
+
+
+def certification_health_checks(ui_base: str) -> list[tuple[str, str]]:
+    return [
+        ("UI login page readiness", f"{ui_base}/login"),
+        ("Device service readiness", "http://localhost:8000/health"),
+        ("Analytics service readiness", "http://localhost:8003/health/live"),
+        ("Reporting service readiness", "http://localhost:8085/health"),
+        ("Waste service readiness", "http://localhost:8087/health"),
+    ]
+
+
 def run_command_capture(
     command: Sequence[str],
     *,
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
+    timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         list(command),
@@ -233,7 +314,15 @@ def run_command_capture(
         env=env,
         capture_output=True,
         text=True,
+        timeout=timeout_seconds,
     )
+
+
+def resolve_playwright_command() -> list[str]:
+    local_runner = UI_ROOT / "node_modules" / ".bin" / "playwright"
+    if local_runner.exists():
+        return [str(local_runner)]
+    return ["npx", "playwright"]
 
 
 def _python_supports_certification_dependencies(python_executable: str) -> bool:
@@ -255,6 +344,10 @@ def resolve_certification_python() -> str:
     candidates: list[str] = []
     if configured:
         candidates.append(configured)
+
+    validation_venv = REPO_ROOT / ".validation-venv" / "bin" / "python"
+    if validation_venv.exists():
+        candidates.append(str(validation_venv))
 
     repo_venv = REPO_ROOT / ".venv" / "bin" / "python"
     if repo_venv.exists():
@@ -306,6 +399,83 @@ def prepare_certification_env(seed_payload: dict[str, object] | None = None) -> 
         env["VALIDATE_CERTIFICATION_SEED_JSON"] = json.dumps(seed_payload)
 
     return env
+
+
+def seed_certification_orgs(
+    report: CertificationReport,
+    *,
+    certification_python: str,
+    env: dict[str, str],
+    name: str = "Certification org seeding",
+) -> tuple[dict[str, str], dict[str, object] | None]:
+    seed_command = [certification_python, "scripts/ensure_certification_orgs.py"]
+    started = time.time()
+    try:
+        completed = run_command_capture(seed_command, env=env, timeout_seconds=180)
+    except subprocess.TimeoutExpired as exc:
+        duration = time.time() - started
+        append_result(
+            report,
+            name=name,
+            status="FAIL",
+            command=shell_join(seed_command),
+            duration_seconds=duration,
+            detail="timeout after 180s",
+            stdout=_truncate_output(exc.stdout),
+            stderr=_truncate_output(exc.stderr),
+        )
+        return env, None
+
+    duration = time.time() - started
+    if completed.returncode != 0:
+        append_result(
+            report,
+            name=name,
+            status="FAIL",
+            command=shell_join(seed_command),
+            duration_seconds=duration,
+            detail=f"exit_code={completed.returncode}",
+            stdout=_truncate_output(completed.stdout),
+            stderr=_truncate_output(completed.stderr),
+        )
+        return env, None
+
+    try:
+        seed_payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        append_result(
+            report,
+            name=name,
+            status="FAIL",
+            command=shell_join(seed_command),
+            duration_seconds=duration,
+            detail=f"seed output was not valid JSON: {exc}",
+            stdout=_truncate_output(completed.stdout),
+            stderr=_truncate_output(completed.stderr),
+        )
+        return env, None
+
+    append_result(
+        report,
+        name=name,
+        status="PASS",
+        command=shell_join(seed_command),
+        duration_seconds=duration,
+        detail="exit_code=0",
+        stdout=_truncate_output(completed.stdout),
+        stderr=_truncate_output(completed.stderr),
+    )
+    return prepare_certification_env(seed_payload), seed_payload
+
+
+def with_pythonpath(env: dict[str, str], *paths: Path) -> dict[str, str]:
+    updated = env.copy()
+    existing = updated.get("PYTHONPATH", "")
+    ordered = [str(path) for path in paths if path]
+    if existing:
+        ordered.append(existing)
+    updated["PYTHONPATH"] = os.pathsep.join(ordered)
+    return updated
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -378,91 +548,36 @@ def main() -> int:
     args = build_parser().parse_args()
     certification_python = resolve_certification_python()
     report = CertificationReport(started_at_epoch=time.time(), mode=args.mode)
-    strict_failures = strict_gate_prerequisite_failures(args)
-    if strict_failures:
-        append_result(
-            report,
-            name="Strict release gate prerequisites",
-            status="FAIL",
-            command="strict-release-gate",
-            detail=" | ".join(strict_failures),
-        )
-        output_path = write_report(report)
-        print("")
-        print("======================================")
-        print(" Release Certification Summary")
-        print("======================================")
-        print(f" Passed : {report.passed}")
-        print(f" Failed : {report.failed}")
-        print(f" Blocked: {report.blocked}")
-        print(f" Report : {output_path}")
-        print("")
-        return 1
-
-    live_stack_auth_ok, live_stack_auth_blocked_reason = has_live_stack_test_account()
-    allow_blocked = blocked_is_allowed(args)
-    certification_env = prepare_certification_env()
-
-    seed_payload: dict[str, object] | None = None
-    if args.strict_release_gate:
-        seed_command = [certification_python, "scripts/ensure_certification_orgs.py"]
-        started = time.time()
-        completed = run_command_capture(seed_command, env=certification_env)
-        duration = time.time() - started
-        if completed.returncode == 0:
-            try:
-                seed_payload = json.loads(completed.stdout)
-            except json.JSONDecodeError as exc:
-                append_result(
-                    report,
-                    name="Certification org seeding",
-                    status="FAIL",
-                    command=shell_join(seed_command),
-                    duration_seconds=duration,
-                    detail=f"seed output was not valid JSON: {exc}",
-                    stdout=completed.stdout[-16000:],
-                    stderr=completed.stderr[-16000:],
-                )
-            else:
-                append_result(
-                    report,
-                    name="Certification org seeding",
-                    status="PASS",
-                    command=shell_join(seed_command),
-                    duration_seconds=duration,
-                    detail="exit_code=0",
-                    stdout=completed.stdout[-16000:],
-                    stderr=completed.stderr[-16000:],
-                )
-                certification_env = prepare_certification_env(seed_payload)
-        else:
+    try:
+        strict_failures = strict_gate_prerequisite_failures(args)
+        if strict_failures:
             append_result(
                 report,
-                name="Certification org seeding",
+                name="Strict release gate prerequisites",
                 status="FAIL",
-                command=shell_join(seed_command),
-                duration_seconds=duration,
-                detail=f"exit_code={completed.returncode}",
-                stdout=completed.stdout[-16000:],
-                stderr=completed.stderr[-16000:],
+                command="strict-release-gate",
+                detail=" | ".join(strict_failures),
+            )
+            return finish(report, 1)
+
+        live_stack_auth_ok, live_stack_auth_blocked_reason = has_live_stack_test_account()
+        allow_blocked = blocked_is_allowed(args)
+        certification_env = prepare_certification_env()
+
+        seed_payload: dict[str, object] | None = None
+        if args.strict_release_gate:
+            certification_env, seed_payload = seed_certification_orgs(
+                report,
+                certification_python=certification_python,
+                env=certification_env,
             )
 
-        if report.failed:
-            output_path = write_report(report)
-            print("")
-            print("======================================")
-            print(" Release Certification Summary")
-            print("======================================")
-            print(f" Passed : {report.passed}")
-            print(f" Failed : {report.failed}")
-            print(f" Blocked: {report.blocked}")
-            print(f" Report : {output_path}")
-            print("")
-            return 1
+            if report.failed:
+                return finish(report, 1)
 
-    run_command(
-        report,
-        "Backend generated-id regression tests",
+        run_command(
+            report,
+            "Backend generated-id regression tests",
         [
             certification_python,
             "-m",
@@ -472,14 +587,15 @@ def main() -> int:
             "-q",
         ],
         env=certification_env,
+        timeout_seconds=180,
     )
 
-    env_with_pythonpath = certification_env.copy()
-    existing_pythonpath = env_with_pythonpath.get("PYTHONPATH", "")
-    env_with_pythonpath["PYTHONPATH"] = (
-        f"{REPO_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(REPO_ROOT)
+        data_service_env = with_pythonpath(
+        certification_env,
+        REPO_ROOT,
+        REPO_ROOT / "services" / "data-service",
     )
-    run_command(
+        run_command(
         report,
         "Telemetry topic contract regression tests",
         [
@@ -489,10 +605,16 @@ def main() -> int:
             "services/data-service/tests/test_mqtt_handler.py",
             "-q",
         ],
-        env=env_with_pythonpath,
+        env=data_service_env,
+        timeout_seconds=180,
     )
 
-    run_command(
+        reporting_env = with_pythonpath(
+        certification_env,
+        REPO_ROOT,
+        REPO_ROOT / "services" / "reporting-service",
+    )
+        run_command(
         report,
         "Reporting tenant-scope tests",
         [
@@ -504,10 +626,16 @@ def main() -> int:
         ],
         allow_blocked=allow_blocked,
         blocked_reason=None if live_stack_auth_ok else live_stack_auth_blocked_reason,
-        env=certification_env,
+        env=reporting_env,
+        timeout_seconds=180,
     )
 
-    run_command(
+        waste_env = with_pythonpath(
+        certification_env,
+        REPO_ROOT,
+        REPO_ROOT / "services" / "waste-analysis-service",
+    )
+        run_command(
         report,
         "Waste tenant-scope tests",
         [
@@ -519,10 +647,16 @@ def main() -> int:
         ],
         allow_blocked=allow_blocked,
         blocked_reason=None if live_stack_auth_ok else live_stack_auth_blocked_reason,
-        env=certification_env,
+        env=waste_env,
+        timeout_seconds=180,
     )
 
-    run_command(
+        rule_engine_env = with_pythonpath(
+        certification_env,
+        REPO_ROOT,
+        REPO_ROOT / "services" / "rule-engine-service",
+    )
+        run_command(
         report,
         "Rule-engine and shared tenant guardrail tests",
         [
@@ -535,11 +669,12 @@ def main() -> int:
         ],
         allow_blocked=allow_blocked,
         blocked_reason=None if live_stack_auth_ok else live_stack_auth_blocked_reason,
-        env=certification_env,
+        env=rule_engine_env,
+        timeout_seconds=180,
     )
 
-    if args.mode == "thorough":
-        run_command(
+        if args.mode == "thorough":
+            run_command(
             report,
             "Cross-service pytest E2E suite",
             [
@@ -557,112 +692,133 @@ def main() -> int:
             allow_blocked=allow_blocked,
             blocked_reason=None if live_stack_auth_ok else live_stack_auth_blocked_reason,
             env=certification_env,
+            timeout_seconds=CROSS_SERVICE_E2E_TIMEOUT_SECONDS,
         )
 
-    isolation_ok, isolation_blocked_reason = has_isolation_env(certification_env)
-    run_command(
+        isolation_ok, isolation_blocked_reason = has_isolation_env(certification_env)
+        run_command(
         report,
         "Org isolation validator",
         [certification_python, "scripts/validate_isolation.py"],
         allow_blocked=allow_blocked,
         blocked_reason=None if isolation_ok else isolation_blocked_reason,
         env=certification_env,
+        timeout_seconds=240,
     )
 
-    run_command(
+        run_command(
         report,
         "UI typecheck",
         ["npx", "tsc", "--noEmit"],
         cwd=UI_ROOT,
         env=certification_env,
+        timeout_seconds=240,
     )
 
-    run_command(
+        run_command(
         report,
         "UI unit tests",
         ["npm", "run", "test:unit"],
         cwd=UI_ROOT,
         env=certification_env,
+        timeout_seconds=240,
     )
 
-    run_command(
+        run_command(
         report,
         "Mocked onboarding Playwright regression",
-        ["npx", "playwright", "test", "tests/e2e/device-onboard-generated-id.spec.js"],
+        [
+            *resolve_playwright_command(),
+            "test",
+            "tests/e2e/device-onboard-generated-id.spec.js",
+        ],
         cwd=UI_ROOT,
         env=certification_env,
+        timeout_seconds=240,
     )
 
-    if not args.skip_live_browser:
-        live_browser_env = certification_env.copy()
-        if args.strict_release_gate:
-            live_browser_env["CERTIFY_REQUIRE_PM"] = "1"
-        live_ok, blocked_reason = has_live_browser_env(
-            require_org=not (args.strict_release_gate and seed_payload is not None)
-            , env=live_browser_env
-        )
-        if not args.skip_compose_build:
+        if not args.skip_live_browser:
+            live_browser_env = certification_env.copy()
+            live_ok, blocked_reason = has_live_browser_env(
+                require_org=not (args.strict_release_gate and seed_payload is not None),
+                env=live_browser_env,
+            )
+            if not live_ok and seed_payload is None:
+                live_browser_env, seed_payload = seed_certification_orgs(
+                    report,
+                    certification_python=certification_python,
+                    env=live_browser_env,
+                    name="Live browser certification seeding",
+                )
+                if report.failed:
+                    return finish(report, 1)
+            if args.strict_release_gate:
+                live_browser_env["CERTIFY_REQUIRE_PM"] = "1"
+            live_ok, blocked_reason = has_live_browser_env(
+                require_org=not (args.strict_release_gate and seed_payload is not None),
+                env=live_browser_env,
+            )
+            if not args.skip_compose_build:
+                ui_base = live_browser_env.get("CERTIFY_UI_BASE_URL", "http://localhost:3000").rstrip("/")
+                health_checks = certification_health_checks(ui_base)
+                stack_ready = True
+                for _step_name, url in health_checks:
+                    ok, _reason = probe_http_200(url)
+                    if not ok:
+                        stack_ready = False
+                        break
+                if stack_ready:
+                    append_result(
+                        report,
+                        name="Compose rebuild before live browser certification",
+                        status="PASS",
+                        command="docker compose up -d --build ui-web",
+                        detail="Skipped rebuild because the existing live stack was already healthy.",
+                    )
+                else:
+                    run_command(
+                        report,
+                        "Compose rebuild before live browser certification",
+                        ["docker", "compose", "up", "-d", "--build", "ui-web"],
+                        timeout_seconds=600,
+                    )
+                for step_name, url in health_checks:
+                    ok, reason = wait_for_http_200(url)
+                    append_result(
+                        report,
+                        name=step_name,
+                        status="PASS" if ok else "FAIL",
+                        command=f"wait_for_http_200 {url}",
+                        detail="ready" if ok else (reason or "service did not become healthy"),
+                    )
+                if report.failed:
+                    return finish(report, 1)
             run_command(
                 report,
-                "Compose rebuild before live browser certification",
-                ["docker", "compose", "up", "-d", "--build", "ui-web"],
+                "Live browser scope and contract certification",
+                ["node", "scripts/live_scope_certifier.js"],
+                cwd=UI_ROOT,
+                env=live_browser_env,
+                allow_blocked=allow_blocked,
+                blocked_reason=None if live_ok else blocked_reason,
+                timeout_seconds=LIVE_BROWSER_TIMEOUT_SECONDS,
             )
-            ui_base = live_browser_env.get("CERTIFY_UI_BASE_URL", "http://localhost:3000").rstrip("/")
-            health_checks = [
-                ("UI login page readiness", f"{ui_base}/login"),
-                ("Device service readiness", "http://localhost:8000/health"),
-                ("Analytics service readiness", "http://localhost:8003/health/live"),
-                ("Reporting service readiness", "http://localhost:8085/health"),
-                ("Waste service readiness", "http://localhost:8087/health"),
-            ]
-            for step_name, url in health_checks:
-                ok, reason = wait_for_http_200(url)
-                append_result(
-                    report,
-                    name=step_name,
-                    status="PASS" if ok else "FAIL",
-                    command=f"wait_for_http_200 {url}",
-                    detail="ready" if ok else (reason or "service did not become healthy"),
-                )
-            if report.failed:
-                output_path = write_report(report)
-                print("")
-                print("======================================")
-                print(" Release Certification Summary")
-                print("======================================")
-                print(f" Passed : {report.passed}")
-                print(f" Failed : {report.failed}")
-                print(f" Blocked: {report.blocked}")
-                print(f" Report : {output_path}")
-                print("")
-                return 1
-        run_command(
+
+        if report.failed:
+            return finish(report, 1)
+        if report.blocked and not allow_blocked:
+            return finish(report, 2)
+        return finish(report, 0)
+    except Exception as exc:
+        append_result(
             report,
-            "Live browser scope and contract certification",
-            ["node", "scripts/live_scope_certifier.js"],
-            cwd=UI_ROOT,
-            env=live_browser_env,
-            allow_blocked=allow_blocked,
-            blocked_reason=None if live_ok else blocked_reason,
+            name="Release certification harness failure",
+            status="FAIL",
+            command="main",
+            detail=f"{type(exc).__name__}: {exc}",
+            stderr=_truncate_output(traceback.format_exc()),
         )
-
-    output_path = write_report(report)
-
-    print("")
-    print("======================================")
-    print(" Release Certification Summary")
-    print("======================================")
-    print(f" Passed : {report.passed}")
-    print(f" Failed : {report.failed}")
-    print(f" Blocked: {report.blocked}")
-    print(f" Report : {output_path}")
-    print("")
-
-    if report.failed:
-        return 1
-    if report.blocked and not allow_blocked:
-        return 2
-    return 0
+        return finish(report, 1)
 
 
 if __name__ == "__main__":

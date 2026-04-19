@@ -33,7 +33,7 @@ test("device onboarding generates and displays the device ID after create", asyn
       is_active: true,
       created_at: new Date().toISOString(),
     },
-    plant_ids: [],
+    plant_ids: ["plant-1"],
     entitlements: {
       premium_feature_grants: [],
       role_feature_matrix: {
@@ -86,7 +86,15 @@ test("device onboarding generates and displays the device ID after create", asyn
     });
   });
   await page.route("**/backend/auth/api/v1/tenants/SH00000001/plants", async (route) => {
-    await fulfillJson(route, [{ id: "plant-1", name: "Plant One" }]);
+    await fulfillJson(route, [{
+      id: "plant-1",
+      tenant_id: "SH00000001",
+      name: "Plant One",
+      location: "Building A",
+      timezone: "Asia/Kolkata",
+      is_active: true,
+      created_at: new Date().toISOString(),
+    }]);
   });
   await page.route("**/backend/device/api/v1/devices", async (route) => {
     if (route.request().method() !== "POST") {

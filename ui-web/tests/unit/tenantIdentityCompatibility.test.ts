@@ -58,6 +58,16 @@ test("tenant store initializes non-super-admin scope from canonical tenant_id fi
   assert.equal(selectedTenantId(), "SH00000042");
 });
 
+test("tenant store preserves persisted super-admin selection until auth refresh restores claims", () => {
+  const storage = installWindow();
+  storage.setItem("factoryops_selected_tenant", "SH00000013");
+
+  initializeTenantStore();
+
+  assert.equal(selectedTenantId(), "SH00000013");
+  assert.equal(storage.getItem("factoryops_selected_tenant"), "SH00000013");
+});
+
 test("resolveScopedTenantId prefers canonical tenant_id", () => {
   assert.equal(
     resolveScopedTenantId(

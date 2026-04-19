@@ -44,6 +44,41 @@ test("machines initial load returns fatal error when fleet cards fail", async ()
   await result.summaryPromise;
 });
 
+test("machines initial load retries one transient fleet timeout before failing", async () => {
+  let attempts = 0;
+
+  const result = await loadMachinesInitialChannels({
+    loadFleet: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("Request timed out");
+      }
+      return "fleet-ready";
+    },
+    loadSummary: async () => "summary-ready",
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(result.fatalError, null);
+  await result.summaryPromise;
+});
+
+test("machines initial load still fails after two transient fleet timeouts", async () => {
+  let attempts = 0;
+
+  const result = await loadMachinesInitialChannels({
+    loadFleet: async () => {
+      attempts += 1;
+      throw new Error("Request timed out");
+    },
+    loadSummary: async () => "summary-ready",
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(result.fatalError, "Request timed out");
+  await result.summaryPromise;
+});
+
 test("machines initial load does not turn summary failure into a fatal page error", async () => {
   const result = await loadMachinesInitialChannels({
     loadFleet: async () => "fleet-ready",

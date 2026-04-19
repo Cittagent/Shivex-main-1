@@ -84,8 +84,7 @@ export function initializeTenantStore(): void {
 
   const claims = getCurrentClaims();
   if (!isTokenValid(claims)) {
-    writeSelectedTenantId(null);
-    setState(null);
+    setState(readPersistedTenantId());
     return;
   }
 

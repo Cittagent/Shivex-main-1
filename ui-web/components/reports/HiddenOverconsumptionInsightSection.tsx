@@ -4,6 +4,7 @@ import {
   formatHiddenCost,
   formatHiddenNumber,
   formatSignedKwh,
+  getHiddenInsightDailyBreakdown,
   getHiddenDeviceDisplayName,
   getDifferenceVsBaselineKwh,
   getHiddenBaselineStatus,
@@ -24,7 +25,7 @@ export function HiddenOverconsumptionInsightSection({
   renderMode = "snapshot",
 }: HiddenOverconsumptionInsightSectionProps) {
   const hiddenSummary = insight?.summary ?? null;
-  const hiddenRows = getUsableHiddenInsightRows(insight?.daily_breakdown);
+  const hiddenRows = getUsableHiddenInsightRows(getHiddenInsightDailyBreakdown(insight));
   const hiddenDeviceRows = getUsableHiddenDeviceRows(insight?.device_breakdown);
   const hiddenUnavailable = Boolean(insight) && hiddenRows.length === 0;
   const hiddenDeviceUnavailable = Boolean(insight) && hiddenDeviceRows.length === 0;

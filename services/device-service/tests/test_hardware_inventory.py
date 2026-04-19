@@ -17,9 +17,23 @@ from sqlalchemy.pool import StaticPool
 BASE_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERVICES_DIR = REPO_ROOT / "services"
-for path in (REPO_ROOT, SERVICES_DIR, BASE_DIR):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+for existing in list(sys.path):
+    try:
+        existing_path = Path(existing).resolve()
+    except Exception:
+        continue
+    if existing_path.parent == SERVICES_DIR.resolve() and existing_path != BASE_DIR.resolve():
+        sys.path.remove(existing)
+for module_name, module in list(sys.modules.items()):
+    if module_name == "app" or module_name.startswith("app."):
+        module_file = Path(getattr(module, "__file__", "") or "")
+        if str(module_file) and BASE_DIR.resolve() not in module_file.resolve().parents:
+            sys.modules.pop(module_name, None)
+for path in (SERVICES_DIR, REPO_ROOT, BASE_DIR):
+    path_str = str(path)
+    if path_str in sys.path:
+        sys.path.remove(path_str)
+    sys.path.insert(0, path_str)
 
 os.environ["DATABASE_URL"] = "mysql+aiomysql://test:test@127.0.0.1:3306/test_db"
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-at-least-32-characters-long")
